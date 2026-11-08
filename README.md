@@ -20,8 +20,8 @@ Either way, the agent copies the folder into `~/.config/herdr-app/mods/` and run
 
 ```bash
 vp install                # also links the Herdr app's types (docs/types.md)
-vp run <name>#dev         # live: builds into ~/.config/herdr-app/mods/<name>/, Herdr reloads on every save
-vp run dev:remove <name>  # done: remove that dev build from Herdr
+vp run <name>#dev         # live: builds into ~/.config/herdr-app/mods/<name>/ and shows its panel; Herdr reloads on every save
+vp run dev:remove <name>  # done (stop the watch first): removes the dev build and its panel from Herdr
 ```
 
 Before you commit:

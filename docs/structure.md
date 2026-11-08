@@ -16,7 +16,8 @@ packages/<name>/          shared TS libs, bundled into each mod that imports the
 mods/<name>/              BUILD OUTPUT, committed: the folder Herdr users install
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod (watch mode builds into Herdr)
-scripts/dev-remove.sh     removes a mod's dev build from Herdr
+scripts/dev-remove.ts     removes a mod's dev build and its panel from Herdr
+scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
 herdr-env.d.ts            loads the Herdr app's types (see docs/types.md)
 ```
 

@@ -10,7 +10,7 @@ vp run <name>#dev
 
 This runs `vp pack --watch` for `apps/<name>/`. In watch mode the build goes straight into the Herdr app, at `~/.config/herdr-app/mods/<name>/`, not into the repo's `mods/<name>/`. Herdr reloads a mod whenever a file in that folder is saved, so each `.ts` save shows in the window within a second.
 
-- **First run:** Herdr sees a new folder and docks the mod where its `mod.json` says (`"place"`). After that, your layout decides where it is.
+- **The panel:** a mod shows through a _slot_, a block in your layout file (`~/.config/herdr-app/layouts/<layout>.json`). Herdr adds one by itself only the first time it ever sees a mod. So after the first good build, the watch checks the layout Herdr is showing, and adds a slot if the mod has none: at the right or left edge, per `mod.json`'s `"place"`, at its `"size"`. Move the panel and it stays where you put it. For `"top"`, `"bottom"` or `"none"`, and for layouts that ship with Herdr (which can't change shape), it prints a line asking you to add the panel yourself.
 - **Errors:** a build that breaks keeps the last good version running. Herdr lists load errors in `herdr-app status`. Run `herdr-app check ~/.config/herdr-app/mods/<name>` for the exact error.
 - **Another app home:** set `HERDR_APP_HOME` to build into a different Herdr folder.
 
@@ -30,7 +30,7 @@ Tested 2026-11-08: a symlink from `~/.config/herdr-app/mods/<name>` to the repo'
 vp run dev:remove <name>
 ```
 
-It removes the dev build from Herdr, but only a folder with the marker. A real install is left alone.
+Stop the watch first (ctrl-c), or it keeps writing into the folder. Then this removes the dev build's folder and its slots in your layouts, so the panel goes too. It only acts on a folder with the marker: a real install, and its panel, are left alone. Run `vp run <name>#dev` again and the panel comes back.
 
 The repo's `mods/<name>/` isn't touched by the watch. Before committing, run `vp run -r build` and commit the updated `mods/`. CI fails if `mods/` doesn't match the source.
 

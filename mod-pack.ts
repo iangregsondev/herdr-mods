@@ -6,10 +6,10 @@
 // <app home>/mods/<name>/, so every save reloads the mod in the window.
 // Herdr hot-reloads only real files in its own mods/ folder (a symlink to
 // mods/<name>/ does not reload), so the build has to land there.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UserConfig } from "vite-plus";
+import { DEV_MARKER, ensureSlot, herdrHome, type Place } from "./scripts/herdr-slots.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
 
@@ -30,17 +30,7 @@ const HERDR_BUILTINS = [
   "fs/promises",
 ];
 
-/**
- * Marks a folder in the Herdr app as a dev build from this repo. Hidden, so
- * Herdr ignores it. A folder without it is a real install and is never touched.
- */
-export const DEV_MARKER = ".herdr-mods-dev";
-
 const isWatch = process.argv.includes("--watch") || process.argv.includes("-w");
-
-function herdrHome(): string {
-  return process.env.HERDR_APP_HOME ?? join(homedir(), ".config", "herdr-app");
-}
 
 /** The mod's folder in the Herdr app, claimed for a dev build. */
 function devOutDir(name: string): string {
@@ -59,9 +49,27 @@ function devOutDir(name: string): string {
   writeFileSync(
     join(dir, DEV_MARKER),
     `Dev build of "${name}" from herdr-mods (vp run ${name}#dev).\n` +
-      `Remove it with: sh scripts/dev-remove.sh ${name}\n`,
+      `Remove it with: vp run dev:remove ${name}\n`,
   );
   return dir;
+}
+
+/**
+ * After the first good build of a watch, puts the mod's slot back in the shown
+ * layout if it has none. Herdr only docks a mod the first time it ever sees it,
+ * so a dev build that was removed and comes back would otherwise not show.
+ */
+function slotOnFirstBuild(name: string): () => void {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const modJson = JSON.parse(readFileSync("assets/mod.json", "utf8")) as {
+      place?: Place;
+      size?: number;
+    };
+    console.log(ensureSlot(name, modJson));
+  };
 }
 
 export function modPack(name: string): PackConfig {
@@ -81,5 +89,6 @@ export function modPack(name: string): PackConfig {
     clean: !isWatch,
     deps: { neverBundle: HERDR_BUILTINS },
     copy: [{ from: "assets/*", to: outDir }],
+    ...(isWatch ? { onSuccess: slotOnFirstBuild(name) } : {}),
   };
 }

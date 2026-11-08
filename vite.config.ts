@@ -34,7 +34,7 @@ export default defineConfig({
         command: 'for d in mods/*/; do herdr-app check "$d" || exit 1; done',
         cache: false,
       },
-      "dev:remove": { command: "sh scripts/dev-remove.sh", cache: false },
+      "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
     },
   },
 });
