@@ -1,0 +1,25 @@
+{
+  "name": "herdr-mods",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ready": "vp check && vp run -r test && vp run -r build",
+    "types": "sh scripts/link-herdr-types.sh",
+    "check:mods": "for d in mods/*/; do herdr-app check \"$d\" || exit 1; done",
+    "prepare": "vp config && sh scripts/link-herdr-types.sh"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.18.0",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
