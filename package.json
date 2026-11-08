@@ -5,9 +5,8 @@
   "type": "module",
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
-    "types": "sh scripts/link-herdr-types.sh",
-    "check:mods": "for d in mods/*/; do herdr-app check \"$d\" || exit 1; done",
-    "prepare": "vp config && sh scripts/link-herdr-types.sh"
+    "prepare": "vp config && sh scripts/link-herdr-types.sh",
+    "test": "vp test scripts"
   },
   "devDependencies": {
     "vite-plus": "catalog:"
