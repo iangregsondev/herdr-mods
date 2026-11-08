@@ -26,5 +26,15 @@ export default defineConfig({
   },
   run: {
     cache: true,
+    // These act on the Herdr app's folder, outside the repo, where the cache can't see changes.
+    // Cached, they would replay an old result without running.
+    tasks: {
+      types: { command: "sh scripts/link-herdr-types.sh", cache: false },
+      "check:mods": {
+        command: 'for d in mods/*/; do herdr-app check "$d" || exit 1; done',
+        cache: false,
+      },
+      "dev:remove": { command: "sh scripts/dev-remove.sh", cache: false },
+    },
   },
 });
