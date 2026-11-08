@@ -1,0 +1,25 @@
+{
+  // Matches the jsconfig.json the Herdr app writes into each mod folder:
+  // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own),
+  // and strictNullChecks off because a View sets its state in init(), not a constructor.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": [],
+    "strict": true,
+    "strictNullChecks": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    // The Herdr app's types, linked by `vp run types` (scripts/link-herdr-types.sh).
+    // gpui-kit.d.ts declares its modules itself; herdr.d.ts is a plain module file.
+    "paths": {
+      "herdr": ["./.herdr-types/herdr.d.ts"]
+    }
+  },
+  "include": ["apps/*/src", "apps/*/tests", "packages/*/src", "packages/*/tests", "herdr-env.d.ts"]
+}
