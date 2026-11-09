@@ -1,4 +1,6 @@
 {
+  // Effect's schema adds the language service plugin's options to editor completion.
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
   // Matches the jsconfig.json the Herdr app writes into each mod folder:
   // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own),
   // and strictPropertyInitialization off because a View sets its state in init(), not a constructor.
