@@ -11,6 +11,19 @@ paths:
 - `herdr` and `gpui-kit` exist only inside the Herdr app, so tests import pure modules only. Gate the UI with `vp run check:mods` after `vp run -r build`, and prove it in the dev loop (`.claude/rules/dev-loop.md`).
 - Run with `vp run -r test`, or `vp -C apps/<name> test` for one package. Root scripts: `vp test scripts`.
 
+## Test doubles
+
+- Prefer real objects, then hand-written fakes that return known data. Reach for `vi.fn` or `vi.mock` only when a fake is impractical.
+- Fake an Effect service with a layer: `Layer.succeed(Users, { find: (id) => Effect.succeed("Ann") })`, given to the program with `Effect.provide`. `Layer.mock(Users)({ ... })` takes a partial fake; a member you leave out fails if it's called.
+
+## Testing Effect code
+
+`@effect/vitest` isn't installed; plain `vite-plus/test` is enough.
+
+- Run with `Effect.runSync` (no async work) or `await Effect.runPromise`.
+- Assert an expected failure as a value, never with `try`/`catch`: `const result = Effect.runSync(Effect.result(program))`, then `Result.isFailure(result)` and `expect(result).toMatchObject({ failure: { _tag: "NotFound" } })`. Use `Effect.runPromiseExit` and `Exit.isFailure` when the program is async.
+- Nothing that waits on the clock (`Effect.sleep`, `Schedule`) belongs in a mod, so tests don't need `TestClock` (`.claude/rules/effect.md`).
+
 ## The test-first contract
 
 Write behaviour test-first with the `mattpocock-skills:tdd` skill. It owns the loop: seams, vertical slices, good and bad tests. These rules sit on top of it:
