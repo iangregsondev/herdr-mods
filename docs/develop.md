@@ -72,6 +72,8 @@ or, once it's pushed:
 | `... is an installed mod, not a dev build`  | A real copy of the mod is installed                              | Remove that copy first (or develop under another name)                         |
 | `herdr-slots: ... add <name> by hand`       | `"place"` is top, bottom or none, or the layout ships with Herdr | Add the panel yourself, or switch to your own layout (clone a shipped one)     |
 | `herdr-slots: Herdr isn't running`          | `herdr-app status` didn't answer                                 | Open Herdr, then restart the watch                                             |
+| `herdr-slots: herdr-app not found on PATH`  | The Herdr app isn't installed, or its CLI isn't on your `PATH`   | Install the Herdr app, then restart the watch                                  |
+| `dev-remove: could not read these layouts`  | A layout file isn't valid JSON; it was left as it is             | Fix or delete that file, then run `dev:remove` again for its panel             |
 | Saves don't change the panel                | Herdr isn't watching the folder (often after a symlink was used) | Check `herdr-app status` for errors; if none, restart Herdr once               |
 | The panel shows the old version             | The latest build broke; Herdr keeps the last good one            | `herdr-app check ~/.config/herdr-app/mods/<name>` for the exact error          |
 | An empty panel after removing a mod by hand | The slot is still in your layout                                 | `vp run dev:remove <name>` removes leftover slots even when the files are gone |
