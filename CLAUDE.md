@@ -21,7 +21,7 @@ Effect v3 code (most examples online, other repos) won't compile here: `Either`,
 ## Gotchas
 
 - **Lint is oxlint, not ESLint.** ESLint plugins load through oxlint's `jsPlugins`, but any that need TypeScript's JS API (typescript-eslint's type utilities) fail to load under TypeScript 7. Write the rule into `scripts/oxlint-functional.ts` instead, with tests.
-- **`vp run -r <task>` skips the root package.** The root's own tests (`scripts/*.test.ts`) run with `vp run test`.
+- **`vp run -r <task>` includes the root package** when it has that task. `vp run -r test` already runs the root's `scripts/*.test.ts`; don't add `vp run test` after it.
 
 ## Git and GitHub — IMPORTANT
 
