@@ -22,6 +22,15 @@ export default defineConfig({
     ],
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
+      // Comments explain the code, not its history (.claude/rules/fixing-findings.md):
+      // no leftover markers, no citing who asked for a change or where.
+      "no-warning-comments": [
+        "error",
+        {
+          terms: ["todo", "fixme", "xxx", "hack", "review", "reviewer", "pr #"],
+          location: "anywhere",
+        },
+      ],
     },
     overrides: [
       // The only way to load gpui-kit.d.ts: it declares ambient modules, not exports.
