@@ -26,6 +26,8 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 
 Never run `pnpm`, `npm`, `npx`, `pnpx`, `yarn` or `bun`. A hook blocks them.
 
+Every dependency version lives once, in the `catalog:` of `pnpm-workspace.yaml`; each `package.json` says `"catalog:"`, never a version. `vp add` does this itself (`catalogMode: prefer`): check the diff shows `"catalog:"`. To bump a dependency, change its catalog line, then `vp install`.
+
 | Instead of                | Use                                                       |
 | ------------------------- | --------------------------------------------------------- |
 | `pnpm install`            | `vp install`                                              |
