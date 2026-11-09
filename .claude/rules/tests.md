@@ -15,7 +15,7 @@ paths:
 ## Test doubles
 
 - Prefer real objects, then hand-written fakes that return known data. Reach for `vi.fn` or `vi.mock` only when a fake is impractical.
-- Fake an Effect service with a layer: `Layer.succeed(Users, { find: (id) => Effect.succeed("Ann") })`, given to the program with `Effect.provide`. `Layer.mock(Users)({ ... })` takes a partial fake; a member you leave out fails if it's called.
+- Fake an Effect service with a layer: `Layer.succeed(Users, { find: () => Effect.succeed("Ann") })`, given to the program with `Effect.provide`. `Layer.mock(Users, { ... })` takes a partial fake; a member you leave out dies (a defect) if it's called.
 
 ## Testing Effect code
 
@@ -23,7 +23,19 @@ Use `@effect/vitest`, as `node_modules/effect/AGENTS.md` does (its examples: `no
 
 ```ts
 import { assert, describe, it, layer } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
+
+class NotFound extends Data.TaggedError("NotFound")<{ readonly id: string }> {}
+
+class Users extends Context.Service<
+  Users,
+  { readonly find: (id: string) => Effect.Effect<string, NotFound> }
+>()("Users") {
+  // Written by hand: v4 services have no generated default layer.
+  static readonly layerTest = Layer.succeed(this, {
+    find: (id) => (id === "1" ? Effect.succeed("Ann") : Effect.fail(new NotFound({ id }))),
+  });
+}
 
 describe("Users", () => {
   it.effect("finds a user", () =>
@@ -35,7 +47,8 @@ describe("Users", () => {
 
   it.effect("fails with NotFound for an unknown id", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* Users).find("2"));
+      const users = yield* Users;
+      const error = yield* Effect.flip(users.find("2"));
       assert.strictEqual(error._tag, "NotFound");
     }).pipe(Effect.provide(Users.layerTest)),
   );
@@ -53,7 +66,7 @@ layer(Users.layerTest)("Users, shared layer", (it) => {
 
 - **`it.effect`** runs an Effect as the test: no `runPromise`. A failure, a defect or a failed `assert` fails the test.
 - **Expected failures are values**, never `try`/`catch`: `Effect.flip` swaps the error into the success channel; `Effect.result` gives a `Result` to check.
-- **`it.effect.each(cases)(name, fn)`** runs one test per case; **`it.effect.prop(name, [Schema.Int], ([n]) => ...)`** checks a property against generated values. A property that fails is reported with the run count; check the property's own logic before blaming the code.
+- **`it.effect.each(cases)(name, fn)`** runs one test per case; **`it.effect.prop(name, [Schema.Int], ([n]) => ...)`** (`Schema` from `effect`) checks a property against generated values. A property that fails is reported with the run count; check the property's own logic before blaming the code.
 - **Time:** `it.effect` runs on `TestClock`, so `Effect.sleep` waits until `TestClock.adjust` (`effect/testing`) moves time on. `it.live` uses the real clock. Mod code can't wait on time anyway (`.claude/rules/effect.md`), so this matters only for tests of non-mod code.
 - `layer(...)` shares one instance across its block, so state can leak between tests. Prefer `Effect.provide` per test unless the layer is costly.
 
