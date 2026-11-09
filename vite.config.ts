@@ -9,7 +9,8 @@ export default defineConfig({
   },
   // mods/ is build output (committed for installs) and .herdr-types/ links the app's own files.
   // .scratch/ holds local working notes (ignored by ~/.gitignore).
-  fmt: { ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**"] },
+  // .claude/skills/ holds upstream skills (skills-lock.json); reformatting them would drift from upstream.
+  fmt: { ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**", ".claude/skills/**"] },
   lint: {
     ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**"],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
