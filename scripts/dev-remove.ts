@@ -7,28 +7,48 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DEV_MARKER, herdrHome, removeSlots } from "./herdr-slots.ts";
 
-const name = process.argv[2];
-if (!name || process.argv.length > 3 || name.includes("/") || name.startsWith(".")) {
-  console.error("usage: vp run dev:remove <name>");
-  process.exit(2);
+export interface DevRemoveResult {
+  /** The exit code: 2 for a usage error, 1 for an installed mod, 0 otherwise. */
+  code: number;
+  /** Lines for stdout. */
+  out: string[];
+  /** Lines for stderr. */
+  err: string[];
 }
 
-const dir = join(herdrHome(), "mods", name);
-
-if (existsSync(dir)) {
-  if (!existsSync(join(dir, DEV_MARKER))) {
-    console.error(`dev-remove: ${dir} is an installed mod, not a dev build; left alone`);
-    process.exit(1);
+/** Removes the dev build named in `args` from the Herdr app at `home`. */
+export function devRemove(args: readonly string[], home: string): DevRemoveResult {
+  const name = args[0];
+  if (!name || args.length > 1 || name.includes("/") || name.startsWith(".")) {
+    return { code: 2, out: [], err: ["usage: vp run dev:remove <name>"] };
   }
-  rmSync(dir, { recursive: true });
-  console.log(`dev-remove: removed ${dir}`);
-} else {
-  console.log(`dev-remove: no files at ${dir}`);
+
+  const dir = join(home, "mods", name);
+
+  if (existsSync(dir) && !existsSync(join(dir, DEV_MARKER))) {
+    return {
+      code: 1,
+      out: [],
+      err: [`dev-remove: ${dir} is an installed mod, not a dev build; left alone`],
+    };
+  }
+
+  const hadFiles = existsSync(dir);
+  if (hadFiles) rmSync(dir, { recursive: true });
+  const files = hadFiles ? `dev-remove: removed ${dir}` : `dev-remove: no files at ${dir}`;
+
+  const layouts = removeSlots(name, home);
+  const panel =
+    layouts.length > 0
+      ? `dev-remove: removed the ${name} panel from ${layouts.map((l) => `"${l}"`).join(", ")}`
+      : `dev-remove: no ${name} panel in your layouts`;
+
+  return { code: 0, out: [files, panel], err: [] };
 }
 
-const layouts = removeSlots(name);
-console.log(
-  layouts.length > 0
-    ? `dev-remove: removed the ${name} panel from ${layouts.map((l) => `"${l}"`).join(", ")}`
-    : `dev-remove: no ${name} panel in your layouts`,
-);
+if (import.meta.main) {
+  const result = devRemove(process.argv.slice(2), herdrHome());
+  result.out.forEach((line) => console.log(line));
+  result.err.forEach((line) => console.error(line));
+  process.exitCode = result.code;
+}
