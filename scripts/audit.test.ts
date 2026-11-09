@@ -1,5 +1,9 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vite-plus/test";
 import { type AuditInput, auditProblems } from "./audit.ts";
+
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 // A small repo with no rot: a locked skill, a rule, a hook, a package and a doc that
 // points at a tracked file, an installed file and tasks of every kind.
@@ -131,5 +135,14 @@ describe("auditProblems", () => {
       ".claude/settings.json: hook script .claude/hooks/stop.sh does not exist",
       "skills-lock.json: skill vitest is not in .claude/skills/",
     ]);
+  });
+});
+
+describe("audit CLI", () => {
+  test("audits this repo, prints that it found no rot and exits 0", () => {
+    const result = spawnSync("vpx", ["scripts/audit.ts"], { cwd: repoRoot, encoding: "utf8" });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("audit: no config rot found\n");
   });
 });

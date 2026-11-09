@@ -24,7 +24,7 @@ import {
 const INSTALLED = "node_modules";
 
 /** What the audit reads: the repo as git sees it, and the few facts it can't get from there. */
-export type AuditInput = {
+export interface AuditInput {
   /** Every file git tracks. Every check goes by this list, not the working tree: CI sees only tracked files. */
   readonly tracked: readonly string[];
   /** A tracked file's text. */
@@ -33,15 +33,15 @@ export type AuditInput = {
   readonly installedExists: (path: string) => boolean;
   /** The task names in vite.config.ts `run.tasks`. */
   readonly rootTasks: readonly string[];
-};
+}
 
 /** Every config rot problem in the repo, once each, as the lines the audit prints. */
-export const auditProblems = ({
+export function auditProblems({
   tracked,
   read,
   installedExists,
   rootTasks,
-}: AuditInput): readonly string[] => {
+}: AuditInput): readonly string[] {
   const roots = [...new Set([...tracked.map((file) => file.split("/")[0] ?? ""), INSTALLED])];
   const readJson = (file: string): unknown => JSON.parse(read(file));
 
@@ -104,7 +104,7 @@ export const auditProblems = ({
       ...missingSkills,
     ]),
   ];
-};
+}
 
 // The CLI: runs only when this file is the entry point, so tests can import auditProblems.
 // vite.config.ts is loaded here, not at the top, so importing this file doesn't load it.
