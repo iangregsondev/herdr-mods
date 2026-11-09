@@ -167,6 +167,9 @@ catalogs:
     '@effect/tsgo':
       specifier: ^0.67.5
       version: 0.67.5
+    '@effect/vitest':
+      specifier: ^4.1.2
+      version: 4.1.2
     effect:
       specifier: ^4.1.2
       version: 4.1.2
@@ -187,6 +190,9 @@ importers:
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.67.5
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.2(effect@4.1.2)(vitest@5.1.0)
       effect:
         specifier: 'catalog:'
         version: 4.1.2
@@ -258,6 +264,12 @@ packages:
   '@effect/tsgo@0.67.5':
     resolution: {integrity: sha512-uL3mf3Q6F3aFOZK/qLb3eHUcztmgTIbabk0enTiA3t8nZm5EygE3eYT4+XQCp+aWCEzYcc2C3b6sljlsFGzTHg==}
     hasBin: true
+
+  '@effect/vitest@4.1.2':
+    resolution: {integrity: sha512-JJPwAHkJHxvM/woW9mMW/khjasAHcmwWdOMAgMy16rfqsxcVhFDnrRsvN9VI2+kMv8zDCCyBE2q1n5hzZlfE0w==}
+    peerDependencies:
+      effect: ^4.1.2
+      vitest: '>=5.0.0 <6.0.0'
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -1320,6 +1332,11 @@ snapshots:
       '@effect/tsgo-linux-x64': 0.67.5
       '@effect/tsgo-win32-arm64': 0.67.5
       '@effect/tsgo-win32-x64': 0.67.5
+
+  '@effect/vitest@4.1.2(effect@4.1.2)(vitest@5.1.0)':
+    dependencies:
+      effect: 4.1.2
+      vitest: 5.1.0(@types/node@26.6.6)(@vitest/browser-preview@5.1.0)(@vitest/ui@5.1.0)(@voidzero-dev/vite-plus-core@1.5.0(@types/node@26.6.6)(typescript@7.0.2))
 
   '@jridgewell/resolve-uri@3.1.2': {}
 

@@ -7,7 +7,8 @@ paths:
 
 # Tests
 
-- Tests live in `<package>/tests/*.test.ts`, beside `src/`, and import from `vite-plus/test`. Root scripts keep theirs beside them (`scripts/*.test.ts`).
+- Tests live in `<package>/tests/*.test.ts`, beside `src/`. Root scripts keep theirs beside them (`scripts/*.test.ts`).
+- Plain tests import from `vite-plus/test`. Tests of Effect code import from `@effect/vitest` instead (below); it re-exports all of Vitest, so one file never needs both.
 - `herdr` and `gpui-kit` exist only inside the Herdr app, so tests import pure modules only. Gate the UI with `vp run check:mods` after `vp run -r build`, and prove it in the dev loop (`.claude/rules/dev-loop.md`).
 - Run with `vp run -r test`, or `vp -C apps/<name> test` for one package. Root scripts: `vp test scripts`.
 
@@ -18,11 +19,43 @@ paths:
 
 ## Testing Effect code
 
-`@effect/vitest` isn't installed; plain `vite-plus/test` is enough.
+Use `@effect/vitest`, as `node_modules/effect/AGENTS.md` does (its examples: `node_modules/effect/ai-docs/src/09_testing/`). It's a root dev dependency; an app whose tests use it adds `"@effect/vitest": "catalog:"` to its own `package.json`, like `effect`. It runs on the same Vitest as `vp test` and never ships in a mod.
 
-- Run with `Effect.runSync` (no async work) or `await Effect.runPromise`.
-- Assert an expected failure as a value, never with `try`/`catch`: `const result = Effect.runSync(Effect.result(program))`, then `Result.isFailure(result)` and `expect(result).toMatchObject({ failure: { _tag: "NotFound" } })`. Use `Effect.runPromiseExit` and `Exit.isFailure` when the program is async.
-- Nothing that waits on the clock (`Effect.sleep`, `Schedule`) belongs in a mod, so tests don't need `TestClock` (`.claude/rules/effect.md`).
+```ts
+import { assert, describe, it, layer } from "@effect/vitest";
+import { Effect, Schema } from "effect";
+
+describe("Users", () => {
+  it.effect("finds a user", () =>
+    Effect.gen(function* () {
+      const users = yield* Users;
+      assert.strictEqual(yield* users.find("1"), "Ann");
+    }).pipe(Effect.provide(Users.layerTest)),
+  );
+
+  it.effect("fails with NotFound for an unknown id", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* Users).find("2"));
+      assert.strictEqual(error._tag, "NotFound");
+    }).pipe(Effect.provide(Users.layerTest)),
+  );
+});
+
+// One layer for every test in the block.
+layer(Users.layerTest)("Users, shared layer", (it) => {
+  it.effect("finds a user", () =>
+    Effect.gen(function* () {
+      /* ... */
+    }),
+  );
+});
+```
+
+- **`it.effect`** runs an Effect as the test: no `runPromise`. A failure, a defect or a failed `assert` fails the test.
+- **Expected failures are values**, never `try`/`catch`: `Effect.flip` swaps the error into the success channel; `Effect.result` gives a `Result` to check.
+- **`it.effect.each(cases)(name, fn)`** runs one test per case; **`it.effect.prop(name, [Schema.Int], ([n]) => ...)`** checks a property against generated values. A property that fails is reported with the run count; check the property's own logic before blaming the code.
+- **Time:** `it.effect` runs on `TestClock`, so `Effect.sleep` waits until `TestClock.adjust` (`effect/testing`) moves time on. `it.live` uses the real clock. Mod code can't wait on time anyway (`.claude/rules/effect.md`), so this matters only for tests of non-mod code.
+- `layer(...)` shares one instance across its block, so state can leak between tests. Prefer `Effect.provide` per test unless the layer is costly.
 
 ## The test-first contract
 
