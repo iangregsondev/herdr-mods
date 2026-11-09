@@ -89,7 +89,9 @@ function writeLayout(file: string, layout: LayoutNode): void {
 /** Layouts that ship with Herdr: their structure can't be edited, only cloned. */
 function shippedLayouts(home: string): Set<string> {
   try {
-    // Only the keys are read, and any object has keys.
+    // Only the keys are read, so a non-object can't add a layout: JSON `null` makes
+    // Object.keys throw (caught below: an empty set), and a string, number or array
+    // gives only index keys or none, never a "layout:" key.
     const installed = JSON.parse(readFileSync(join(home, "installed.json"), "utf8")) as object;
     return new Set(
       Object.keys(installed)
@@ -101,14 +103,25 @@ function shippedLayouts(home: string): Set<string> {
   }
 }
 
+/**
+ * The shown layout's name from `herdr-app status` JSON. Null unless the text is
+ * a JSON object whose `layout` is a non-empty string.
+ */
+export function layoutFromStatus(text: string): string | null {
+  try {
+    const status: unknown = JSON.parse(text);
+    if (typeof status !== "object" || status === null || !("layout" in status)) return null;
+    const { layout } = status;
+    return typeof layout === "string" && layout !== "" ? layout : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The layout the Herdr window shows now, from `herdr-app status`; null when Herdr isn't running. */
 function shownLayout(): string | null {
   try {
-    // herdr-app's status JSON; a missing layout field falls through to null below.
-    const status = JSON.parse(execFileSync("herdr-app", ["status"], { encoding: "utf8" })) as {
-      layout?: string;
-    };
-    return status.layout ?? null;
+    return layoutFromStatus(execFileSync("herdr-app", ["status"], { encoding: "utf8" }));
   } catch {
     return null;
   }

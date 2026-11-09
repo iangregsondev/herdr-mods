@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vite-plus/test";
-import { hasSlot, withSlot, withoutSlots, type LayoutNode } from "./herdr-slots.ts";
+import {
+  hasSlot,
+  layoutFromStatus,
+  withSlot,
+  withoutSlots,
+  type LayoutNode,
+} from "./herdr-slots.ts";
 
 const slot = (mod: string): LayoutNode => ({ id: `b-${mod}`, type: "block", content: { mod } });
 
@@ -65,5 +71,24 @@ describe("withSlot", () => {
     expect(withSlot(bare(), "hello", "top", 240)).toBeNull();
     expect(withSlot(bare(), "hello", "none", 240)).toBeNull();
     expect(withSlot({ ...bare(), type: "column" }, "hello", "right", 240)).toBeNull();
+  });
+});
+
+describe("layoutFromStatus", () => {
+  test("reads the shown layout's name", () => {
+    expect(layoutFromStatus('{"layout":"work","errors":[]}')).toBe("work");
+  });
+
+  test("is null when the layout field is missing, empty or not a string", () => {
+    expect(layoutFromStatus('{"errors":[]}')).toBeNull();
+    expect(layoutFromStatus('{"layout":""}')).toBeNull();
+    expect(layoutFromStatus('{"layout":42}')).toBeNull();
+    expect(layoutFromStatus('{"layout":{"name":"work"}}')).toBeNull();
+  });
+
+  test("is null when the status isn't a JSON object", () => {
+    expect(layoutFromStatus("null")).toBeNull();
+    expect(layoutFromStatus('"work"')).toBeNull();
+    expect(layoutFromStatus("not json")).toBeNull();
   });
 });

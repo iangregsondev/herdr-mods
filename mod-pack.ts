@@ -64,6 +64,8 @@ function slotOnFirstBuild(name: string): () => void {
   return () => {
     if (done) return;
     done = true;
+    // The mod's own committed mod.json (vp pack runs in apps/<name>/), trusted unchecked.
+    // An unknown `place` gets a "by hand" message from ensureSlot, not a guess.
     const modJson = JSON.parse(readFileSync("assets/mod.json", "utf8")) as {
       place?: Place;
       size?: number;
