@@ -16,13 +16,36 @@ export default defineConfig({
     // Effect's rules. They need the oxlint that `prepare` patches (effect-tsgo patch).
     extends: [effectRecommended],
     ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**"],
-    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
+    jsPlugins: [
+      { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
+      { name: "functional", specifier: "./scripts/oxlint-functional.ts" },
+    ],
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
       // The only way to load gpui-kit.d.ts: it declares ambient modules, not exports.
       { files: ["herdr-env.d.ts"], rules: { "typescript/triple-slash-reference": "off" } },
+      // Functional style in pure modules (.claude/rules/functional-style.md).
+      {
+        files: ["apps/*/src/**", "packages/*/src/**"],
+        rules: {
+          "functional/no-let": "error",
+          "functional/immutable-data": "error",
+          "functional/no-loop-statements": "error",
+          "functional/no-throw-statements": "error",
+        },
+      },
+      // A mod's View is a class Herdr mutates through init/render: exempt it.
+      {
+        files: ["apps/*/src/main.ts"],
+        rules: {
+          "functional/no-let": "off",
+          "functional/immutable-data": "off",
+          "functional/no-loop-statements": "off",
+          "functional/no-throw-statements": "off",
+        },
+      },
     ],
     options: { typeAware: true, typeCheck },
   },
