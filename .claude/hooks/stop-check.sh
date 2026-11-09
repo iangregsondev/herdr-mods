@@ -10,7 +10,7 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 # Nothing changed since the last commit: the commit hook already checked it.
 [ -z "$(git status --porcelain)" ] && exit 0
 
-out=$( { vp check && vp run -r test && vp run test; } 2>&1 )
+out=$( { vp check && vp run -r test && vp run test && vp run audit:config; } 2>&1 )
 [ $? -eq 0 ] && exit 0
 
 {

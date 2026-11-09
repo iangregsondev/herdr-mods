@@ -69,6 +69,8 @@ export default defineConfig({
         cache: false,
       },
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
+      // Reads git's file list, which the cache doesn't track.
+      "audit:config": { command: "vpx scripts/audit.ts", cache: false },
     },
   },
 });
