@@ -12,6 +12,10 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 - To see a mod running, use the dev loop: `vp run <name>#dev` builds into the Herdr app, shows its panel and reloads on save; `vp run dev:remove <name>` (watch stopped first) removes the files and the panel. Prove a change with `herdr-app shot`. Steps and never-dos: `.claude/rules/dev-loop.md`; human guide: `docs/develop.md`. Never symlink a mod into Herdr: it doesn't hot-reload.
 - Every mod ships `assets/RECIPE.md` and `assets/preview.png` (`.claude/rules/mod-sharing.md`).
 
+## Effect
+
+Mods may use the Effect library (v4). Before writing any Effect code, first read `node_modules/effect/AGENTS.md` **completely**, and follow the links in the file when required. For APIs and concepts it doesn't cover, search the source in `node_modules/effect/src`. Effect is a root dev dependency (version in the `pnpm-workspace.yaml` catalog); a mod that uses it adds `"effect": "catalog:"` to its own `package.json`. What Herdr's runtime allows: `.claude/rules/effect.md`.
+
 ## Git and GitHub — IMPORTANT
 
 - **Never commit or push to `main`.** Branch as `<type>/<issue>-<short-description>` (issue number left out when there's none), created as a worktree with `wt`. Agent-only local branches, `research/<slug>` and `prototype/<slug>` are exempt.

@@ -1,3 +1,4 @@
+import { recommended as effectRecommended } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
 // CI has no Herdr app, so no gpui-kit/herdr types (docs/types.md): type-check locally only.
@@ -12,12 +13,12 @@ export default defineConfig({
   // .claude/skills/ holds upstream skills (skills-lock.json); reformatting them would drift from upstream.
   fmt: { ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**", ".claude/skills/**"] },
   lint: {
+    // Effect's rules. They need the oxlint that `prepare` patches (effect-tsgo patch).
+    extends: [effectRecommended],
     ignorePatterns: ["mods/**", ".herdr-types/**", ".scratch/**"],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
-      // Needs strictNullChecks, which stays off to match the Herdr app (see tsconfig.json).
-      "typescript/no-useless-default-assignment": "off",
     },
     overrides: [
       // The only way to load gpui-kit.d.ts: it declares ambient modules, not exports.
