@@ -125,8 +125,13 @@ export function runSh(script: string, options: ShOptions = {}): ShResult {
     encoding: "utf8",
     timeout: 10_000,
   });
-  if (result.error !== undefined) {
-    throw new Error(`runSh ${script}: ${result.error.message}`, { cause: result.error });
+  // EPIPE means the script exited before reading all its stdin, as one that stops early
+  // does. It still ran and exited, so its exit code and output stand.
+  const { error } = result;
+  const unreadStdin =
+    error !== undefined && "code" in error && error.code === "EPIPE" && result.status !== null;
+  if (error !== undefined && !unreadStdin) {
+    throw new Error(`runSh ${script}: ${error.message}`, { cause: error });
   }
   if (result.status === null) {
     throw new Error(`runSh ${script}: killed by ${result.signal ?? "a signal"}`);

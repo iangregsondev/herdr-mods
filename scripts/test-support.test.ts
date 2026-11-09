@@ -100,6 +100,16 @@ describe("runSh", () => {
     expect(runSh(script)).toEqual({ code: 3, stdout: "out\n", stderr: "err\n" });
   });
 
+  test("returns the exit when the script leaves its stdin unread", () => {
+    // Far more than a pipe holds, so the write always meets a closed pipe.
+    const script = writeFile(tempDir(), "s.sh", "echo early\nexit 0\n");
+    expect(runSh(script, { stdin: "x".repeat(1_000_000) })).toEqual({
+      code: 0,
+      stdout: "early\n",
+      stderr: "",
+    });
+  });
+
   test("throws with the cause when the script can't be started", () => {
     const script = writeFile(tempDir(), "s.sh", "exit 0\n");
     expect(() => runSh(script, { cwd: join(tempDir(), "missing") })).toThrow(/ENOENT/);
