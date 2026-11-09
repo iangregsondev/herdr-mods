@@ -114,6 +114,33 @@ const immutableData = defineRule({
   }),
 });
 
+// A cast overrides the type checker, so it needs a reason a reader can check: a comment
+// ending on the line above the cast, or on the cast's own line. `as const` only narrows.
+const explainedCast = defineRule({
+  meta: {
+    type: "problem",
+    messages: {
+      explainCast:
+        "Explain this type cast in a comment on the line above (why no type guard or better type works).",
+    },
+  },
+  create: (context) => {
+    const commentLines = new Set(
+      context.sourceCode.getAllComments().map((comment) => comment.loc.end.line),
+    );
+    const isConst = (node: ESTree.TSAsExpression | ESTree.TSTypeAssertion) =>
+      node.typeAnnotation.type === "TSTypeReference" &&
+      node.typeAnnotation.typeName.type === "Identifier" &&
+      node.typeAnnotation.typeName.name === "const";
+    const check = (node: ESTree.TSAsExpression | ESTree.TSTypeAssertion) => {
+      const line = node.loc.start.line;
+      if (isConst(node) || commentLines.has(line) || commentLines.has(line - 1)) return;
+      context.report({ node, messageId: "explainCast" });
+    };
+    return { TSAsExpression: check, TSTypeAssertion: check };
+  },
+});
+
 export default definePlugin({
   meta: { name: "functional" },
   rules: {
@@ -121,5 +148,6 @@ export default definePlugin({
     "no-loop-statements": noLoop,
     "no-throw-statements": noThrow,
     "immutable-data": immutableData,
+    "explained-cast": explainedCast,
   },
 });

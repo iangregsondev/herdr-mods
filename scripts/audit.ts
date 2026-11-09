@@ -37,6 +37,7 @@ const deadHooks = [...settings.matchAll(/\$CLAUDE_PROJECT_DIR\/([^"\\\s]+)/g)]
   .map((file) => `.claude/settings.json: hook script ${file} does not exist`);
 
 const locked = Object.keys(
+  // The skills CLI writes this file; a different shape fails loudly here.
   (JSON.parse(read("skills-lock.json")) as { skills: Record<string, unknown> }).skills,
 );
 const missingSkills = locked

@@ -65,6 +65,11 @@ export default defineConfig({
           "functional/no-throw-statements": "off",
         },
       },
+      // Every cast says why, main.ts and scripts included.
+      {
+        files: ["apps/*/src/**", "packages/*/src/**", "scripts/**"],
+        rules: { "functional/explained-cast": "error" },
+      },
     ],
     options: { typeAware: true, typeCheck },
   },

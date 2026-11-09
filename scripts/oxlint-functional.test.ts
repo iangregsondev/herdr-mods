@@ -5,7 +5,10 @@ import plugin from "./oxlint-functional.ts";
 RuleTester.describe = describe;
 RuleTester.it = it;
 
-const tester = new RuleTester({ languageOptions: { sourceType: "module" } });
+// Parse as TypeScript, like the modules the rules run on.
+const tester = new RuleTester({
+  languageOptions: { sourceType: "module", parserOptions: { lang: "ts" } },
+});
 const rule = (name: string) => {
   const found = plugin.rules[name];
   if (!found) throw new Error(`no rule ${name}`);
@@ -58,5 +61,22 @@ tester.run("immutable-data", rule("immutable-data"), {
     { code: "a.b.splice(0, 1);", errors: [{ messageId: "noMutation" }] },
     { code: "Object.assign(o, p);", errors: [{ messageId: "noMutation" }] },
     { code: "Object.defineProperty(o, 'a', {});", errors: [{ messageId: "noMutation" }] },
+  ],
+});
+
+tester.run("explained-cast", rule("explained-cast"), {
+  valid: [
+    "const xs = [1, 2] as const;",
+    "// gpui wants hex colours; theme() is typed as plain strings.\nconst t = theme() as Colors;",
+    "const t = theme() as Colors; // theme() is typed as plain strings",
+    "const n = 1 satisfies number;",
+  ],
+  invalid: [
+    { code: "const t = theme() as Colors;", errors: [{ messageId: "explainCast" }] },
+    { code: "const t = <Colors>theme();", errors: [{ messageId: "explainCast" }] },
+    {
+      code: "// A comment two lines up doesn't count.\n\nconst t = theme() as Colors;",
+      errors: [{ messageId: "explainCast" }],
+    },
   ],
 });

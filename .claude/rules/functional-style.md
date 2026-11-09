@@ -7,16 +7,49 @@ paths:
 
 # Functional style
 
-Pure modules (no `herdr` or `gpui-*` imports) are written as plain functions over immutable data. A mod's `main.ts` is exempt: its `View` is a class Herdr drives through `init` and `render`. Keep that file thin and push logic into pure modules.
+Pure modules (no `herdr` or `gpui-*` imports) are written as plain functions over immutable data. A mod's `main.ts` is exempt from the first four rules: its `View` is a class Herdr drives through `init` and `render`.
 
-`vp check` enforces the first four rules in `apps/*/src/**` and `packages/*/src/**` through a local oxlint plugin, `scripts/oxlint-functional.ts`. It reads syntax only, with no type information. The rest is on you. `scripts/` isn't linted for style, but write new scripts this way where it's easy.
+`vp check` enforces the rules marked **(lint)** through a local oxlint plugin, `scripts/oxlint-functional.ts`, in `apps/*/src/**` and `packages/*/src/**`. It reads syntax only, with no type information. The rest is on you. `scripts/` gets only the cast rule, but write new scripts this way where it's easy.
 
-- **`const` only.** No `let` or `var` (`functional/no-let`). Need a value that changes? Compute it once from its inputs.
-- **No loops.** Use `map`, `filter`, `reduce`, `flatMap` or recursion (`functional/no-loop-statements`).
-- **No mutation.** Build new values with spread, `map`, `slice` and `[...xs].sort()` (the build targets ES2022, so no `toSorted` or `toSpliced`); never assign to a property, `delete`, or call `push`, `sort`, `splice` and friends on shared data (`functional/immutable-data`). A value made in the same expression (`[...xs].sort()`) is fine.
-- **No `throw`.** Failure is a value: a `Data.TaggedError` in an `Effect`, or a `Result` (`functional/no-throw-statements`).
-- **Total functions.** Every input gets an answer. Handle empty lists, zero and missing keys; return `Option` or `Result` instead of assuming.
-- **Parse, don't validate.** Turn outside data (`exec` output, files, `fetch`) into a typed value once, at the edge, with `Schema`. Past that point, code trusts the type and never re-checks.
-- **Tagged errors.** Each failure is its own `Data.TaggedError("Name")` class, so callers handle it with `Effect.catchTag` and the type lists every way it can fail.
-- **`Result` or `Effect`?** Synchronous logic that can fail returns a `Result`. Reach for `Effect` when it needs services, async work or resource handling. Never wrap a plain value in `Effect` for its own sake.
-- **Want an exception to a lint rule?** Fix the design first. If it truly can't be avoided, disable the one rule on the one line, with a comment saying why.
+## Shape
+
+- **Pure core, thin shell.** Logic lives in pure modules: data in, data out, tested in `tests/`. `main.ts` is the shell: it reads from `herdr` (spaces, theme, `exec`), calls the pure functions, and renders. Keep it thin.
+- **Make illegal states unrepresentable.** A tagged union (`Data.taggedEnum`, or a plain `{ _tag: ... }` union) beats an object of optional fields that can contradict each other. Keep look-alike strings and numbers apart with branded types (`Brand.nominal`).
+
+## Data
+
+- **`const` only (lint: `no-let`).** No `let` or `var`. Need a value that changes? Compute it once from its inputs.
+- **No loops (lint: `no-loop-statements`).** Use `map`, `filter`, `reduce`, `flatMap` or recursion.
+- **No mutation (lint: `immutable-data`).** Build new values with spread, `map`, `slice` and `[...xs].sort()` (the build targets ES2022, so no `toSorted` or `toSpliced`). Never assign to a property, `delete`, or call `push`, `sort`, `splice` and friends on shared data. A value made in the same expression (`[...xs].sort()`) is fine.
+- **Casts say why (lint: `explained-cast`, `main.ts` and `scripts/` too).** Before `as`, try a type guard, a better type or a generic. A cast that's still needed gets a comment on the line above saying why. `as const` is fine.
+
+## Failure
+
+- **No `throw` (lint: `no-throw-statements`).** Failure is a value.
+- **Total functions.** Every input gets an answer. Handle empty lists, zero and missing keys. Absence is an `Option` (`Option.fromNullishOr` turns a nullable into one); failure is a `Result` or an `Effect`.
+- **`Result` for pure logic, `Effect` for effects.** Synchronous logic that can fail returns a `Result` (`Result.succeed`, `Result.fail`). Use `Effect` for I/O, async work, services and resources. Never wrap pure logic in `Effect`; convert at the edge with `Effect.fromResult`, or `yield*` the `Result` inside `Effect.gen`.
+- **Tagged errors.** One error class per failure mode, so the type lists every way a call can fail and callers handle each with `Effect.catchTag` or `Effect.catchTags`. Inside `Effect.gen`, fail with `return yield* new MyError(...)`. Use `Data.TaggedError` in mods; `Schema.TaggedError` pulls in `Schema` (about 260 KB of `main.js`), so use it only where the module already parses with `Schema` (`.claude/rules/effect.md`).
+- **Parse, don't validate.** Turn outside data (`exec` output, files, `fetch`) into a typed value once, at the edge, with `Schema`. Past that point, code trusts the type and never re-checks. For quick runtime checks use `Predicate` (`Predicate.isString`, `Predicate.isObject`), never a hand-written `isString`.
+
+## Effect v4, not v3
+
+`effect` here is v4. Code and examples written for v3 (much of what's online, and other repos) use APIs that no longer exist. Check an API in `node_modules/effect` before using it. The common traps:
+
+| v3 (don't use)                                                      | v4                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Either`, `Either.right` / `left`                                   | `Result`, `Result.succeed` / `fail`                                                                     |
+| `Context.Tag`, `Context.GenericTag`, `Effect.Tag`, `Effect.Service` | `class X extends Context.Service<X, Shape>()("id")`, with an explicit `Layer.succeed` or `Layer.effect` |
+| static service accessors (`Svc.method()`)                           | `yield* Svc`, or `Svc.use((svc) => ...)`                                                                |
+| `Effect.catchAll`, `Effect.orElse`                                  | `Effect.catch`                                                                                          |
+| `Effect.either`                                                     | `Effect.result`                                                                                         |
+| `Option.fromNullable`                                               | `Option.fromNullishOr`                                                                                  |
+
+## Writing Effect
+
+- **`Effect.gen` for inline code; `Effect.fn("name")` for a reusable function** (`Effect.fnUntraced` when tracing isn't useful). Don't write a function that only wraps and returns an `Effect.gen`. Add behaviour with `.pipe(...)` on `Effect.gen`, or as extra arguments to `Effect.fn` (never `.pipe` on `Effect.fn`).
+- **Check Effect's modules before writing a helper:** `Array`, `Record`, `Option`, `Result`, `Match`, `Predicate`, `Schema`. Many problems are already solved.
+- **Promises inside Effect code** go through `Effect.tryPromise`, so a rejection becomes a typed error rather than a defect.
+
+## Exceptions
+
+Want an exception to a lint rule? Fix the design first. If it truly can't be avoided, disable the one rule on the one line (`oxlint-disable-next-line functional/<rule>`) with a comment saying why.

@@ -4,11 +4,11 @@ import { v_flex } from "gpui-base";
 import { spaces, theme } from "herdr";
 import { greeting } from "./greeting.ts";
 
-// theme() is typed as plain strings, but the style methods want hex colours.
 type Colors = Record<string, `#${string}`>;
 
 export default class Hello extends View {
   render() {
+    // theme() is typed as plain strings, but the style methods want hex colours.
     const t = theme() as Colors;
     return v_flex()
       .size_full()
