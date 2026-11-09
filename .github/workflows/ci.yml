@@ -25,7 +25,10 @@ jobs:
       - name: Format and lint
         run: vp check
       - name: Test
-        run: vp run -r test
+        # -r covers the workspace packages; the root's own scripts/ tests need their own run.
+        run: vp run -r test && vp run test
+      - name: Config rot audit
+        run: vp run audit:config
       - name: Build
         run: vp run -r build
       - name: mods/ matches the source
