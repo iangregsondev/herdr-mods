@@ -1,0 +1,13 @@
+{
+  // Root scripts and their tests run on Node (vpx, vp test), not in the Herdr app,
+  // so they get Node's types. Without this file they would only see Node's types when
+  // some other file in the same type-check run pulled them in, as vite-plus's types do.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // Empty on purpose: drops the root's `herdr` mapping, since scripts never import
+    // mods' runtime modules (herdr, gpui-kit), which exist only inside the Herdr app.
+    "paths": {}
+  },
+  "include": ["*.ts"]
+}

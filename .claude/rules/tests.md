@@ -12,6 +12,17 @@ paths:
 - `herdr` and `gpui-kit` exist only inside the Herdr app, so tests import pure modules only. Gate the UI with `vp run check:mods` after `vp run -r build`, and prove it in the dev loop (`.claude/rules/dev-loop.md`).
 - Run with `vp run -r test`, or `vp -C apps/<name> test` for one package. Root scripts: `vp test scripts`.
 
+## Testing scripts and hooks
+
+Root scripts, `mod-pack.ts` and `.claude/hooks/*.sh` are tested from `scripts/*.test.ts` (what `vp test scripts` runs), with the helpers in `scripts/test-support.ts`.
+
+- **Seams are parameters with defaults.** A script that touches the Herdr home, runs `herdr-app` or reads argv takes those as parameters (`home`, `status`, `watch`, ...) whose defaults do the real thing. Tests pass a temp folder and a fake. A script's CLI part stays thin: it reads argv and the disk, calls the exported function, prints and exits.
+- **Shell scripts run under `sh`** with `runSh`, against temp folders, with `PATH` built from `toolPath` (or `linkTools`) plus `fakeBin` stand-ins for the commands the script calls (such as `vp`). Leave a tool out of `PATH` to test its missing path.
+- **A fake that records its calls** is `fakeLoggingBin`; read the calls back with `loggedLines`.
+- **Git runs isolated.** Use `git` from `test-support.ts`, or merge `isolatedGitEnv()` into `runSh`'s `env`, so the host's git config and repo never leak in.
+- **Shared helpers live once,** in `scripts/test-support.ts`: layouts use `slot` and `readLayout`. Add a helper there before copying it into a second test.
+- **Never touch real state.** No test reads or writes `~/.config/herdr-app`, the repo's `.herdr-types/`, or runs the real `vp run verify`. A script that writes beside itself runs from a copy in a temp folder.
+
 ## Test doubles
 
 - Prefer real objects, then hand-written fakes that return known data. Reach for `vi.fn` or `vi.mock` only when a fake is impractical.
