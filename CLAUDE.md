@@ -12,6 +12,17 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 - To see a mod running, use the dev loop: `vp run <name>#dev` builds into the Herdr app, shows its panel and reloads on save; `vp run dev:remove <name>` (watch stopped first) removes the files and the panel. Prove a change with `herdr-app shot`. Steps and never-dos: `.claude/rules/dev-loop.md`; human guide: `docs/develop.md`. Never symlink a mod into Herdr: it doesn't hot-reload.
 - Every mod ships `assets/RECIPE.md` and `assets/preview.png` (`.claude/rules/mod-sharing.md`).
 
+## Effect
+
+Mods may use the Effect library (v4). Before writing any Effect code, first read `node_modules/effect/AGENTS.md` **completely**, and follow the links in the file when required. For APIs and concepts it doesn't cover, search the source in `node_modules/effect/src`. Effect is a root dev dependency (version in the `pnpm-workspace.yaml` catalog); a mod that uses it adds `"effect": "catalog:"` to its own `package.json`. What Herdr's runtime allows: `.claude/rules/effect.md`. Test Effect code with `@effect/vitest` (root dev dependency, also `catalog:`): `.claude/rules/tests.md`.
+
+Effect v3 code (most examples online, other repos) won't compile here: `Either`, `Context.Tag` and `Effect.Service` are gone. The v3-to-v4 table is in `.claude/rules/functional-style.md`.
+
+## Gotchas
+
+- **Lint is oxlint, not ESLint.** ESLint plugins load through oxlint's `jsPlugins`, but any that need TypeScript's JS API (typescript-eslint's type utilities) fail to load under TypeScript 7. Write the rule into `scripts/oxlint-functional.ts` instead, with tests.
+- **`vp run -r <task>` includes the root package** when it has that task. `vp run -r test` already runs the root's `scripts/*.test.ts`; don't add `vp run test` after it.
+
 ## Git and GitHub — IMPORTANT
 
 - **Never commit or push to `main`.** Branch as `<type>/<issue>-<short-description>` (issue number left out when there's none), created as a worktree with `wt`. Agent-only local branches, `research/<slug>` and `prototype/<slug>` are exempt.
@@ -24,7 +35,9 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 
 ## Package management: always `vp`
 
-Never run `pnpm`, `npm`, `npx`, `pnpx`, `yarn` or `bun`. A hook blocks them.
+Never run `pnpm`, `npm`, `npx`, `pnpx`, `yarn` or `bun`. Installs that skip `vp` fail: a `preinstall` guard (`scripts/require-vp.sh`) stops any install not run through `vp` (`pnpm`, `npm` or `yarn`), and `devEngines` in `package.json` also refuses `npm` and `yarn`. Nothing stops a one-off `npx` or `pnpm dlx`, so use the table.
+
+Every dependency version lives once, in the `catalog:` of `pnpm-workspace.yaml`; each `package.json` says `"catalog:"`, never a version. `vp add` does this itself (`catalogMode: prefer`): check the diff shows `"catalog:"`. To bump a dependency, change its catalog line, then `vp install`.
 
 | Instead of                | Use                                                       |
 | ------------------------- | --------------------------------------------------------- |

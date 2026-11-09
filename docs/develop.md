@@ -85,8 +85,7 @@ The watch only writes into Herdr. Build into the repo and check:
 
 ```bash
 vp run -r build       # writes mods/<name>/ (commit it with the source)
-vp run -r test
-vp check
+vp run verify         # format, lint, type-check, all tests, config audit
 vp run check:mods
 ```
 

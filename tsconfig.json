@@ -1,7 +1,11 @@
 {
-  // Matches the jsconfig.json the Herdr app writes into each mod folder:
-  // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own),
-  // and strictNullChecks off because a View sets its state in init(), not a constructor.
+  // Effect's schema adds the language service plugin's options to editor completion.
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  // Based on the jsconfig.json the Herdr app writes into each mod folder:
+  // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own).
+  // Differences: the app turns strictNullChecks off; here it stays on, because Effect's types
+  // (Option, the error channel) depend on it. Instead only strictPropertyInitialization is off,
+  // because a View sets its state in init(), not a constructor.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -9,12 +13,15 @@
     "lib": ["ES2022"],
     "types": [],
     "strict": true,
-    "strictNullChecks": false,
+    "strictPropertyInitialization": false,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
+    // Effect's language service, for the editor (TypeScript patched by `prepare`).
+    // Its diagnostics come from `vp lint` instead, so they aren't shown twice.
+    "plugins": [{ "name": "@effect/language-service", "diagnostics": false }],
     // The Herdr app's types, linked by `vp run types` (scripts/link-herdr-types.sh).
     // gpui-kit.d.ts declares its modules itself; herdr.d.ts is a plain module file.
     "paths": {

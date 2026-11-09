@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned actions in .github/workflows/ current; Dependabot updates the
+# SHA and its version comment together. npm is left out: versions live in the pnpm
+# catalog and change through `vp` (CLAUDE.md, "Package management").
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait a week after a release, so a bad or compromised one is caught upstream first.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci

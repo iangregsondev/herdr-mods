@@ -1,12 +1,23 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-package-managers.sh\""
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-edited.sh\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-check.sh\"",
+            "timeout": 600
           }
         ]
       }

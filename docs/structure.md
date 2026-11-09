@@ -18,6 +18,9 @@ layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod (watch mode builds into Herdr)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from Herdr
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
+scripts/require-vp.sh     preinstall guard: installs must go through vp
+scripts/oxlint-functional.ts  lint rules: functional style in src/ (not main.ts); explained casts in src/, scripts/, mod-pack.ts
+scripts/audit.ts          config rot audit (vp run audit:config; pure checks in audit-config.ts)
 herdr-env.d.ts            loads the Herdr app's types (see docs/types.md)
 ```
 
@@ -25,5 +28,5 @@ herdr-env.d.ts            loads the Herdr app's types (see docs/types.md)
 - **Build:** `vp run -r build` runs `vp pack` in each app. The output is `mods/<name>/main.js`: ESM, ES2022, not minified (installers read every file). `herdr`, `gpui-kit` and the other built-ins stay external, and everything else gets bundled.
 - **Commit `mods/`.** Installs only copy files (with no build and no `npm install`), and hmod matches installed mods to this repo by file hash.
 - **Dev:** `vp run <name>#dev` watches and builds into `~/.config/herdr-app/mods/<name>/` instead, so Herdr reloads on every save. It never touches the repo's `mods/`. Details: [develop.md](develop.md).
-- **The runtime is the Herdr app's embedded JS** (gpui-kit). It is not Node or Bun: no Node APIs, no DOM, no `setTimeout`.
+- **The runtime is the Herdr app's embedded JS** (gpui-kit). It is not Node or Bun: no Node APIs and no DOM. `setTimeout` exists but throws: use `cx.timer`.
 - **New mod:** copy `apps/hello/`, rename it in `package.json`, `vite.config.ts` and `assets/mod.json`, then `vp install`. Full steps: [develop.md](develop.md).

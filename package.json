@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp check && vp run -r test && vp run -r build",
-    "prepare": "vp config && sh scripts/link-herdr-types.sh",
+    "verify": "vp check --deny-warnings && vp run -r test && vp run audit:config",
+    "ready": "vp run verify && vp run -r build",
+    "preinstall": "sh scripts/require-vp.sh",
+    "prepare": "vp config && sh scripts/link-herdr-types.sh && effect-tsgo patch --oxlint --typescript",
     "test": "vp test scripts"
   },
   "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:",
+    "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "devEngines": {

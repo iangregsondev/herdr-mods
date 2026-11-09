@@ -11,7 +11,7 @@ Thanks for helping. This page says how work moves from an idea to a merged chang
 5. **Implement.** Each ticket is built test-first. One pull request carries the whole spec.
 6. **Merge.** Only the owner merges.
 
-Much of this is done with a coding agent. Its version of these rules is in [`CLAUDE.md`](CLAUDE.md). Where this page and `CLAUDE.md` disagree, `CLAUDE.md` wins.
+Much of this is done with a coding agent. Its version of these rules is in [`CLAUDE.md`](CLAUDE.md). Where this page and `CLAUDE.md` disagree, `CLAUDE.md` wins. What the agent's hooks do, and suggested personal settings: [docs/claude-code.md](docs/claude-code.md).
 
 ## Issue types
 
@@ -49,13 +49,12 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope
 Before you push:
 
 ```bash
-vp check              # format, lint, type-check (needs the Herdr app for types)
-vp run -r test
+vp run verify         # format, lint, type-check (needs the Herdr app for types), all tests, config audit
 vp run -r build       # commit the updated mods/
 vp run check:mods     # herdr-app check on every built mod
 ```
 
-CI runs the same, except the type-check and `herdr-app check`, and fails if `mods/` doesn't match the source.
+CI runs `vp run verify` and the build, and fails if `mods/` doesn't match the source. Two checks run only on your machine, because they need the Herdr app: the type-check (CI turns it off) and `herdr-app check`.
 
 ## Opening a pull request
 
