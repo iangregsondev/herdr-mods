@@ -2,10 +2,20 @@
 paths:
   - "apps/*/tests/**"
   - "packages/*/tests/**"
+  - "scripts/*.test.ts"
 ---
 
 # Tests
 
-- Tests live in `<package>/tests/*.test.ts`, beside `src/`, and import from `vite-plus/test`.
-- `herdr` and `gpui-kit` exist only inside the Herdr app, so tests import pure modules only. Gate the UI with `vp run check:mods` after `vp run -r build`.
-- Run with `vp run -r test`, or `vp -C apps/<name> test` for one package.
+- Tests live in `<package>/tests/*.test.ts`, beside `src/`, and import from `vite-plus/test`. Root scripts keep theirs beside them (`scripts/*.test.ts`).
+- `herdr` and `gpui-kit` exist only inside the Herdr app, so tests import pure modules only. Gate the UI with `vp run check:mods` after `vp run -r build`, and prove it in the dev loop (`.claude/rules/dev-loop.md`).
+- Run with `vp run -r test`, or `vp -C apps/<name> test` for one package. Root scripts: `vp test scripts`.
+
+## The test-first contract
+
+Write behaviour test-first with the `mattpocock-skills:tdd` skill. It owns the loop: seams, vertical slices, good and bad tests. These rules sit on top of it:
+
+- **Red for the right reason.** Before writing code, run the new test and read the failure. It must fail on the behaviour you're adding (a wrong value, a missing export), not on a typo, a bad import or a broken fixture. Fix the test until it fails for the right reason, then write the code.
+- **Never weaken a failing test.** Don't loosen an assertion, delete a case, add `.skip` or `.todo`, or change the expected value to match what the code returns. The test is the spec; change the code.
+- **Stop and say so when the code can't pass the test as written.** If a test looks wrong, or passing it would need a change outside the task, stop. Tell the person which test, what it asks for and why the code can't meet it. They decide whether the test changes.
+- **A bug fix starts with a test** that reproduces it and fails, then the fix.
