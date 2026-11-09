@@ -7,7 +7,7 @@
 // Herdr hot-reloads only real files in its own mods/ folder (a symlink to
 // mods/<name>/ does not reload), so the build has to land there.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { UserConfig } from "vite-plus";
 import { DEV_MARKER, ensureSlot, herdrHome, type Place } from "./scripts/herdr-slots.ts";
 
@@ -32,12 +32,29 @@ const HERDR_BUILTINS = [
 
 const isWatch = process.argv.includes("--watch") || process.argv.includes("-w");
 
+type EnsureSlot = (
+  mod: string,
+  modJson: { place?: Place; size?: number },
+  options: { home: string },
+) => string;
+
+export interface ModPackOptions {
+  /** Build into the Herdr app (watch mode). Defaults to `--watch` or `-w` in argv. */
+  watch?: boolean;
+  /** The Herdr app home a watch build goes into. Defaults to `herdrHome()`. */
+  home?: string;
+  /** The mod's source folder, where `assets/mod.json` lives. Defaults to the working directory. */
+  modDir?: string;
+  /** Puts the mod's slot back in the shown layout after the first watch build. */
+  ensureSlot?: EnsureSlot;
+}
+
 /** The mod's folder in the Herdr app, claimed for a dev build. */
-function devOutDir(name: string): string {
-  const mods = join(herdrHome(), "mods");
+function devOutDir(name: string, home: string): string {
+  const mods = join(home, "mods");
   const dir = join(mods, name);
   if (!existsSync(mods)) {
-    throw new Error(`mod-pack: no Herdr app at ${herdrHome()} (set HERDR_APP_HOME?)`);
+    throw new Error(`mod-pack: no Herdr app at ${home} (set HERDR_APP_HOME?)`);
   }
   if (existsSync(dir) && !existsSync(join(dir, DEV_MARKER))) {
     throw new Error(
@@ -59,23 +76,34 @@ function devOutDir(name: string): string {
  * layout if it has none. Herdr only docks a mod the first time it ever sees it,
  * so a dev build that was removed and comes back would otherwise not show.
  */
-function slotOnFirstBuild(name: string): () => void {
+function slotOnFirstBuild(
+  name: string,
+  { home, modDir, slot }: { home: string; modDir: string; slot: EnsureSlot },
+): () => void {
   let done = false;
   return () => {
     if (done) return;
     done = true;
     // The mod's own committed mod.json (vp pack runs in apps/<name>/), trusted unchecked.
     // An unknown `place` gets a "by hand" message from ensureSlot, not a guess.
-    const modJson = JSON.parse(readFileSync("assets/mod.json", "utf8")) as {
+    const modJson = JSON.parse(readFileSync(resolve(modDir, "assets/mod.json"), "utf8")) as {
       place?: Place;
       size?: number;
     };
-    console.log(ensureSlot(name, modJson));
+    console.log(slot(name, modJson, { home }));
   };
 }
 
-export function modPack(name: string): PackConfig {
-  const outDir = isWatch ? devOutDir(name) : `../../mods/${name}`;
+export function modPack(
+  name: string,
+  {
+    watch = isWatch,
+    home = herdrHome(),
+    modDir = process.cwd(),
+    ensureSlot: slot = ensureSlot,
+  }: ModPackOptions = {},
+): PackConfig {
+  const outDir = watch ? devOutDir(name, home) : `../../mods/${name}`;
   return {
     entry: { main: "src/main.ts" },
     outDir,
@@ -88,9 +116,9 @@ export function modPack(name: string): PackConfig {
     // Installers and users read every file, so keep the output readable.
     minify: false,
     // Never clean the Herdr app's folder: it holds the marker and files Herdr writes.
-    clean: !isWatch,
+    clean: !watch,
     deps: { neverBundle: HERDR_BUILTINS },
     copy: [{ from: "assets/*", to: outDir }],
-    ...(isWatch ? { onSuccess: slotOnFirstBuild(name) } : {}),
+    ...(watch ? { onSuccess: slotOnFirstBuild(name, { home, modDir, slot }) } : {}),
   };
 }
