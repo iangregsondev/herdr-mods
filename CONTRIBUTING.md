@@ -49,13 +49,12 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope
 Before you push:
 
 ```bash
-vp check              # format, lint, type-check (needs the Herdr app for types)
-vp run -r test
+vp run verify         # format, lint, type-check (needs the Herdr app for types), all tests, config audit
 vp run -r build       # commit the updated mods/
 vp run check:mods     # herdr-app check on every built mod
 ```
 
-CI runs the same, except the type-check and `herdr-app check`, and fails if `mods/` doesn't match the source.
+CI runs `vp run verify` and the build, and fails if `mods/` doesn't match the source. Two checks run only on your machine, because they need the Herdr app: the type-check (CI turns it off) and `herdr-app check`.
 
 ## Opening a pull request
 

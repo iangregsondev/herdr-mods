@@ -12,5 +12,5 @@ This repo is public, and `.claude/settings.json` is tracked: everyone who clones
 - **Tracked settings hold only what every contributor needs:** the hooks in `.claude/hooks/`. Each hook is a small `sh` script with a header comment saying when it runs and what it blocks.
 - **No local paths, hostnames or machine details** in any tracked file under `.claude/`. Refer to the repo with `$CLAUDE_PROJECT_DIR`.
 - **Rules (`.claude/rules/*.md`) carry `paths:` globs** that must match real files. A glob that matches nothing never loads its rule.
-- **Skills in `skills-lock.json` are upstream copies.** Don't edit them; update through the lock. The repo's own skills (such as `audit`) sit beside them, outside the lock.
+- **Skills in `skills-lock.json` are upstream copies.** Don't edit them; update through the lock. Their commands are written for other repos: translate them per CLAUDE.md (`pnpm add effect` becomes `vp add effect`, with `"catalog:"` in `package.json`; `from "vitest"` becomes `from "vite-plus/test"`, or `@effect/vitest` for Effect code, per `.claude/rules/tests.md`). The repo's own skills (such as `audit`) sit beside them, outside the lock.
 - **Run `vp run audit:config`** after moving or renaming files; the `audit` skill covers the rest.

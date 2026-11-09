@@ -18,7 +18,7 @@ The human guide is `docs/develop.md`. These are the steps an agent follows to se
 2. Edit `apps/<name>/src/`. Each save rebuilds into `~/.config/herdr-app/mods/<name>/` and Herdr reloads.
 3. Prove it: `herdr-app status` (errors must be `[]`), `herdr-app check ~/.config/herdr-app/mods/<name>`, and `herdr-app shot <file>` cropped to the panel, then read the image. A screenshot is the evidence a change works.
 4. When done: stop the watch (TaskStop) **before** `vp run dev:remove <name>`. Removing while it runs makes it error and rewrite the folder.
-5. Before committing: `vp run -r build`, `vp run -r test`, `vp check`, `vp run check:mods`, and commit `mods/` with the source.
+5. Before committing: `vp run -r build`, `vp run verify` (check, every test, config audit), `vp run check:mods`, and commit `mods/` with the source.
 
 ## Never
 

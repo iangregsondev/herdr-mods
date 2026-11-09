@@ -13,7 +13,7 @@ Their header says not to commit them: "A committed copy could only ever be the s
 - It runs on every `vp install` (the root `prepare` script), or by hand with `vp run types`. `HERDR_APP_HOME` overrides the source folder.
 - With no Herdr app (CI), it warns and exits 0. Mod type-checks then fail with "Cannot find module 'gpui-kit'".
 - `herdr-env.d.ts` loads `gpui-kit.d.ts` with a triple-slash reference, because it declares ambient modules. `tsconfig.json` maps `herdr` to `herdr.d.ts` through `paths`, because that file is a plain module.
-- `tsconfig.json` copies the app's own `jsconfig.json`: ES2022, no DOM or Node libs, `strictNullChecks` off (a View sets its state in `init`).
+- `tsconfig.json` is based on the app's own `jsconfig.json`: ES2022, no DOM or Node libs. One difference: the app turns `strictNullChecks` off because a View sets its state in `init`, not a constructor. This repo keeps `strictNullChecks` on, because Effect's types (`Option`, the error channel) depend on it, and turns only `strictPropertyInitialization` off for the same `init` reason.
 - `herdr-app check` writes `gpui-kit.d.ts` and `jsconfig.json` into each `mods/<name>/`. Both are gitignored.
 
 ## Known gaps

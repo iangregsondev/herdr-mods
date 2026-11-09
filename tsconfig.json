@@ -1,10 +1,11 @@
 {
   // Effect's schema adds the language service plugin's options to editor completion.
   "$schema": "./node_modules/@effect/tsgo/schema.json",
-  // Matches the jsconfig.json the Herdr app writes into each mod folder:
-  // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own),
-  // and strictPropertyInitialization off because a View sets its state in init(), not a constructor.
-  // strictNullChecks stays on: Effect's types (Option, the error channel) depend on it.
+  // Based on the jsconfig.json the Herdr app writes into each mod folder:
+  // ES2022, no DOM or Node globals (gpui-kit.d.ts declares the runtime's own).
+  // Differences: the app turns strictNullChecks off; here it stays on, because Effect's types
+  // (Option, the error channel) depend on it. Instead only strictPropertyInitialization is off,
+  // because a View sets its state in init(), not a constructor.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",

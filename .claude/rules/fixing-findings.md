@@ -17,4 +17,4 @@ Always loaded: a finding arrives before you touch any file. It applies to findin
 - **Never resolve a review thread.** The reviewer resolves it once they've seen the fix.
 - **No leftover markers.** No `TODO`, `FIXME`, `XXX` or `HACK`: do the work, or open an issue and leave the code clean.
 
-`vp check` backs up the comment rules with oxlint's `no-warning-comments` (terms in `vite.config.ts`). It matches anywhere in a comment, so a comment that truly needs one of those words (say, explaining a "review" feature) gets one `oxlint-disable-next-line no-warning-comments` with the reason.
+`vp check` backs up the comment rules with oxlint's `no-warning-comments` (terms in `vite.config.ts`): the markers above, `review`, and references such as `pr #`, `fixes #`, `closes #` and `issue #`. A citation the terms don't catch (a bare `#12`, "per the thread") is still against the rule. It matches anywhere in a comment, so a comment that truly needs one of those words (say, explaining a "review" feature) gets one `oxlint-disable-next-line no-warning-comments` with the reason.
