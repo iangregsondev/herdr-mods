@@ -5,6 +5,8 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
+    // Empty on purpose: drops the root's `herdr` mapping, since scripts never import
+    // mods' runtime modules (herdr, gpui-kit), which exist only inside the Herdr app.
     "paths": {}
   },
   "include": ["*.ts"]
