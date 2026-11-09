@@ -27,3 +27,18 @@ export const pathRefs = (markdown: string, roots: readonly string[]): string[] =
   );
   return [...new Set(paths)];
 };
+
+export type TaskRef = { task: string; pkg?: string; recursive: boolean };
+
+/** The task each backticked `vp run` command names: `vp run -r build`, `vp run hello#dev`. */
+export const vpRunTasks = (markdown: string): TaskRef[] =>
+  [...markdown.matchAll(/`vp run ([^`\n]+)`/g)]
+    .map((match) => (match[1] ?? "").split(/\s+/))
+    .filter((words) => !words.some((word) => /[<>]/.test(word)))
+    .flatMap((words): TaskRef[] => {
+      const spec = words.find((word) => !word.startsWith("-"));
+      if (spec === undefined) return [];
+      const recursive = words.includes("-r");
+      const [pkg, task] = spec.includes("#") ? spec.split("#") : [undefined, spec];
+      return task === undefined ? [] : [pkg ? { task, pkg, recursive } : { task, recursive }];
+    });

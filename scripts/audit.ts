@@ -1,10 +1,11 @@
-// Config rot audit: dead paths in docs and rules, rule globs matching no file, hooks and
-// locked skills whose files are gone. Prints each problem; exits 1 if there are any.
-// Run: vp run audit. The judgment checks are in .claude/skills/audit/SKILL.md.
+// Config rot audit: dead paths in docs and rules, rule globs matching no file, `vp run`
+// tasks that don't exist, hooks and locked skills whose files are gone.
+// Prints each problem; exits 1 if there are any. Run: vp run audit:config. The judgment checks are in .claude/skills/audit/SKILL.md.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
-import { pathRefs, ruleGlobs } from "./audit-config.ts";
+import config from "../vite.config.ts";
+import { pathRefs, ruleGlobs, vpRunTasks } from "./audit-config.ts";
 
 const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean);
 // Installed, not tracked, but docs point into it (node_modules/effect/AGENTS.md).
@@ -44,6 +45,36 @@ const missingSkills = locked
   .filter((name) => !existsSync(`.claude/skills/${name}/SKILL.md`))
   .map((name) => `skills-lock.json: skill ${name} is not in .claude/skills/`);
 
-const problems = [...deadPaths, ...emptyGlobs, ...deadHooks, ...missingSkills];
+// Tasks by package: the root's scripts plus vite.config.ts tasks, then each app's scripts.
+const scriptsOf = (file: string) =>
+  // package.json: only the scripts' names are read.
+  Object.keys((JSON.parse(read(file)) as { scripts?: object }).scripts ?? {});
+const appTasks = new Map(
+  tracked
+    .filter((file) => /^(apps|packages)\/[^/]+\/package\.json$/.test(file))
+    .map((file) => [file.split("/")[1] ?? "", scriptsOf(file)] as const),
+);
+const rootTasks = [...scriptsOf("package.json"), ...Object.keys(config.run?.tasks ?? {})];
+const taskExists = ({ task, pkg, recursive }: ReturnType<typeof vpRunTasks>[number]) =>
+  pkg !== undefined
+    ? (appTasks.get(pkg) ?? []).includes(task)
+    : recursive
+      ? [...appTasks.values()].some((tasks) => tasks.includes(task))
+      : rootTasks.includes(task);
+// Names CLAUDE.md's generic Vite+ text uses as examples, not tasks of this repo.
+const EXAMPLE_TASKS = ["x", "dev"];
+const deadTasks = docs.flatMap((doc) =>
+  vpRunTasks(read(doc))
+    .filter((ref) => !(ref.pkg === undefined && EXAMPLE_TASKS.includes(ref.task)))
+    .filter((ref) => !taskExists(ref))
+    .map(
+      (ref) =>
+        `${doc}: vp run ${ref.recursive ? "-r " : ""}${ref.pkg ? `${ref.pkg}#` : ""}${ref.task} is not a task`,
+    ),
+);
+
+const problems = [
+  ...new Set([...deadPaths, ...emptyGlobs, ...deadTasks, ...deadHooks, ...missingSkills]),
+];
 console.log(problems.length === 0 ? "audit: no config rot found" : problems.join("\n"));
 process.exitCode = problems.length === 0 ? 0 : 1;
