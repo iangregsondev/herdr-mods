@@ -10,11 +10,13 @@ import {
   removeSlots,
   withSlot,
   withoutSlots,
+  type HerdrStatus,
   type LayoutNode,
 } from "./herdr-slots.ts";
-import { tempDir, writeFile } from "./test-support.ts";
+import { readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
-const slot = (mod: string): LayoutNode => ({ id: `b-${mod}`, type: "block", content: { mod } });
+/** A node's children; empty when it has none, so a missing list fails on the assertion. */
+const childrenOf = (node: LayoutNode | null): LayoutNode[] => node?.children ?? [];
 
 const layout = (): LayoutNode => ({
   id: "root",
@@ -57,21 +59,25 @@ describe("withSlot", () => {
   const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
 
   test("right docks at the end of the root row, with the mod's size", () => {
-    const next = withSlot(bare(), "hello", "right", 240)!;
-    const last = next.children!.at(-1)!;
-    expect(last).toMatchObject({ type: "block", content: { mod: "hello" }, size: { px: 240 } });
-    expect(last.id).toMatch(/^b[0-9a-f]{32}$/);
-    expect(next.children).toHaveLength(3);
+    const children = childrenOf(withSlot(bare(), "hello", "right", 240));
+    expect(children).toHaveLength(3);
+    expect(children.at(-1)).toMatchObject({
+      type: "block",
+      content: { mod: "hello" },
+      size: { px: 240 },
+      id: expect.stringMatching(/^b[0-9a-f]{32}$/),
+    });
   });
 
   test("left docks at the start", () => {
-    const next = withSlot(bare(), "hello", "left", 240)!;
-    expect(next.children![0].content).toEqual({ mod: "hello" });
+    const children = childrenOf(withSlot(bare(), "hello", "left", 240));
+    expect(children[0]).toMatchObject({ content: { mod: "hello" } });
   });
 
   test("leaves size out when mod.json has none", () => {
-    const next = withSlot(bare(), "hello", "right", undefined)!;
-    expect(next.children!.at(-1)).not.toHaveProperty("size");
+    const children = childrenOf(withSlot(bare(), "hello", "right", undefined));
+    expect(children.at(-1)).toMatchObject({ content: { mod: "hello" } });
+    expect(children.at(-1)).not.toHaveProperty("size");
   });
 
   test("won't guess for other places or a root that isn't a row", () => {
@@ -102,10 +108,6 @@ describe("layoutFromStatus", () => {
 
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
-const readLayout = (path: string): LayoutNode =>
-  // The file was written by the code under test from a LayoutNode; the assertions check its shape.
-  JSON.parse(readFileSync(path, "utf8")) as LayoutNode;
-
 /** Sets a file's mtime well in the past, so any rewrite shows as a newer mtime. */
 const age = (path: string): number => {
   const past = new Date("2020-01-01T00:00:00Z");
@@ -115,7 +117,7 @@ const age = (path: string): number => {
 
 describe("removeSlots", () => {
   test("is empty when there is no layouts folder", () => {
-    expect(removeSlots("hello", tempDir())).toEqual([]);
+    expect(removeSlots("hello", tempDir())).toEqual({ changed: [], skipped: [] });
   });
 
   test("removes the mod's slots from the person's layouts and names them", () => {
@@ -123,7 +125,7 @@ describe("removeSlots", () => {
     const work = writeFile(home, "layouts/work.json", json(layout()));
     const play = writeFile(home, "layouts/play.json", json(layout()));
 
-    expect(removeSlots("hello", home).sort()).toEqual(["play", "work"]);
+    expect(removeSlots("hello", home)).toEqual({ changed: ["play", "work"], skipped: [] });
     expect(readLayout(work)).toEqual(withoutSlots(layout(), "hello").node);
     expect(readLayout(play)).toEqual(withoutSlots(layout(), "hello").node);
   });
@@ -134,7 +136,7 @@ describe("removeSlots", () => {
     const shipped = writeFile(home, "layouts/shipped.json", json(layout()));
     const mine = writeFile(home, "layouts/mine.json", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual(["mine"]);
+    expect(removeSlots("hello", home)).toEqual({ changed: ["mine"], skipped: [] });
     expect(readFileSync(shipped, "utf8")).toBe(json(layout()));
     expect(hasSlot(readLayout(mine), "hello")).toBe(false);
   });
@@ -143,7 +145,7 @@ describe("removeSlots", () => {
     const home = tempDir();
     const backup = writeFile(home, "layouts/work.json.bak", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual([]);
+    expect(removeSlots("hello", home)).toEqual({ changed: [], skipped: [] });
     expect(readFileSync(backup, "utf8")).toBe(json(layout()));
   });
 
@@ -153,7 +155,7 @@ describe("removeSlots", () => {
     const work = writeFile(home, "layouts/work.json", content);
     const mtime = age(work);
 
-    expect(removeSlots("other", home)).toEqual([]);
+    expect(removeSlots("other", home)).toEqual({ changed: [], skipped: [] });
     expect(readFileSync(work, "utf8")).toBe(content);
     expect(statSync(work).mtimeMs).toBe(mtime);
   });
@@ -167,22 +169,78 @@ describe("removeSlots", () => {
     if (installed !== undefined) writeFile(home, "installed.json", installed);
     writeFile(home, "layouts/work.json", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual(["work"]);
+    expect(removeSlots("hello", home)).toEqual({ changed: ["work"], skipped: [] });
+  });
+
+  test("names the layouts it changed in name order, whatever order they were written", () => {
+    const home = tempDir();
+    ["zebra", "apple", "mango"].forEach((name) =>
+      writeFile(home, `layouts/${name}.json`, json(layout())),
+    );
+
+    expect(removeSlots("hello", home)).toEqual({
+      changed: ["apple", "mango", "zebra"],
+      skipped: [],
+    });
+  });
+
+  test("skips and names layouts it can't parse or walk, leaves them as they are, and still cleans the rest", () => {
+    const home = tempDir();
+    const broken = "{ not json";
+    const unwalkable = json({ id: "root", type: "row", children: 5 });
+    const zed = writeFile(home, "layouts/zed.json", json(layout()));
+    const notJson = writeFile(home, "layouts/broken.json", broken);
+    const odd = writeFile(home, "layouts/odd.json", unwalkable);
+    const alpha = writeFile(home, "layouts/alpha.json", json(layout()));
+
+    expect(removeSlots("hello", home)).toEqual({
+      changed: ["alpha", "zed"],
+      skipped: ["broken", "odd"],
+    });
+    expect(readFileSync(notJson, "utf8")).toBe(broken);
+    expect(readFileSync(odd, "utf8")).toBe(unwalkable);
+    expect(readLayout(alpha)).toEqual(withoutSlots(layout(), "hello").node);
+    expect(readLayout(zed)).toEqual(withoutSlots(layout(), "hello").node);
   });
 });
 
 describe("ensureSlot", () => {
   const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
-  const showing = (name: string) => () => json({ layout: name, errors: [] });
+  const showing = (name: string) => (): HerdrStatus => ({
+    _tag: "Running",
+    text: json({ layout: name, errors: [] }),
+  });
 
-  test("says Herdr isn't running when there is no status, and writes nothing", () => {
+  test("says herdr-app isn't installed when it isn't on PATH, and writes nothing", () => {
     const home = tempDir();
     const content = json(bare());
     const work = writeFile(home, "layouts/work.json", content);
 
-    expect(ensureSlot("hello", {}, { home, status: () => null })).toBe(
+    expect(ensureSlot("hello", {}, { home, status: () => ({ _tag: "NotInstalled" }) })).toBe(
+      "herdr-slots: herdr-app not found on PATH; install the Herdr app to see hello.",
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
+  test("says Herdr isn't running when herdr-app status fails, and writes nothing", () => {
+    const home = tempDir();
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(ensureSlot("hello", {}, { home, status: () => ({ _tag: "NotRunning" }) })).toBe(
       "herdr-slots: Herdr isn't running; open it to see hello.",
     );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
+  test("says Herdr isn't running when the status names no layout, and writes nothing", () => {
+    const home = tempDir();
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(
+      ensureSlot("hello", {}, { home, status: () => ({ _tag: "Running", text: "not json" }) }),
+    ).toBe("herdr-slots: Herdr isn't running; open it to see hello.");
     expect(readFileSync(work, "utf8")).toBe(content);
   });
 
@@ -230,6 +288,17 @@ describe("ensureSlot", () => {
     expect(readFileSync(work, "utf8")).toBe(content);
   });
 
+  test("names the default place, right, when it can't dock in a root that isn't a row", () => {
+    const home = tempDir();
+    const content = json({ ...bare(), type: "column" });
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+      'herdr-slots: can\'t dock hello at "right" automatically; add it to "work" by hand.',
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
   test("adds the slot on the right by default, sized from mod.json", () => {
     const home = tempDir();
     const work = writeFile(home, "layouts/work.json", json(bare()));
@@ -237,9 +306,9 @@ describe("ensureSlot", () => {
     expect(ensureSlot("hello", { size: 240 }, { home, status: showing("work") })).toBe(
       'herdr-slots: added hello to "work" (right).',
     );
-    const written = readLayout(work);
-    expect(written.children).toHaveLength(3);
-    expect(written.children!.at(-1)).toMatchObject({
+    const children = childrenOf(readLayout(work));
+    expect(children).toHaveLength(3);
+    expect(children.at(-1)).toMatchObject({
       type: "block",
       content: { mod: "hello" },
       size: { px: 240 },
@@ -253,10 +322,10 @@ describe("ensureSlot", () => {
     expect(ensureSlot("hello", { place: "left" }, { home, status: showing("work") })).toBe(
       'herdr-slots: added hello to "work" (left).',
     );
-    const written = readLayout(work);
-    expect(written.children).toHaveLength(3);
-    expect(written.children![0]).toMatchObject({ type: "block", content: { mod: "hello" } });
-    expect(written.children![0]).not.toHaveProperty("size");
+    const children = childrenOf(readLayout(work));
+    expect(children).toHaveLength(3);
+    expect(children[0]).toMatchObject({ type: "block", content: { mod: "hello" } });
+    expect(children[0]).not.toHaveProperty("size");
   });
 });
 
