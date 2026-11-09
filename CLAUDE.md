@@ -16,6 +16,13 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 
 Mods may use the Effect library (v4). Before writing any Effect code, first read `node_modules/effect/AGENTS.md` **completely**, and follow the links in the file when required. For APIs and concepts it doesn't cover, search the source in `node_modules/effect/src`. Effect is a root dev dependency (version in the `pnpm-workspace.yaml` catalog); a mod that uses it adds `"effect": "catalog:"` to its own `package.json`. What Herdr's runtime allows: `.claude/rules/effect.md`.
 
+Effect v3 code (most examples online, other repos) won't compile here: `Either`, `Context.Tag` and `Effect.Service` are gone. The v3-to-v4 table is in `.claude/rules/functional-style.md`.
+
+## Gotchas
+
+- **Lint is oxlint, not ESLint.** ESLint plugins load through oxlint's `jsPlugins`, but any that need TypeScript's JS API (typescript-eslint's type utilities) fail to load under TypeScript 7. Write the rule into `scripts/oxlint-functional.ts` instead, with tests.
+- **`vp run -r <task>` skips the root package.** The root's own tests (`scripts/*.test.ts`) run with `vp run test`.
+
 ## Git and GitHub — IMPORTANT
 
 - **Never commit or push to `main`.** Branch as `<type>/<issue>-<short-description>` (issue number left out when there's none), created as a worktree with `wt`. Agent-only local branches, `research/<slug>` and `prototype/<slug>` are exempt.
