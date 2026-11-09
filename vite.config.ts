@@ -27,7 +27,17 @@ export default defineConfig({
       "no-warning-comments": [
         "error",
         {
-          terms: ["todo", "fixme", "xxx", "hack", "review", "reviewer", "pr #"],
+          terms: [
+            "todo",
+            "fixme",
+            "xxx",
+            "hack",
+            "review",
+            "reviewer",
+            "pr #",
+            "as discussed",
+            "addresses comment",
+          ],
           location: "anywhere",
         },
       ],
