@@ -8,12 +8,15 @@ import { join } from "node:path";
 import { DEV_MARKER, herdrHome, removeSlots } from "./herdr-slots.ts";
 
 export interface DevRemoveResult {
-  /** The exit code: 2 for a usage error, 1 for an installed mod, 0 otherwise. */
-  code: number;
+  /**
+   * The exit code: 2 for a usage error, 1 for an installed mod or a layout that
+   * couldn't be read, 0 otherwise.
+   */
+  readonly code: 0 | 1 | 2;
   /** Lines for stdout. */
-  out: string[];
+  readonly out: readonly string[];
   /** Lines for stderr. */
-  err: string[];
+  readonly err: readonly string[];
 }
 
 /** Removes the dev build named in `args` from the Herdr app at `home`. */
@@ -24,8 +27,9 @@ export function devRemove(args: readonly string[], home: string): DevRemoveResul
   }
 
   const dir = join(home, "mods", name);
+  const hadFiles = existsSync(dir);
 
-  if (existsSync(dir) && !existsSync(join(dir, DEV_MARKER))) {
+  if (hadFiles && !existsSync(join(dir, DEV_MARKER))) {
     return {
       code: 1,
       out: [],
@@ -33,17 +37,25 @@ export function devRemove(args: readonly string[], home: string): DevRemoveResul
     };
   }
 
-  const hadFiles = existsSync(dir);
   if (hadFiles) rmSync(dir, { recursive: true });
   const files = hadFiles ? `dev-remove: removed ${dir}` : `dev-remove: no files at ${dir}`;
 
-  const layouts = removeSlots(name, home);
+  // A layout that can't be read is left as it is; every readable one is still cleaned,
+  // so the lines above stay true and the skipped ones are named on stderr.
+  const { changed, skipped } = removeSlots(name, home);
+  const quoted = (names: readonly string[]) => names.map((l) => `"${l}"`).join(", ");
   const panel =
-    layouts.length > 0
-      ? `dev-remove: removed the ${name} panel from ${layouts.map((l) => `"${l}"`).join(", ")}`
+    changed.length > 0
+      ? `dev-remove: removed the ${name} panel from ${quoted(changed)}`
       : `dev-remove: no ${name} panel in your layouts`;
 
-  return { code: 0, out: [files, panel], err: [] };
+  return skipped.length > 0
+    ? {
+        code: 1,
+        out: [files, panel],
+        err: [`dev-remove: could not read these layouts, so left them alone: ${quoted(skipped)}`],
+      }
+    : { code: 0, out: [files, panel], err: [] };
 }
 
 if (import.meta.main) {
