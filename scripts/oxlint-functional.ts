@@ -49,19 +49,24 @@ const MUTATING_METHODS = new Set([
   "reverse",
   "fill",
   "copyWithin",
+  // Map and Set. Syntax carries no types, so a user-defined method of the same name counts.
+  "set",
+  "add",
+  "delete",
+  "clear",
 ]);
-const MUTATING_OBJECT_FUNCTIONS = new Set([
-  "assign",
-  "defineProperty",
-  "defineProperties",
-  "setPrototypeOf",
+// Static functions that change their first argument.
+const MUTATING_STATICS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Object", new Set(["assign", "defineProperty", "defineProperties", "setPrototypeOf"])],
+  ["Reflect", new Set(["set", "deleteProperty", "defineProperty"])],
 ]);
 
-// A value made in the same expression isn't shared yet, so changing it is safe.
-const isFresh = (node: ESTree.Argument): boolean =>
-  node.type === "ArrayExpression" ||
-  node.type === "ObjectExpression" ||
-  node.type === "NewExpression";
+// Calls that return a new array, so the result isn't shared with anything yet.
+const COPYING_METHODS = new Set(["slice", "map", "filter", "concat", "flatMap"]);
+const COPYING_STATICS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Array", new Set(["from"])],
+  ["Object", new Set(["entries", "keys", "values"])],
+]);
 
 const propertyName = (member: ESTree.MemberExpression): string | undefined => {
   const property = member.property;
@@ -70,14 +75,68 @@ const propertyName = (member: ESTree.MemberExpression): string | undefined => {
   return undefined;
 };
 
-const isObjectCall = (callee: ESTree.MemberExpression): boolean => {
+// Whether `callee` is `Owner.name` for one of the names listed under that owner.
+const isStaticCall = (
+  callee: ESTree.MemberExpression,
+  statics: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean => {
+  if (callee.object.type !== "Identifier") return false;
+  const names = statics.get(callee.object.name);
+  if (names === undefined) return false;
   const name = propertyName(callee);
-  return (
-    callee.object.type === "Identifier" &&
-    callee.object.name === "Object" &&
-    name !== undefined &&
-    MUTATING_OBJECT_FUNCTIONS.has(name)
-  );
+  return name !== undefined && names.has(name);
+};
+
+const isCopyingCall = (node: ESTree.CallExpression): boolean => {
+  const callee = node.callee;
+  if (callee.type !== "MemberExpression") return false;
+  if (isStaticCall(callee, COPYING_STATICS)) return true;
+  const name = propertyName(callee);
+  return name !== undefined && COPYING_METHODS.has(name);
+};
+
+// A value made in the same expression isn't shared yet, so changing it is safe.
+const isFresh = (node: ESTree.Argument): boolean =>
+  node.type === "ArrayExpression" ||
+  node.type === "ObjectExpression" ||
+  node.type === "NewExpression" ||
+  (node.type === "CallExpression" && isCopyingCall(node));
+
+// `xs.push(1)` and friends, on a value that may be shared.
+const isMutatingMethodCall = (callee: ESTree.MemberExpression): boolean => {
+  const name = propertyName(callee);
+  return name !== undefined && MUTATING_METHODS.has(name) && !isFresh(callee.object);
+};
+
+// `Object.assign(o, p)` and friends change their first argument, not their owner,
+// so a mutating static is judged on that argument alone.
+const isMutatingCall = (node: ESTree.CallExpression): boolean => {
+  const callee = node.callee;
+  if (callee.type !== "MemberExpression") return false;
+  if (!isStaticCall(callee, MUTATING_STATICS)) return isMutatingMethodCall(callee);
+  const target = node.arguments[0];
+  return target !== undefined && !isFresh(target);
+};
+
+// Whether an assignment target writes to a property, directly or through destructuring.
+const writesMember = (target: ESTree.Node | null): boolean => {
+  if (target === null) return false;
+  switch (target.type) {
+    case "MemberExpression":
+      return true;
+    case "ArrayPattern":
+      return target.elements.some(writesMember);
+    case "ObjectPattern":
+      return target.properties.some((property) =>
+        writesMember(property.type === "Property" ? property.value : property),
+      );
+    case "AssignmentPattern":
+      return writesMember(target.left);
+    case "RestElement":
+      return writesMember(target.argument);
+    default:
+      return false;
+  }
 };
 
 const immutableData = defineRule({
@@ -90,7 +149,7 @@ const immutableData = defineRule({
   },
   create: (context) => ({
     AssignmentExpression: (node) => {
-      if (node.left.type === "MemberExpression") context.report({ node, messageId: "noMutation" });
+      if (writesMember(node.left)) context.report({ node, messageId: "noMutation" });
     },
     UpdateExpression: (node) => {
       if (node.argument.type === "MemberExpression")
@@ -100,22 +159,24 @@ const immutableData = defineRule({
       if (node.operator === "delete") context.report({ node, messageId: "noMutation" });
     },
     CallExpression: (node) => {
-      const callee = node.callee;
-      if (callee.type !== "MemberExpression") return;
-      if (isObjectCall(callee)) {
-        const target = node.arguments[0];
-        if (target && !isFresh(target)) context.report({ node, messageId: "noMutation" });
-        return;
-      }
-      const name = propertyName(callee);
-      if (name !== undefined && MUTATING_METHODS.has(name) && !isFresh(callee.object))
-        context.report({ node, messageId: "noMutation" });
+      if (isMutatingCall(node)) context.report({ node, messageId: "noMutation" });
     },
   }),
 });
 
+type Cast = ESTree.TSAsExpression | ESTree.TSTypeAssertion;
+
+const isConst = (node: Cast): boolean =>
+  node.typeAnnotation.type === "TSTypeReference" &&
+  node.typeAnnotation.typeName.type === "Identifier" &&
+  node.typeAnnotation.typeName.name === "const";
+
+// Lint directives switch rules on or off; they say nothing about why a cast is safe.
+const DIRECTIVE = /^\s*(?:oxlint|eslint)-(?:disable|enable)/;
+
 // A cast overrides the type checker, so it needs a reason a reader can check: a comment
-// ending on the line above the cast, or on the cast's own line. `as const` only narrows.
+// on the line above the cast's `as` (or `<T>`) token that starts its own line, or a
+// comment on that token's line. `as const` only narrows.
 const explainedCast = defineRule({
   meta: {
     type: "problem",
@@ -125,16 +186,25 @@ const explainedCast = defineRule({
     },
   },
   create: (context) => {
-    const commentLines = new Set(
-      context.sourceCode.getAllComments().map((comment) => comment.loc.end.line),
+    const source = context.sourceCode;
+    const reasons = source.getAllComments().filter((comment) => !DIRECTIVE.test(comment.value));
+    const startsLine = (offset: number): boolean =>
+      source.text.slice(source.text.lastIndexOf("\n", offset - 1) + 1, offset).trim() === "";
+    // Lines that hold a reason for a cast whose token is on the next line.
+    const aboveLines = new Set(
+      reasons
+        .filter((comment) => startsLine(comment.range[0]))
+        .map((comment) => comment.loc.end.line),
     );
-    const isConst = (node: ESTree.TSAsExpression | ESTree.TSTypeAssertion) =>
-      node.typeAnnotation.type === "TSTypeReference" &&
-      node.typeAnnotation.typeName.type === "Identifier" &&
-      node.typeAnnotation.typeName.name === "const";
-    const check = (node: ESTree.TSAsExpression | ESTree.TSTypeAssertion) => {
-      const line = node.loc.start.line;
-      if (isConst(node) || commentLines.has(line) || commentLines.has(line - 1)) return;
+    // Lines that hold a reason for a cast whose token is on the same line.
+    const ownLines = new Set(reasons.map((comment) => comment.loc.end.line));
+    const tokenLine = (node: Cast): number =>
+      node.type === "TSAsExpression"
+        ? (source.getTokenBefore(node.typeAnnotation)?.loc.start.line ?? node.loc.start.line)
+        : node.loc.start.line;
+    const check = (node: Cast) => {
+      const line = tokenLine(node);
+      if (isConst(node) || ownLines.has(line) || aboveLines.has(line - 1)) return;
       context.report({ node, messageId: "explainCast" });
     };
     return { TSAsExpression: check, TSTypeAssertion: check };
