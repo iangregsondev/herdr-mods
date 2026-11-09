@@ -12,16 +12,18 @@ What the tracked Claude Code setup does, and what to put in your own settings. T
 
 ## Hooks (apply to everyone)
 
-| When                    | Script                           | What it does                                                                                                                                                                             |
-| ----------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| After an edit           | `.claude/hooks/format-edited.sh` | Formats the edited file with `vp fmt`. Never blocks.                                                                                                                                     |
-| When Claude ends a turn | `.claude/hooks/stop-check.sh`    | If the tree has changes: `vp check`, every test suite and `vp run audit:config`. On failure it blocks the stop once and hands Claude the errors; a second failure lets the stop through. |
+Both hooks need [`jq`](https://jqlang.org) on your `PATH`. Without it they print why to stderr and do nothing.
 
-Checks run at the end of a turn, not after every edit: mid-turn code is often half finished on purpose (a red test, a change across files).
+| When                    | Script                           | What it does                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| After an edit           | `.claude/hooks/format-edited.sh` | Formats the edited file with `vp fmt`. Never blocks.                                                                                                                                                                                                                                                                            |
+| When Claude ends a turn | `.claude/hooks/stop-check.sh`    | Runs `vp run verify` (`vp check --deny-warnings`, every test suite and `vp run audit:config`) when the tree is dirty or the branch differs from `main`. On failure it blocks the stop and hands Claude the errors. The next stop after a block goes through unchecked, and so does a run that hits the 600-second hook timeout. |
+
+Checks run at the end of a turn, not after every edit: mid-turn code is often half finished on purpose (a red test, a change across files). Commits made during the turn are still checked, since the pre-commit hook runs no tests.
 
 ## Rules and skills
 
-- **Rules** (`.claude/rules/*.md`) load when Claude touches files matching their `paths:` globs; a rule without globs always loads. They cover mod code, Effect, functional style, tests, the dev loop, fixing review findings and this config.
+- **Rules** (`.claude/rules/*.md`) load when Claude touches files matching their `paths:` globs; a rule without globs always loads. They cover mod code, Herdr's types (`herdr-types.md`), Effect, functional style, tests, the dev loop, fixing review findings and this config.
 - **Repo skills** (`.claude/skills/`): `audit` (config rot), and upstream copies pinned in `skills-lock.json` (`effect-ts`, `effect-v3-to-v4`, `vitest`).
 - **Lint backs the rules up.** `vp check` runs oxlint (not ESLint) with Effect's rules, a local plugin for functional style (`scripts/oxlint-functional.ts`) and a ban on leftover `TODO`s and comments that cite reviews.
 
