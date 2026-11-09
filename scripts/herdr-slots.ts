@@ -118,10 +118,10 @@ export function layoutFromStatus(text: string): string | null {
   }
 }
 
-/** The layout the Herdr window shows now, from `herdr-app status`; null when Herdr isn't running. */
-function shownLayout(): string | null {
+/** `herdr-app status` output; null when Herdr isn't running or the command fails. */
+export function herdrStatus(): string | null {
   try {
-    return layoutFromStatus(execFileSync("herdr-app", ["status"], { encoding: "utf8" }));
+    return execFileSync("herdr-app", ["status"], { encoding: "utf8" });
   } catch {
     return null;
   }
@@ -149,10 +149,18 @@ export function removeSlots(mod: string, home = herdrHome()): string[] {
 /**
  * Makes sure the shown layout has a slot for `mod`, adding one from its
  * mod.json `place` and `size` if not. Returns a line for the person.
+ * `status` gives `herdr-app status` output (null: Herdr isn't running).
  */
-export function ensureSlot(mod: string, modJson: { place?: Place; size?: number }): string {
-  const home = herdrHome();
-  const layout = shownLayout();
+export function ensureSlot(
+  mod: string,
+  modJson: { place?: Place; size?: number },
+  {
+    home = herdrHome(),
+    status = herdrStatus,
+  }: { home?: string; status?: () => string | null } = {},
+): string {
+  const text = status();
+  const layout = text === null ? null : layoutFromStatus(text);
   if (!layout) return `herdr-slots: Herdr isn't running; open it to see ${mod}.`;
   if (shippedLayouts(home).has(layout)) {
     return `herdr-slots: "${layout}" ships with Herdr and can't take new slots; clone it, or add ${mod} by hand.`;

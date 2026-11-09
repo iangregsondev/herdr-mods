@@ -1,11 +1,18 @@
-import { describe, expect, test } from "vite-plus/test";
+import { readFileSync, statSync, utimesSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
+  ensureSlot,
   hasSlot,
+  herdrHome,
   layoutFromStatus,
+  removeSlots,
   withSlot,
   withoutSlots,
   type LayoutNode,
 } from "./herdr-slots.ts";
+import { tempDir, writeFile } from "./test-support.ts";
 
 const slot = (mod: string): LayoutNode => ({ id: `b-${mod}`, type: "block", content: { mod } });
 
@@ -90,5 +97,181 @@ describe("layoutFromStatus", () => {
     expect(layoutFromStatus("null")).toBeNull();
     expect(layoutFromStatus('"work"')).toBeNull();
     expect(layoutFromStatus("not json")).toBeNull();
+  });
+});
+
+const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+
+const readLayout = (path: string): LayoutNode =>
+  // The file was written by the code under test from a LayoutNode; the assertions check its shape.
+  JSON.parse(readFileSync(path, "utf8")) as LayoutNode;
+
+/** Sets a file's mtime well in the past, so any rewrite shows as a newer mtime. */
+const age = (path: string): number => {
+  const past = new Date("2020-01-01T00:00:00Z");
+  utimesSync(path, past, past);
+  return statSync(path).mtimeMs;
+};
+
+describe("removeSlots", () => {
+  test("is empty when there is no layouts folder", () => {
+    expect(removeSlots("hello", tempDir())).toEqual([]);
+  });
+
+  test("removes the mod's slots from the person's layouts and names them", () => {
+    const home = tempDir();
+    const work = writeFile(home, "layouts/work.json", json(layout()));
+    const play = writeFile(home, "layouts/play.json", json(layout()));
+
+    expect(removeSlots("hello", home).sort()).toEqual(["play", "work"]);
+    expect(readLayout(work)).toEqual(withoutSlots(layout(), "hello").node);
+    expect(readLayout(play)).toEqual(withoutSlots(layout(), "hello").node);
+  });
+
+  test("leaves layouts that ship with Herdr alone", () => {
+    const home = tempDir();
+    writeFile(home, "installed.json", json({ "layout:shipped": {}, "mod:hello": {} }));
+    const shipped = writeFile(home, "layouts/shipped.json", json(layout()));
+    const mine = writeFile(home, "layouts/mine.json", json(layout()));
+
+    expect(removeSlots("hello", home)).toEqual(["mine"]);
+    expect(readFileSync(shipped, "utf8")).toBe(json(layout()));
+    expect(hasSlot(readLayout(mine), "hello")).toBe(false);
+  });
+
+  test("skips files that aren't .json", () => {
+    const home = tempDir();
+    const backup = writeFile(home, "layouts/work.json.bak", json(layout()));
+
+    expect(removeSlots("hello", home)).toEqual([]);
+    expect(readFileSync(backup, "utf8")).toBe(json(layout()));
+  });
+
+  test("doesn't rewrite a layout with no slot for the mod", () => {
+    const home = tempDir();
+    const content = json(layout());
+    const work = writeFile(home, "layouts/work.json", content);
+    const mtime = age(work);
+
+    expect(removeSlots("other", home)).toEqual([]);
+    expect(readFileSync(work, "utf8")).toBe(content);
+    expect(statSync(work).mtimeMs).toBe(mtime);
+  });
+
+  test.each([
+    ["missing", undefined],
+    ["null", "null"],
+    ["an array", json(["layout:work"])],
+  ])("treats installed.json that is %s as no shipped layouts", (_label, installed) => {
+    const home = tempDir();
+    if (installed !== undefined) writeFile(home, "installed.json", installed);
+    writeFile(home, "layouts/work.json", json(layout()));
+
+    expect(removeSlots("hello", home)).toEqual(["work"]);
+  });
+});
+
+describe("ensureSlot", () => {
+  const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
+  const showing = (name: string) => () => json({ layout: name, errors: [] });
+
+  test("says Herdr isn't running when there is no status, and writes nothing", () => {
+    const home = tempDir();
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(ensureSlot("hello", {}, { home, status: () => null })).toBe(
+      "herdr-slots: Herdr isn't running; open it to see hello.",
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
+  test("won't add a slot to a layout that ships with Herdr", () => {
+    const home = tempDir();
+    writeFile(home, "installed.json", json({ "layout:work": {} }));
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+      'herdr-slots: "work" ships with Herdr and can\'t take new slots; clone it, or add hello by hand.',
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
+  test("says so when the shown layout has no file", () => {
+    const home = tempDir();
+
+    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+      'herdr-slots: no file for layout "work"; add hello by hand.',
+    );
+  });
+
+  test("leaves a layout that already has the slot unchanged", () => {
+    const home = tempDir();
+    const content = json(layout());
+    const work = writeFile(home, "layouts/work.json", content);
+    const mtime = age(work);
+
+    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+      'herdr-slots: hello already has a slot in "work".',
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+    expect(statSync(work).mtimeMs).toBe(mtime);
+  });
+
+  test("won't guess at a place it can't dock", () => {
+    const home = tempDir();
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+
+    expect(ensureSlot("hello", { place: "top" }, { home, status: showing("work") })).toBe(
+      'herdr-slots: can\'t dock hello at "top" automatically; add it to "work" by hand.',
+    );
+    expect(readFileSync(work, "utf8")).toBe(content);
+  });
+
+  test("adds the slot on the right by default, sized from mod.json", () => {
+    const home = tempDir();
+    const work = writeFile(home, "layouts/work.json", json(bare()));
+
+    expect(ensureSlot("hello", { size: 240 }, { home, status: showing("work") })).toBe(
+      'herdr-slots: added hello to "work" (right).',
+    );
+    const written = readLayout(work);
+    expect(written.children).toHaveLength(3);
+    expect(written.children!.at(-1)).toMatchObject({
+      type: "block",
+      content: { mod: "hello" },
+      size: { px: 240 },
+    });
+  });
+
+  test("adds the slot on the left when mod.json asks", () => {
+    const home = tempDir();
+    const work = writeFile(home, "layouts/work.json", json(bare()));
+
+    expect(ensureSlot("hello", { place: "left" }, { home, status: showing("work") })).toBe(
+      'herdr-slots: added hello to "work" (left).',
+    );
+    const written = readLayout(work);
+    expect(written.children).toHaveLength(3);
+    expect(written.children![0]).toMatchObject({ type: "block", content: { mod: "hello" } });
+    expect(written.children![0]).not.toHaveProperty("size");
+  });
+});
+
+describe("herdrHome", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("uses HERDR_APP_HOME when it is set", () => {
+    vi.stubEnv("HERDR_APP_HOME", "/elsewhere/herdr");
+    expect(herdrHome()).toBe("/elsewhere/herdr");
+  });
+
+  test("falls back to .config/herdr-app in the home folder", () => {
+    vi.stubEnv("HERDR_APP_HOME", undefined);
+    expect(herdrHome()).toBe(join(homedir(), ".config", "herdr-app"));
   });
 });
