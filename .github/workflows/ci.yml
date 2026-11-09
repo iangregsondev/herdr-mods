@@ -1,8 +1,9 @@
 name: CI
 
-# CI runs what you run locally, except the type-check and `herdr-app check`:
-# both need the Herdr app installed (see docs/types.md). The pre-commit hook
-# runs the full `vp check` locally.
+# CI runs `vp run verify`, the same script the local Stop hook runs, then the
+# build. Two things run only locally: the type-check (vite.config.ts turns it
+# off when CI is set) and `herdr-app check`. Both need the Herdr app installed
+# (see docs/types.md).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -22,13 +23,8 @@ jobs:
         with:
           node-version: "24"
           cache: true
-      - name: Format and lint
-        run: vp check
-      - name: Test
-        # -r covers the workspace packages; the root's own scripts/ tests need their own run.
-        run: vp run -r test && vp run test
-      - name: Config rot audit
-        run: vp run audit:config
+      - name: Verify (format, lint, test, config audit)
+        run: vp run verify
       - name: Build
         run: vp run -r build
       - name: mods/ matches the source

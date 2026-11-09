@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp check && vp run -r test && vp run test && vp run audit:config && vp run -r build",
+    "verify": "vp check --deny-warnings && vp run -r test && vp run test && vp run audit:config",
+    "ready": "vp run verify && vp run -r build",
     "preinstall": "sh scripts/require-vp.sh",
-    "prepare": "vp config && sh scripts/link-herdr-types.sh && effect-tsgo patch --oxlint --typescript --skip-missing",
+    "prepare": "vp config && sh scripts/link-herdr-types.sh && effect-tsgo patch --oxlint --typescript",
     "test": "vp test scripts"
   },
   "devDependencies": {
