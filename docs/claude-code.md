@@ -12,11 +12,10 @@ What the tracked Claude Code setup does, and what to put in your own settings. T
 
 ## Hooks (apply to everyone)
 
-| When                    | Script                                    | What it does                                                                                                                                                                             |
-| ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Before a Bash command   | `.claude/hooks/block-package-managers.sh` | Blocks `pnpm`, `npm`, `npx`, `yarn` and `bun`; the repo goes through `vp`.                                                                                                               |
-| After an edit           | `.claude/hooks/format-edited.sh`          | Formats the edited file with `vp fmt`. Never blocks.                                                                                                                                     |
-| When Claude ends a turn | `.claude/hooks/stop-check.sh`             | If the tree has changes: `vp check`, every test suite and `vp run audit:config`. On failure it blocks the stop once and hands Claude the errors; a second failure lets the stop through. |
+| When                    | Script                           | What it does                                                                                                                                                                             |
+| ----------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| After an edit           | `.claude/hooks/format-edited.sh` | Formats the edited file with `vp fmt`. Never blocks.                                                                                                                                     |
+| When Claude ends a turn | `.claude/hooks/stop-check.sh`    | If the tree has changes: `vp check`, every test suite and `vp run audit:config`. On failure it blocks the stop once and hands Claude the errors; a second failure lets the stop through. |
 
 Checks run at the end of a turn, not after every edit: mid-turn code is often half finished on purpose (a red test, a change across files).
 

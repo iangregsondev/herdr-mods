@@ -18,6 +18,7 @@ layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod (watch mode builds into Herdr)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from Herdr
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
+scripts/require-vp.sh     preinstall guard: installs must go through vp
 scripts/oxlint-functional.ts  lint rules for functional style in pure modules
 scripts/audit.ts          config rot audit (vp run audit:config; pure checks in audit-config.ts)
 herdr-env.d.ts            loads the Herdr app's types (see docs/types.md)

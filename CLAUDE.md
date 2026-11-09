@@ -35,7 +35,7 @@ Effect v3 code (most examples online, other repos) won't compile here: `Either`,
 
 ## Package management: always `vp`
 
-Never run `pnpm`, `npm`, `npx`, `pnpx`, `yarn` or `bun`. A hook blocks them.
+Never run `pnpm`, `npm`, `npx`, `pnpx`, `yarn` or `bun`. Installs that skip `vp` fail: a `preinstall` guard (`scripts/require-vp.sh`) stops `pnpm`, and `devEngines` in `package.json` stops `npm` and `yarn`. Nothing stops a one-off `npx` or `pnpm dlx`, so use the table.
 
 Every dependency version lives once, in the `catalog:` of `pnpm-workspace.yaml`; each `package.json` says `"catalog:"`, never a version. `vp add` does this itself (`catalogMode: prefer`): check the diff shows `"catalog:"`. To bump a dependency, change its catalog line, then `vp install`.
 
