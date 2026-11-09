@@ -11,7 +11,7 @@ Thanks for helping. This page says how work moves from an idea to a merged chang
 5. **Implement.** Each ticket is built test-first. One pull request carries the whole spec.
 6. **Merge.** Only the owner merges.
 
-Much of this is done with a coding agent. Its version of these rules is in [`CLAUDE.md`](CLAUDE.md). Where this page and `CLAUDE.md` disagree, `CLAUDE.md` wins.
+Much of this is done with a coding agent. Its version of these rules is in [`CLAUDE.md`](CLAUDE.md). Where this page and `CLAUDE.md` disagree, `CLAUDE.md` wins. What the agent's hooks do, and suggested personal settings: [docs/claude-code.md](docs/claude-code.md).
 
 ## Issue types
 
