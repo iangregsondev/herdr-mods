@@ -1,15 +1,11 @@
 import { join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
-import { linkTools, runSh, tempDir } from "./test-support.ts";
+import { runSh, tempDir, toolPath } from "./test-support.ts";
 
 const script = join(import.meta.dirname, "require-vp.sh");
 
 /** A PATH holding only `sh`: the script needs nothing else. */
-function shOnlyPath(): string {
-  const bin = join(tempDir(), "bin");
-  linkTools(bin, ["sh"]);
-  return bin;
-}
+const shOnlyPath = (): string => toolPath(tempDir(), ["sh"]);
 
 describe("require-vp.sh", () => {
   test("allows an install run through vp", () => {

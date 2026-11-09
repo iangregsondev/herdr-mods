@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
-import { linkTools, runSh, tempDir, writeFile } from "./test-support.ts";
+import { runSh, tempDir, toolPath, writeFile } from "./test-support.ts";
 
 const realScript = join(import.meta.dirname, "link-herdr-types.sh");
 const typeFiles = ["herdr.d.ts", "gpui-kit.d.ts"] as const;
@@ -11,8 +11,7 @@ const typeFiles = ["herdr.d.ts", "gpui-kit.d.ts"] as const;
  * `<its folder>/../.herdr-types` and must never touch this repo.
  */
 function fakeRepo(root: string): { script: string; dest: string; path: string } {
-  const bin = join(root, "bin");
-  linkTools(bin, ["sh", "dirname", "mkdir", "ln"]);
+  const bin = toolPath(root, ["sh", "dirname", "mkdir", "ln"]);
   const scripts = join(root, "repo", "scripts");
   mkdirSync(scripts, { recursive: true });
   const script = join(scripts, "link-herdr-types.sh");
