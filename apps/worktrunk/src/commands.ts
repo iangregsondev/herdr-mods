@@ -2,7 +2,7 @@
 // imports. Each script reads its inputs as positional arguments ($1, $2, ...), never
 // spliced into the script text, so no path or name needs quoting.
 import { Option, Predicate, Result } from "effect";
-import { at, finite, parseJson, text } from "./json.ts";
+import { at, finite, parseJson, text } from "worktrunk-mailbox";
 import { expandHome } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 

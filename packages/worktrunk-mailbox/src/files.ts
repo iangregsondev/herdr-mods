@@ -1,5 +1,5 @@
 // Reading and writing files through Herdr, as Effects with tagged errors. Pure: `herdr`
-// is imported as a type only, and main.ts hands the real API to the layer.
+// is imported as a type only, and each mod's main.ts hands the real API to the layer.
 import { Context, Data, Effect, Layer, Option, Predicate } from "effect";
 import type * as herdr from "herdr";
 
@@ -39,7 +39,7 @@ export class Files extends Context.Service<
     /** The folder picked in the system's folder picker, titled `prompt`; none if cancelled. */
     readonly pickFolder: (prompt: string) => Effect.Effect<Option.Option<string>, PickerFailed>;
   }
->()("iangregsondev-worktrunk/Files") {
+>()("worktrunk-mailbox/Files") {
   static readonly layer = (api: FilesApi) => {
     // No `signal` parameter: Herdr's runtime has no AbortController.
     const read = (path: string) =>

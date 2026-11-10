@@ -13,6 +13,7 @@ apps/<name>/              SOURCE of one mod (you edit this)
     *.svg                 the mod's own icons
   vite.config.ts          pack: modPack("<name>")
 packages/<name>/          shared TS libs, bundled into each mod that imports them
+  worktrunk-mailbox/      how mods reach the worktrunk panel: its mailbox and its layout block, plus the JSON readers and Files service the mods share
 mods/iangregsondev-<name>/  BUILD OUTPUT, committed: the folder Herdr users install
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod: the namespace, the out folder (watch mode builds into Herdr, or stages in node_modules/.herdr-dev/ and syncs to a remote Herdr host)

@@ -9,7 +9,7 @@ import {
   TOGGLE_ROLE,
   type ModBlock,
   type Role,
-} from "./layout.ts";
+} from "worktrunk-mailbox";
 import type { Action } from "./menus.ts";
 import type { Request } from "./wire.ts";
 

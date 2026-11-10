@@ -1,6 +1,6 @@
 // Worktree records from `wt list --format=json`. Pure: no `herdr` or `gpui` imports.
 import { Option, Predicate, Result } from "effect";
-import { at, finite, parseJson, text } from "./json.ts";
+import { at, finite, parseJson, text } from "worktrunk-mailbox";
 
 /** Where a worktree stands against the default branch. */
 export type WorktreeState =

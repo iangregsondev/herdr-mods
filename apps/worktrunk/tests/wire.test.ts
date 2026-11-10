@@ -2,7 +2,7 @@ import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_VIEW_STATE } from "../src/view.ts";
 import { confirmFor, repoMenu, rowMenu } from "../src/menus.ts";
-import { roleOf } from "../src/layout.ts";
+import { roleOf, SPACE_ACTS } from "worktrunk-mailbox";
 import {
   confirmProps,
   dialogProps,
@@ -125,6 +125,14 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test.each(SPACE_ACTS)(
+    "reads back a SpaceWorktree asking to %s, as a space's menu posts it",
+    (act) => {
+      const action = { _tag: "SpaceWorktree", space: "sp1", act } as const;
+      expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+    },
+  );
+
   test.each([
     ["nothing", undefined],
     ["a string", "Refresh"],
@@ -148,6 +156,11 @@ describe("readAction", () => {
     ["a new-or-open with no folder", { _tag: "NewOrOpen" }],
     ["the New dialog's old action, which New or open replaced", { _tag: "New", main: "/r" }],
     ["the new key's old action, which New or open replaced", { _tag: "NewHere" }],
+    [
+      "a space's worktree act it doesn't know",
+      { _tag: "SpaceWorktree", space: "sp1", act: "Push" },
+    ],
+    ["a space's worktree act with no space", { _tag: "SpaceWorktree", act: "Merge" }],
   ])("is none for %s", (_label, value) => {
     expect(readAction(value)).toEqual(Option.none());
   });

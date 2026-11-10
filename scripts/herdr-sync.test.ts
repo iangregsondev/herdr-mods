@@ -6,6 +6,7 @@ import type { LayoutNode } from "./herdr-slots.ts";
 import { age, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 const MOD = "iangregsondev-worktrunk";
+const MENUS = "iangregsondev-menus";
 
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -119,6 +120,13 @@ const herdrHome = (main: string = json(defaultLayout())): string => {
   return home;
 };
 
+/** `herdrHome(main)` with the menus mod installed too, so every edit applies. */
+const withMenus = (main?: string): string => {
+  const home = herdrHome(main);
+  writeFile(home, `mods/${MENUS}/main.js`, "export default class {}\n");
+  return home;
+};
+
 /** A fake `herdr-app` that records each call's args and answers `--version`. */
 const fakeHerdrApp = (version = "herdr-app 0.1.14") => {
   const calls: string[][] = [];
@@ -192,7 +200,7 @@ describe("herdrSync", () => {
   });
 
   test("says what it wrote and how to switch to it, with code 0", () => {
-    const result = herdrSync({ home: herdrHome(), herdrApp: fakeHerdrApp().run });
+    const result = herdrSync({ home: withMenus(), herdrApp: fakeHerdrApp().run });
 
     expect(result).toEqual({
       code: 0,
@@ -231,6 +239,49 @@ describe("herdrSync", () => {
     herdrSync({ home, herdrApp: fakeHerdrApp("herdr-app 0.1.15").run });
 
     expect(readRecord(home)).toEqual({ layout: "iangregsondev", from: "main", version: "0.1.15" });
+  });
+
+  describe("with the menus mod installed", () => {
+    /** `node` with every block showing `mod` changed to show `content` instead. */
+    const swapped = (node: LayoutNode, mod: string, content: LayoutNode["content"]): LayoutNode =>
+      node.content?.mod === mod
+        ? { ...node, content }
+        : node.children
+          ? { ...node, children: node.children.map((child) => swapped(child, mod, content)) }
+          : node;
+
+    test("the tab bar and the sidebar show the menus mod's wrappers, in Herdr's blocks", () => {
+      const home = withMenus();
+      const result = herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      const expected = swapped(
+        swapped(expectedLayout(), "tabs", { mod: MENUS, props: { role: "tabs" } }),
+        "spaces",
+        { mod: MENUS, props: { role: "spaces" } },
+      );
+      expect(result.code).toBe(0);
+      expect(readLayout(join(home, "layouts/iangregsondev.json"))).toEqual(expected);
+    });
+
+    test("fails naming the sidebar when Herdr's default layout has no spaces block", () => {
+      const noSpaces = JSON.stringify(defaultLayout()).replace('"mod":"spaces"', '"mod":"other"');
+      const home = withMenus(noSpaces);
+      const before = snapshot(home);
+      const result = herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(result.code).toBe(1);
+      expect(result.err.join("\n")).toContain("sidebar menus");
+      expect(result.err.join("\n")).toContain('"spaces"');
+      expect(changedFiles(before, snapshot(home))).toEqual([]);
+    });
+  });
+
+  test("without the menus mod, keeps Herdr's tab bar and sidebar, and says why", () => {
+    const home = herdrHome();
+    const result = herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+    expect(readLayout(join(home, "layouts/iangregsondev.json"))).toEqual(expectedLayout());
+    expect(result.out.join("\n")).toContain(`${MENUS} isn't installed`);
   });
 
   describe("fails loudly and writes nothing", () => {

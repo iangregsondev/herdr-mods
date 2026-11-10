@@ -12,6 +12,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "effect": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "worktrunk-mailbox": "catalog:"
   }
 }

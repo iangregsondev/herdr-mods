@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Option, Result } from "effect";
-import { Files, type FilesApi } from "../src/files.ts";
+import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
   dialogFor,
   findRepos,
@@ -16,6 +16,7 @@ import {
   runJob,
   saveSettings,
   settingsText,
+  spaceWorktree,
   syncToast,
 } from "../src/load.ts";
 import { newScript } from "../src/commands.ts";
@@ -464,6 +465,75 @@ describe("readDialogRepo", () => {
         list: parseList(states),
         branches: Result.fail("no branches"),
       });
+    }),
+  );
+});
+
+describe("spaceWorktree", () => {
+  it.effect("merges the worktree a space's folder is in, from its repo's list read now", () =>
+    Effect.gen(function* () {
+      const { api, ran } = lookups({ owners: "/work/repo\t15\n", list: states });
+      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead/src").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [asked, ran.map(([name]) => name)],
+        [
+          Result.succeed({
+            _tag: "Merge",
+            target: { main: "/work/repo", path: "/work/repo.ahead", branch: "ahead" },
+            mode: "squash",
+            dirty: false,
+          }),
+          ["owners", "list"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a folder outside every repo says so, and reads no list", () =>
+    Effect.gen(function* () {
+      const { api, ran } = lookups({ owners: "", list: states });
+      const asked = yield* spaceWorktree("Remove", "/tmp/notes").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [asked, ran.map(([name]) => name)],
+        [Result.fail("/tmp/notes isn't in a git repo."), ["owners"]],
+      );
+    }),
+  );
+
+  it.effect("a repo lookup that fails is its one-line reason", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({ list: states });
+      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(asked, Result.fail("no owners"));
+    }),
+  );
+
+  it.effect("a list that can't be read is its one-line reason", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({ owners: "/work/repo\t15\n" });
+      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(asked, Result.fail("no list"));
+    }),
+  );
+
+  it.effect("the main checkout's space is refused with the reason", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({ owners: "/work/repo\t15\n", list: states });
+      const asked = yield* spaceWorktree("Remove", "/work/repo").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        asked,
+        Result.fail("repo's main checkout can't be merged or removed."),
+      );
     }),
   );
 });

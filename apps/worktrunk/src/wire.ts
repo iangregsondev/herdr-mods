@@ -5,8 +5,17 @@
 // `gpui` imports.
 import { Option, Predicate } from "effect";
 import type { Batch, Linked, MergeMode } from "./commands.ts";
-import { bool, fields, finite, listOf, text, textOrNull } from "./json.ts";
-import type { Role } from "./layout.ts";
+import {
+  bool,
+  fields,
+  finite,
+  listOf,
+  SPACE_ACTS,
+  text,
+  textOrNull,
+  type Role,
+  type SpaceAct,
+} from "worktrunk-mailbox";
 import type { DialogProps } from "./dialog.ts";
 import { confirmFor, type Action, type Confirm, type MenuItem } from "./menus.ts";
 import { DEFAULT_VIEW_STATE, SHOWS, type Click, type Show, type ViewState } from "./view.ts";
@@ -51,6 +60,8 @@ const oneOf =
     Option.fromNullishOr(options.find((option) => option === value));
 
 const readMode = oneOf<MergeMode>(["squash", "keep"]);
+
+const readAct = oneOf<SpaceAct>(SPACE_ACTS);
 
 const readClick = (value: unknown): Option.Option<Click> => {
   const f = fields(value);
@@ -101,6 +112,11 @@ export const readAction = (value: unknown): Option.Option<Action> => {
           dirty: finite(f.dirty),
         }),
         (cleanup): Action => ({ _tag: "Cleanup", ...cleanup }),
+      );
+    case "SpaceWorktree":
+      return Option.map(
+        Option.all({ space: text(f.space), act: readAct(f.act) }),
+        (request): Action => ({ _tag: "SpaceWorktree", ...request }),
       );
     case "NewOrOpen":
       return Option.map(textOrNull(f.folder), (folder): Action => ({ _tag: "NewOrOpen", folder }));

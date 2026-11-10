@@ -52,9 +52,15 @@ import {
   type DialogState,
   type Line,
 } from "./dialog.ts";
-import { Files } from "./files.ts";
+import {
+  Files,
+  findModBlock,
+  requestKey,
+  roleOf,
+  type Role,
+  type SpaceAct,
+} from "worktrunk-mailbox";
 import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
-import { findModBlock, roleOf, type Role } from "./layout.ts";
 import {
   dialogFor,
   findRepos,
@@ -70,6 +76,7 @@ import {
   runJob,
   saveSettings,
   settingsText,
+  spaceWorktree,
   syncToast,
   type JobOutcome,
   type LoadedSettings,
@@ -127,7 +134,7 @@ import {
   type Settings,
 } from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
-import { focusedFolder, localPlaces, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
+import { focusedFolder, localPlaces, placeOf, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
 import {
   buildView,
   reposToRead,
@@ -180,7 +187,7 @@ const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
 /** The installed Herdr version the "run herdr:sync" toast was last shown for. */
 const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
-const REQUEST_KEY = `${__MOD_ID__}.request.v1`;
+const REQUEST_KEY = requestKey(__MOD_ID__);
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `${__MOD_ID__}-job`;
 
@@ -774,6 +781,8 @@ export default class Worktrunk extends View {
         return;
       case "NewOrOpen":
         return this.openNewOrOpen(cx, action.folder);
+      case "SpaceWorktree":
+        return this.forSpace(cx, action.space, action.act);
       case "Focus":
         Option.map(this.searchBox, (box) => box.focus());
         return;
@@ -800,6 +809,23 @@ export default class Worktrunk extends View {
       default:
         Option.map(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
     }
+  }
+
+  /**
+   * Acts on the worktree the space `space` sits on, as Herdr's space menu asks: the
+   * New-or-open dialog for its repo, or a merge or remove of it, confirmed as from a row.
+   */
+  forSpace(cx: AsyncContext, space: string, act: SpaceAct) {
+    const warn = (body: string) =>
+      notify({ title: "No worktree to act on", body, level: "warning" });
+    const found = placeOf(localPlaces(spaces(), panes()), space);
+    if (Option.isNone(found)) return warn("That space has no folder on this machine.");
+    const place = found.value;
+    if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
+    cx.spawn(async () => {
+      const asked = await runEdge(spaceWorktree(act, place), Result.fail);
+      Result.match(asked, { onSuccess: ask, onFailure: warn });
+    });
   }
 
   /** Busy with another job: says so and gives true. */

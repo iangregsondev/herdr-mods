@@ -5,8 +5,8 @@
 import { Data, Effect, Option, Result } from "effect";
 import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
-import { Files, type FileError } from "./files.ts";
-import type { JobSpec } from "./menus.ts";
+import { Files, type FileError } from "worktrunk-mailbox";
+import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
@@ -181,6 +181,36 @@ const readBranches = Effect.fn("readBranches")(function* (root: string) {
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
 export const readList = Effect.fn("readList")(function* (root: string) {
   return yield* wtList(root);
+}, asReason);
+
+/**
+ * The Merge or Remove a space's menu asks for, of the worktree the space's folder
+ * `folder` is in: found through its repo and that repo's list, read now, since the panel
+ * may not list the repo (hidden, or outside the group folders). A failure, or a worktree
+ * that can't be merged or removed, is its one-line reason.
+ */
+export const spaceWorktree = (
+  act: "Merge" | "Remove",
+  folder: string,
+): Effect.Effect<Result.Result<Action, string>, never, Shell> =>
+  holderRepo(folder).pipe(
+    Effect.map(
+      Result.flatMap(
+        Option.match({
+          onNone: () => Result.fail(`${folder} isn't in a git repo.`),
+          onSome: ({ root, worktrees }) => spaceWorktreeAction(act, root, worktrees, folder),
+        }),
+      ),
+    ),
+  );
+
+/** The repo `folder` is in, with its worktrees; none outside every repo. */
+const holderRepo = Effect.fn("holderRepo")(function* (folder: string) {
+  const found = yield* repoAt(folder);
+  if (Option.isNone(found)) return Option.none();
+  const root = found.value.root;
+  const worktrees = yield* wtList(root);
+  return Option.some({ root, worktrees });
 }, asReason);
 
 /** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */

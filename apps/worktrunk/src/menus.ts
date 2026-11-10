@@ -1,6 +1,7 @@
 // The row and repo menus, the confirm dialog's text and what each action asks for.
 // Pure: no `herdr` or `gpui` imports. The shell (main.ts) draws these and runs the actions.
-import { Option } from "effect";
+import { Option, Result } from "effect";
+import type { MenuRequest } from "worktrunk-mailbox";
 import {
   cleanupScript,
   mergeScript,
@@ -11,6 +12,7 @@ import {
   type WtOptions,
 } from "./commands.ts";
 import type { RepoList } from "./reads.ts";
+import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
 import type { Click } from "./view.ts";
 import type { Worktree } from "./worktrees.ts";
@@ -38,11 +40,12 @@ export type Action =
       readonly dirty: number;
     }
   /**
-   * Open the New-or-open worktree dialog for the repo `folder` is in: its main checkout, a
-   * linked worktree or any folder inside one, whose branch is offered as a base. Null for
-   * the focused folder. Outside every repo the dialog asks for one.
+   * `NewOrOpen`: open the New-or-open worktree dialog for the repo `folder` is in (its
+   * main checkout, a linked worktree or any folder inside one, whose branch is offered as
+   * a base; null for the focused folder). `SpaceWorktree`: act on a space's worktree.
+   * Other mods post these too (`worktrunk-mailbox`).
    */
-  | { readonly _tag: "NewOrOpen"; readonly folder: string | null }
+  | MenuRequest
   /** Switch to or create the worktree for `name`; `base` null for wt's default branch. */
   | {
       readonly _tag: "Create";
@@ -113,6 +116,36 @@ export const rowMenu = (root: string, worktree: Worktree, click: Click): readonl
     item("Copy path", { _tag: "CopyPath", path: worktree.path }),
     item("Reveal in Finder", { _tag: "Reveal", path: worktree.path }),
   ];
+};
+
+/**
+ * Merging (squashed) or removing the worktree of the repo at `root` that holds `folder`,
+ * as a space's menu asks: the deepest of `worktrees` containing it. Fails, saying why,
+ * for the main checkout, a detached worktree's merge, or a folder in none of them.
+ */
+export const spaceWorktreeAction = (
+  act: "Merge" | "Remove",
+  root: string,
+  worktrees: readonly Worktree[],
+  folder: string,
+): Result.Result<Action, string> => {
+  const holder = worktrees
+    .filter((w) => isUnder(folder, w.path))
+    .reduce<Worktree | undefined>(
+      (best, w) => (best && best.path.length >= w.path.length ? best : w),
+      undefined,
+    );
+  if (holder === undefined) {
+    return Result.fail(`${folder} isn't in a worktree of ${lastSegment(root)}.`);
+  }
+  if (holder.state._tag === "Main") {
+    return Result.fail(`${lastSegment(root)}'s main checkout can't be merged or removed.`);
+  }
+  if (act === "Remove") return Result.succeed(removeOf(root, holder));
+  return Option.match(holder.branch, {
+    onNone: () => Result.fail(`${lastSegment(holder.path)} has no branch to merge.`),
+    onSome: (branch) => Result.succeed(mergeOf(root, holder, branch, "squash")),
+  });
 };
 
 /** One menu row's height, in px. */

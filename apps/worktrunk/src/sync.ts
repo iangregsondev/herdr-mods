@@ -5,7 +5,7 @@
 //   { "layout": "iangregsondev", "from": "main", "version": "0.1.14" }
 // `version` is the Herdr app version the layout was built from.
 import { Option, Result } from "effect";
-import { at, parseJson, text } from "./json.ts";
+import { at, parseJson, text } from "worktrunk-mailbox";
 
 export interface SyncRecord {
   /** The layout the sync wrote. */

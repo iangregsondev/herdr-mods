@@ -52,6 +52,8 @@ export function layoutFromRecord(text: string): string | null {
 }
 
 const WORKTRUNK = modId("worktrunk");
+/** The mod that plays Herdr's tab bar, sidebar and menus with worktrunk items added. */
+const MENUS = modId("menus");
 
 /** What an edit gave: the new tree, or why its anchor in Herdr's layout didn't match. */
 export type EditResult =
@@ -66,6 +68,11 @@ export type EditResult =
 export interface LayoutEdit {
   /** Named in the error when the edit can't apply. */
   readonly name: string;
+  /**
+   * A mod the edit points the layout at. When it isn't installed, the edit is skipped,
+   * so the layout keeps Herdr's own block rather than naming a mod that isn't there.
+   */
+  readonly needs?: string;
   readonly apply: (root: LayoutNode) => EditResult;
 }
 
@@ -154,8 +161,30 @@ const sidePanel: LayoutEdit = {
     ),
 };
 
+/**
+ * The block showing Herdr's `mod` now shows the menus mod in `role`, which plays Herdr's
+ * mod with worktrunk items added to the menus it opens. The block keeps its id and size.
+ */
+const wrapperFor = (name: string, mod: string, role: string): LayoutEdit => ({
+  name,
+  needs: MENUS,
+  apply: (root) =>
+    replaceOne(
+      root,
+      `block showing the "${mod}" mod`,
+      (node) => node.content?.mod === mod,
+      (node) => ({ ...node, content: { mod: MENUS, props: { role } } }),
+    ),
+});
+
 /** Every change from Herdr's default to my layout, applied in order. */
-export const LAYOUT_EDITS: readonly LayoutEdit[] = [tabBarToggle, sidePanel];
+export const LAYOUT_EDITS: readonly LayoutEdit[] = [
+  tabBarToggle,
+  sidePanel,
+  // After the toggle edit, which finds the tab bar by Herdr's "tabs" mod.
+  wrapperFor("tab-bar menus", "tabs", "tabs"),
+  wrapperFor("sidebar menus", "spaces", "spaces"),
+];
 
 const idsIn = (node: LayoutNode): string[] => [
   ...(typeof node.id === "string" ? [node.id] : []),
@@ -165,12 +194,15 @@ const idsIn = (node: LayoutNode): string[] => [
 /**
  * My layout from Herdr's default (`base`), or the first edit that failed. Node ids stay
  * unique: an edit whose new ids Herdr's layout already uses fails too, naming them.
+ * Edits that need a mod `installed` says is missing are left out.
  */
 export function buildLayout(
   base: LayoutNode,
   edits: readonly LayoutEdit[] = LAYOUT_EDITS,
+  installed: (mod: string) => boolean = () => true,
 ): EditResult {
   return edits.reduce<EditResult>((built, edit) => {
+    if (edit.needs !== undefined && !installed(edit.needs)) return built;
     if (built._tag === "Failed") return built;
     const result = edit.apply(built.node);
     if (result._tag === "Failed") return failed(`${edit.name}: ${result.reason}`);
@@ -253,7 +285,11 @@ export function herdrSync({
   if (shippedLayouts(home).has(LAYOUT_NAME)) {
     return fail(`a layout named "${LAYOUT_NAME}" ships with Herdr; refusing to overwrite it.`);
   }
-  const built = buildLayout(base);
+  const installed = (mod: string) => existsSync(join(home, "mods", mod, "main.js"));
+  const built = buildLayout(base, LAYOUT_EDITS, installed);
+  const missing = [
+    ...new Set(LAYOUT_EDITS.flatMap((e) => (e.needs && !installed(e.needs) ? [e.needs] : []))),
+  ];
   if (built._tag === "Failed") {
     return fail(
       `Herdr's default layout has changed, so this patch point no longer fits: ${built.reason}.`,
@@ -269,6 +305,10 @@ export function herdrSync({
     out: [
       `herdr-sync: wrote layout "${LAYOUT_NAME}" from Herdr's "${DEFAULT_LAYOUT}" (Herdr ${version}).`,
       `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${LAYOUT_NAME}`,
+      ...missing.map(
+        (mod) =>
+          `herdr-sync: ${mod} isn't installed, so the layout keeps Herdr's own blocks for it. Install it (or run its dev build), then sync again.`,
+      ),
     ],
     err: [],
   };

@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   busyNotice,
@@ -11,6 +11,7 @@ import {
   menuHeight,
   repoMenu,
   rowMenu,
+  spaceWorktreeAction,
 } from "../src/menus.ts";
 import { mergeScript, removeScript, cleanupScript } from "../src/commands.ts";
 import type { RepoList } from "../src/reads.ts";
@@ -332,6 +333,12 @@ describe("confirmFor", () => {
   ] as const)("$_tag changes nothing, so it doesn't ask", (action) => {
     expect(confirmFor(action)).toEqual(Option.none());
   });
+
+  test("a space's worktree request doesn't ask itself: the panel asks once it finds the worktree", () => {
+    expect(confirmFor({ _tag: "SpaceWorktree", space: "sp1", act: "Remove" })).toEqual(
+      Option.none(),
+    );
+  });
 });
 
 describe("dialogHeight", () => {
@@ -401,6 +408,12 @@ describe("jobFor", () => {
   ] as const)("$_tag isn't a job", (action) => {
     expect(jobFor(action, WRAPPED)).toEqual(Option.none());
   });
+
+  test("a space's worktree request isn't a job itself: the Merge or Remove it becomes is", () => {
+    expect(jobFor({ _tag: "SpaceWorktree", space: "sp1", act: "Merge" }, WRAPPED)).toEqual(
+      Option.none(),
+    );
+  });
 });
 
 describe("busyNotice", () => {
@@ -409,5 +422,72 @@ describe("busyNotice", () => {
       title: "worktrunk is busy",
       body: 'Wait for "Merge feat into main" to finish.',
     });
+  });
+});
+
+describe("spaceWorktreeAction", () => {
+  const APP = wt("/r/app", "main", MAIN);
+  const LIST = [APP, FEAT];
+
+  test("merges the worktree a space sits in, squashing, from any folder inside it", () => {
+    expect(spaceWorktreeAction("Merge", "/r/app", LIST, "/r/app.feat-x/src")).toEqual(
+      Result.succeed({
+        _tag: "Merge",
+        target: { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" },
+        mode: "squash",
+        dirty: false,
+      }),
+    );
+  });
+
+  test("removes it by branch, saying whether it has uncommitted changes", () => {
+    const dirty = wt("/r/app.feat-x", "feat/x", ACTIVE, { dirty: true });
+    expect(spaceWorktreeAction("Remove", "/r/app", [APP, dirty], "/r/app.feat-x")).toEqual(
+      Result.succeed({
+        _tag: "Remove",
+        target: { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" },
+        dirty: true,
+      }),
+    );
+  });
+
+  test("removes a detached worktree by its folder", () => {
+    const detached = wt("/r/app.x", null, ACTIVE);
+    expect(spaceWorktreeAction("Remove", "/r/app", [APP, detached], "/r/app.x")).toEqual(
+      Result.succeed({
+        _tag: "Remove",
+        target: { main: "/r/app", path: "/r/app.x", branch: "/r/app.x" },
+        dirty: false,
+      }),
+    );
+  });
+
+  test("picks the deepest worktree when one sits inside another's folder", () => {
+    const nested = wt("/r/app/.worktrees/fix", "fix", ACTIVE);
+    expect(
+      Result.map(
+        spaceWorktreeAction("Remove", "/r/app", [APP, nested], "/r/app/.worktrees/fix/a"),
+        (action) => action._tag === "Remove" && action.target.branch,
+      ),
+    ).toEqual(Result.succeed("fix"));
+  });
+
+  test.each(["Merge", "Remove"] as const)("never does a %s of the main checkout", (act) => {
+    expect(spaceWorktreeAction(act, "/r/app", LIST, "/r/app/src")).toEqual(
+      Result.fail("app's main checkout can't be merged or removed."),
+    );
+  });
+
+  test("can't merge a detached worktree", () => {
+    const detached = wt("/r/app.x", null, ACTIVE);
+    expect(spaceWorktreeAction("Merge", "/r/app", [APP, detached], "/r/app.x")).toEqual(
+      Result.fail("app.x has no branch to merge."),
+    );
+  });
+
+  test("says so when the folder is in none of the repo's worktrees", () => {
+    expect(spaceWorktreeAction("Remove", "/r/app", LIST, "/elsewhere")).toEqual(
+      Result.fail("/elsewhere isn't in a worktree of app."),
+    );
   });
 });

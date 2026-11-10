@@ -20,7 +20,10 @@ export default defineConfig({
     "*": "vp check --fix --deny-warnings",
   },
   // .claude/skills/ holds upstream skills (skills-lock.json); reformatting them would drift from upstream.
-  fmt: { ignorePatterns: [...ignorePatterns, ".claude/skills/**"] },
+  // The menus mod's stand-ins hold Herdr's patch points exactly as Herdr writes them; reformatting would move them.
+  fmt: {
+    ignorePatterns: [...ignorePatterns, ".claude/skills/**", "apps/menus/tests/fixtures/**"],
+  },
   lint: {
     // Effect's rules. They need the oxlint that `prepare` patches (effect-tsgo patch).
     extends: [effectRecommended],

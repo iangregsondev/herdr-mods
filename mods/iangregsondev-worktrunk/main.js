@@ -9628,7 +9628,55 @@ const fnUntraced = fnUntraced$1;
 */
 const fn = fn$1;
 
-// src/json.ts
+// ../../packages/worktrunk-mailbox/src/files.ts
+/** There is no file at `path`. */
+var FileMissing = class extends TaggedError("FileMissing") {};
+/** Reading or writing `path` failed. */
+var FileError = class extends TaggedError("FileError") {};
+/** The write was refused because the file changed, or appeared, since it was read. */
+var WriteConflict = class extends TaggedError("WriteConflict") {};
+/** The system's folder picker couldn't be shown. */
+var PickerFailed = class extends TaggedError("PickerFailed") {};
+var Files = class Files extends Service()("worktrunk-mailbox/Files") {
+	static layer = (api) => {
+		const read = (path) => tryPromise({
+			try: () => api.readTextFile(path),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(filterOrFail(isNotNull, () => new FileMissing({ path })));
+		const create = (path, text) => tryPromise({
+			try: () => api.writeTextFile(path, text, null),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(asVoid, catchTag("FileError", (failed) => read(path).pipe(matchEffect({
+			onSuccess: () => fail(new WriteConflict({ path })),
+			onFailure: () => fail(failed)
+		}))));
+		const replace = (path, text, expected) => tryPromise({
+			try: () => api.writeTextFile(path, text, expected),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(asVoid, catchTag("FileError", (failed) => option(read(path)).pipe(flatMap((now) => contains(now, expected) ? fail(failed) : fail(new WriteConflict({ path }))))));
+		const pickFolder = (prompt) => tryPromise({
+			try: () => api.pickFolder({ prompt }),
+			catch: (cause) => new PickerFailed({ cause })
+		}).pipe(map(fromNullishOr));
+		return succeed$1(Files, Files.of({
+			read,
+			create,
+			replace,
+			pickFolder
+		}));
+	};
+};
+
+// ../../packages/worktrunk-mailbox/src/json.ts
 /** `text` as JSON, or the parser's message. */
 const parseJson = (text) => try_({
 	try: () => JSON.parse(text),
@@ -9648,6 +9696,61 @@ const bool = (value) => isBoolean(value) ? some(value) : none();
 const listOf$2 = (value, read) => Array.isArray(value) ? all$2(value.map(read)) : none();
 /** A string or null, else none. */
 const textOrNull = (value) => value === null ? some(null) : text(value);
+
+// ../../packages/worktrunk-mailbox/src/layout.ts
+/**
+* Every role a copy of the worktrunk mod plays, as its props' `role` names it. One mod
+* folder serves them all: layout blocks show the side `panel` (no role) and the tab-bar
+* `toggle` that shows and hides it; overlays are a `menu`, a `confirm` dialog, the `new`
+* worktree dialog, the `settings` dialog, and a job window's `titlebar`.
+*/
+const ROLES = [
+	"panel",
+	"toggle",
+	"menu",
+	"confirm",
+	"new",
+	"settings",
+	"titlebar"
+];
+/** The role a copy plays when its props give none: the side panel. */
+const PANEL_ROLE = "panel";
+/** The tab-bar button that shows and hides the panel. */
+const TOGGLE_ROLE = "toggle";
+/**
+* The role a copy of the mod plays, from the props its layout block or overlay gave
+* (`{ role: "toggle" }`): no role means the panel, and a name that isn't a role is none.
+*/
+const roleOf = (props) => match$5(text(at(props, "role")), {
+	onNone: () => some(PANEL_ROLE),
+	onSome: (role) => fromNullishOr(ROLES.find((known) => known === role))
+});
+const findIn = (node, mod, role, hiddenAbove) => {
+	const hidden = hiddenAbove || at(node, "hidden") === true;
+	if (at(node, "content", "mod") === mod && contains(roleOf(at(node, "content", "props")), role)) return map$3(text(at(node, "id")), (id) => ({
+		id,
+		hidden
+	}));
+	const children = fields(node).children;
+	return (Array.isArray(children) ? children : []).reduce((found, child) => isSome(found) ? found : findIn(child, mod, role, hidden), none());
+};
+/**
+* The first block in `layout` that shows `mod` as the panel, with whether it is hidden.
+* Blocks showing the mod in another role (the tab-bar toggle) are skipped.
+*/
+const findModBlock = (layout, mod) => findRoleBlock(layout, mod, PANEL_ROLE);
+/** The first block in `layout` that shows `mod` in `role`, with whether it is hidden. */
+const findRoleBlock = (layout, mod, role) => findIn(layout, mod, role, false);
+
+// ../../packages/worktrunk-mailbox/src/mailbox.ts
+/** The shared-state key the panel of the worktrunk mod `panelMod` reads requests from. */
+const requestKey = (panelMod) => `${panelMod}.request.v1`;
+/** Every SpaceAct, for readers of a request. */
+const SPACE_ACTS = [
+	"NewOrOpen",
+	"Merge",
+	"Remove"
+];
 
 // src/settings.ts
 const DEFAULT_SETTINGS = {
@@ -10239,99 +10342,6 @@ const pick = (state, line) => {
 	});
 };
 
-// src/files.ts
-/** There is no file at `path`. */
-var FileMissing = class extends TaggedError("FileMissing") {};
-/** Reading or writing `path` failed. */
-var FileError = class extends TaggedError("FileError") {};
-/** The write was refused because the file changed, or appeared, since it was read. */
-var WriteConflict = class extends TaggedError("WriteConflict") {};
-/** The system's folder picker couldn't be shown. */
-var PickerFailed = class extends TaggedError("PickerFailed") {};
-var Files = class Files extends Service()("iangregsondev-worktrunk/Files") {
-	static layer = (api) => {
-		const read = (path) => tryPromise({
-			try: () => api.readTextFile(path),
-			catch: (cause) => new FileError({
-				path,
-				cause
-			})
-		}).pipe(filterOrFail(isNotNull, () => new FileMissing({ path })));
-		const create = (path, text) => tryPromise({
-			try: () => api.writeTextFile(path, text, null),
-			catch: (cause) => new FileError({
-				path,
-				cause
-			})
-		}).pipe(asVoid, catchTag("FileError", (failed) => read(path).pipe(matchEffect({
-			onSuccess: () => fail(new WriteConflict({ path })),
-			onFailure: () => fail(failed)
-		}))));
-		const replace = (path, text, expected) => tryPromise({
-			try: () => api.writeTextFile(path, text, expected),
-			catch: (cause) => new FileError({
-				path,
-				cause
-			})
-		}).pipe(asVoid, catchTag("FileError", (failed) => option(read(path)).pipe(flatMap((now) => contains(now, expected) ? fail(failed) : fail(new WriteConflict({ path }))))));
-		const pickFolder = (prompt) => tryPromise({
-			try: () => api.pickFolder({ prompt }),
-			catch: (cause) => new PickerFailed({ cause })
-		}).pipe(map(fromNullishOr));
-		return succeed$1(Files, Files.of({
-			read,
-			create,
-			replace,
-			pickFolder
-		}));
-	};
-};
-
-// src/layout.ts
-/**
-* Every role a copy of the worktrunk mod plays, as its props' `role` names it. One mod
-* folder serves them all: layout blocks show the side `panel` (no role) and the tab-bar
-* `toggle` that shows and hides it; overlays are a `menu`, a `confirm` dialog, the `new`
-* worktree dialog, the `settings` dialog, and a job window's `titlebar`.
-*/
-const ROLES = [
-	"panel",
-	"toggle",
-	"menu",
-	"confirm",
-	"new",
-	"settings",
-	"titlebar"
-];
-/** The role a copy plays when its props give none: the side panel. */
-const PANEL_ROLE = "panel";
-/** The tab-bar button that shows and hides the panel. */
-const TOGGLE_ROLE = "toggle";
-/**
-* The role a copy of the mod plays, from the props its layout block or overlay gave
-* (`{ role: "toggle" }`): no role means the panel, and a name that isn't a role is none.
-*/
-const roleOf = (props) => match$5(text(at(props, "role")), {
-	onNone: () => some(PANEL_ROLE),
-	onSome: (role) => fromNullishOr(ROLES.find((known) => known === role))
-});
-const findIn = (node, mod, role, hiddenAbove) => {
-	const hidden = hiddenAbove || at(node, "hidden") === true;
-	if (at(node, "content", "mod") === mod && contains(roleOf(at(node, "content", "props")), role)) return map$3(text(at(node, "id")), (id) => ({
-		id,
-		hidden
-	}));
-	const children = fields(node).children;
-	return (Array.isArray(children) ? children : []).reduce((found, child) => isSome(found) ? found : findIn(child, mod, role, hidden), none());
-};
-/**
-* The first block in `layout` that shows `mod` as the panel, with whether it is hidden.
-* Blocks showing the mod in another role (the tab-bar toggle) are skipped.
-*/
-const findModBlock = (layout, mod) => findRoleBlock(layout, mod, PANEL_ROLE);
-/** The first block in `layout` that shows `mod` in `role`, with whether it is hidden. */
-const findRoleBlock = (layout, mod, role) => findIn(layout, mod, role, false);
-
 // src/keys.ts
 const IGNORE = { _tag: "Ignore" };
 const PANEL_COMMANDS = [
@@ -10421,6 +10431,212 @@ const noticeFor = (step) => {
 		default: return none();
 	}
 };
+
+// src/menus.ts
+const item = (label, action, danger = false) => ({
+	label,
+	danger,
+	action
+});
+const mergeOf = (root, worktree, branch, mode) => ({
+	_tag: "Merge",
+	target: {
+		main: root,
+		path: worktree.path,
+		branch
+	},
+	mode,
+	dirty: worktree.dirty
+});
+/** Removing a linked worktree: by its branch, or by its folder when it has none. */
+const removeOf = (root, worktree) => ({
+	_tag: "Remove",
+	target: {
+		main: root,
+		path: worktree.path,
+		branch: getOrElse$1(worktree.branch, () => worktree.path)
+	},
+	dirty: worktree.dirty
+});
+/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
+const rowMenu = (root, worktree, click) => {
+	const remove = item("Remove…", removeOf(root, worktree), true);
+	const linked = worktree.state._tag === "Main" ? [] : match$5(worktree.branch, {
+		onNone: () => [remove],
+		onSome: (branch) => [
+			item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
+			item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
+			remove
+		]
+	});
+	return [
+		item("Open", {
+			_tag: "Open",
+			click
+		}),
+		...linked,
+		item("Copy path", {
+			_tag: "CopyPath",
+			path: worktree.path
+		}),
+		item("Reveal in Finder", {
+			_tag: "Reveal",
+			path: worktree.path
+		})
+	];
+};
+/**
+* Merging (squashed) or removing the worktree of the repo at `root` that holds `folder`,
+* as a space's menu asks: the deepest of `worktrees` containing it. Fails, saying why,
+* for the main checkout, a detached worktree's merge, or a folder in none of them.
+*/
+const spaceWorktreeAction = (act, root, worktrees, folder) => {
+	const holder = worktrees.filter((w) => isUnder(folder, w.path)).reduce((best, w) => best && best.path.length >= w.path.length ? best : w, void 0);
+	if (holder === void 0) return fail$2(`${folder} isn't in a worktree of ${lastSegment(root)}.`);
+	if (holder.state._tag === "Main") return fail$2(`${lastSegment(root)}'s main checkout can't be merged or removed.`);
+	if (act === "Remove") return succeed$3(removeOf(root, holder));
+	return match$5(holder.branch, {
+		onNone: () => fail$2(`${lastSegment(holder.path)} has no branch to merge.`),
+		onSome: (branch) => succeed$3(mergeOf(root, holder, branch, "squash"))
+	});
+};
+/** One menu row's height, in px. */
+const ITEM_HEIGHT = 30;
+/** The menu's title line plus its padding, in px. */
+const MENU_CHROME = 40;
+/** A menu's height for `items` rows. */
+const menuHeight = (items) => 40 + items * 30;
+/** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
+const cleanupAction = (repos) => {
+	const found = repos.flatMap(({ root, worktrees }) => {
+		const merged = worktrees.filter((w) => w.state._tag === "Merged");
+		return merged.length === 0 ? [] : [{
+			root,
+			merged
+		}];
+	});
+	if (found.length === 0) return none();
+	const all = found.flatMap(({ merged }) => merged);
+	return some({
+		_tag: "Cleanup",
+		batches: found.map(({ root, merged }) => ({
+			main: root,
+			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path))
+		})),
+		paths: all.map((w) => w.path),
+		dirty: all.filter((w) => w.dirty).length
+	});
+};
+/** The right-click menu of the repo whose main checkout is `root`. */
+const repoMenu = (root, worktrees) => [
+	item("New or open worktree…", {
+		_tag: "NewOrOpen",
+		folder: root
+	}),
+	...toArray(cleanupAction([{
+		root,
+		worktrees
+	}])).map((action) => item(`Clean up ${action.paths.length} merged…`, action, true)),
+	item("Refresh", { _tag: "Refresh" }),
+	item("Reveal in Finder", {
+		_tag: "Reveal",
+		path: root
+	}),
+	item("Hide this repo", {
+		_tag: "Hide",
+		root
+	})
+];
+/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
+const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([root, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
+	root,
+	worktree
+})))[0]);
+/**
+* Removing the merged worktrees among those at `paths`, batched by repo in the order
+* their repos first appear; none when none of them is merged.
+*/
+const cleanupFor = (lists, paths) => {
+	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
+	const roots = Array.from(new Set(found.map(({ root }) => root)));
+	return cleanupAction(roots.map((root) => ({
+		root,
+		worktrees: found.filter((f) => f.root === root).map((f) => f.worktree)
+	})));
+};
+const DIRTY_LINE = "It has uncommitted changes: wt stops rather than lose them.";
+const SPACES_LINE = "Spaces open on a removed worktree close.";
+/** What to ask before `action`; none for actions that remove or merge nothing. */
+const confirmFor = (action) => {
+	switch (action._tag) {
+		case "Merge": return some({
+			title: `Merge ${action.target.branch} into main?`,
+			lines: [
+				action.mode === "squash" ? "Its commits become one commit on main." : "Every commit is kept, rebased onto main.",
+				"Then the worktree is removed, and its branch with it.",
+				...action.dirty ? ["Its uncommitted changes are committed first."] : [],
+				SPACES_LINE
+			],
+			go: "Merge",
+			danger: false
+		});
+		case "Remove": return some({
+			title: `Remove ${action.target.branch === action.target.path ? lastSegment(action.target.path) : action.target.branch}?`,
+			lines: [
+				"The worktree's folder is removed; its branch too, if it is merged.",
+				...action.dirty ? [DIRTY_LINE] : [],
+				SPACES_LINE
+			],
+			go: "Remove",
+			danger: true
+		});
+		case "Cleanup": {
+			const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
+			return some({
+				title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
+				lines: [
+					...action.batches.map((b) => `${lastSegment(b.main)}: ${b.branches.join(", ")}`),
+					...action.dirty > 0 ? [`${action.dirty} with uncommitted changes: wt stops rather than lose them.`] : [],
+					SPACES_LINE
+				],
+				go: "Remove",
+				danger: true
+			});
+		}
+		default: return none();
+	}
+};
+/** The confirm dialog's height for `lines` lines of text, in px, never taller than 560. */
+const dialogHeight = (lines) => Math.min(560, 132 + lines * 22);
+/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
+const jobFor = (action, options) => {
+	switch (action._tag) {
+		case "Merge": return some({
+			title: `Merge ${action.target.branch} into main`,
+			cwd: action.target.main,
+			body: mergeScript(action.target, action.mode, options),
+			gone: [action.target.path]
+		});
+		case "Remove": return some({
+			title: `Remove ${action.target.branch}`,
+			cwd: action.target.main,
+			body: removeScript(action.target.main, [action.target.branch], options),
+			gone: [action.target.path]
+		});
+		case "Cleanup": return map$3(fromNullishOr(action.batches[0]), (first) => ({
+			title: `Clean up ${action.paths.length} merged`,
+			cwd: first.main,
+			body: cleanupScript(action.batches, options),
+			gone: action.paths
+		}));
+		default: return none();
+	}
+};
+/** What to say when a job is asked for while `running` (its title) still runs. */
+const busyNotice = (running) => ({
+	title: "worktrunk is busy",
+	body: `Wait for "${running}" to finish.`
+});
 
 // src/sync.ts
 const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
@@ -10755,6 +10971,27 @@ const readBranches = fn("readBranches")(function* (root) {
 const readList = fn("readList")(function* (root) {
 	return yield* wtList(root);
 }, asReason);
+/**
+* The Merge or Remove a space's menu asks for, of the worktree the space's folder
+* `folder` is in: found through its repo and that repo's list, read now, since the panel
+* may not list the repo (hidden, or outside the group folders). A failure, or a worktree
+* that can't be merged or removed, is its one-line reason.
+*/
+const spaceWorktree = (act, folder) => holderRepo(folder).pipe(map(flatMap$2(match$5({
+	onNone: () => fail$2(`${folder} isn't in a git repo.`),
+	onSome: ({ root, worktrees }) => spaceWorktreeAction(act, root, worktrees, folder)
+}))));
+/** The repo `folder` is in, with its worktrees; none outside every repo. */
+const holderRepo = fn("holderRepo")(function* (folder) {
+	const found = yield* repoAt(folder);
+	if (isNone(found)) return none();
+	const root = found.value.root;
+	const worktrees = yield* wtList(root);
+	return some({
+		root,
+		worktrees
+	});
+}, asReason);
 /** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */
 const readCi = fn("readCi")(function* (root) {
 	return yield* wtCi(root);
@@ -10904,197 +11141,6 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 	SettingsUnreadable: (failed) => succeed(fail$2(unreadableText(files.name, failed))),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
-
-// src/menus.ts
-const item = (label, action, danger = false) => ({
-	label,
-	danger,
-	action
-});
-const mergeOf = (root, worktree, branch, mode) => ({
-	_tag: "Merge",
-	target: {
-		main: root,
-		path: worktree.path,
-		branch
-	},
-	mode,
-	dirty: worktree.dirty
-});
-/** Removing a linked worktree: by its branch, or by its folder when it has none. */
-const removeOf = (root, worktree) => ({
-	_tag: "Remove",
-	target: {
-		main: root,
-		path: worktree.path,
-		branch: getOrElse$1(worktree.branch, () => worktree.path)
-	},
-	dirty: worktree.dirty
-});
-/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
-const rowMenu = (root, worktree, click) => {
-	const remove = item("Remove…", removeOf(root, worktree), true);
-	const linked = worktree.state._tag === "Main" ? [] : match$5(worktree.branch, {
-		onNone: () => [remove],
-		onSome: (branch) => [
-			item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
-			item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
-			remove
-		]
-	});
-	return [
-		item("Open", {
-			_tag: "Open",
-			click
-		}),
-		...linked,
-		item("Copy path", {
-			_tag: "CopyPath",
-			path: worktree.path
-		}),
-		item("Reveal in Finder", {
-			_tag: "Reveal",
-			path: worktree.path
-		})
-	];
-};
-/** One menu row's height, in px. */
-const ITEM_HEIGHT = 30;
-/** The menu's title line plus its padding, in px. */
-const MENU_CHROME = 40;
-/** A menu's height for `items` rows. */
-const menuHeight = (items) => 40 + items * 30;
-/** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
-const cleanupAction = (repos) => {
-	const found = repos.flatMap(({ root, worktrees }) => {
-		const merged = worktrees.filter((w) => w.state._tag === "Merged");
-		return merged.length === 0 ? [] : [{
-			root,
-			merged
-		}];
-	});
-	if (found.length === 0) return none();
-	const all = found.flatMap(({ merged }) => merged);
-	return some({
-		_tag: "Cleanup",
-		batches: found.map(({ root, merged }) => ({
-			main: root,
-			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path))
-		})),
-		paths: all.map((w) => w.path),
-		dirty: all.filter((w) => w.dirty).length
-	});
-};
-/** The right-click menu of the repo whose main checkout is `root`. */
-const repoMenu = (root, worktrees) => [
-	item("New or open worktree…", {
-		_tag: "NewOrOpen",
-		folder: root
-	}),
-	...toArray(cleanupAction([{
-		root,
-		worktrees
-	}])).map((action) => item(`Clean up ${action.paths.length} merged…`, action, true)),
-	item("Refresh", { _tag: "Refresh" }),
-	item("Reveal in Finder", {
-		_tag: "Reveal",
-		path: root
-	}),
-	item("Hide this repo", {
-		_tag: "Hide",
-		root
-	})
-];
-/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
-const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([root, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
-	root,
-	worktree
-})))[0]);
-/**
-* Removing the merged worktrees among those at `paths`, batched by repo in the order
-* their repos first appear; none when none of them is merged.
-*/
-const cleanupFor = (lists, paths) => {
-	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
-	const roots = Array.from(new Set(found.map(({ root }) => root)));
-	return cleanupAction(roots.map((root) => ({
-		root,
-		worktrees: found.filter((f) => f.root === root).map((f) => f.worktree)
-	})));
-};
-const DIRTY_LINE = "It has uncommitted changes: wt stops rather than lose them.";
-const SPACES_LINE = "Spaces open on a removed worktree close.";
-/** What to ask before `action`; none for actions that remove or merge nothing. */
-const confirmFor = (action) => {
-	switch (action._tag) {
-		case "Merge": return some({
-			title: `Merge ${action.target.branch} into main?`,
-			lines: [
-				action.mode === "squash" ? "Its commits become one commit on main." : "Every commit is kept, rebased onto main.",
-				"Then the worktree is removed, and its branch with it.",
-				...action.dirty ? ["Its uncommitted changes are committed first."] : [],
-				SPACES_LINE
-			],
-			go: "Merge",
-			danger: false
-		});
-		case "Remove": return some({
-			title: `Remove ${action.target.branch === action.target.path ? lastSegment(action.target.path) : action.target.branch}?`,
-			lines: [
-				"The worktree's folder is removed; its branch too, if it is merged.",
-				...action.dirty ? [DIRTY_LINE] : [],
-				SPACES_LINE
-			],
-			go: "Remove",
-			danger: true
-		});
-		case "Cleanup": {
-			const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
-			return some({
-				title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
-				lines: [
-					...action.batches.map((b) => `${lastSegment(b.main)}: ${b.branches.join(", ")}`),
-					...action.dirty > 0 ? [`${action.dirty} with uncommitted changes: wt stops rather than lose them.`] : [],
-					SPACES_LINE
-				],
-				go: "Remove",
-				danger: true
-			});
-		}
-		default: return none();
-	}
-};
-/** The confirm dialog's height for `lines` lines of text, in px, never taller than 560. */
-const dialogHeight = (lines) => Math.min(560, 132 + lines * 22);
-/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
-const jobFor = (action, options) => {
-	switch (action._tag) {
-		case "Merge": return some({
-			title: `Merge ${action.target.branch} into main`,
-			cwd: action.target.main,
-			body: mergeScript(action.target, action.mode, options),
-			gone: [action.target.path]
-		});
-		case "Remove": return some({
-			title: `Remove ${action.target.branch}`,
-			cwd: action.target.main,
-			body: removeScript(action.target.main, [action.target.branch], options),
-			gone: [action.target.path]
-		});
-		case "Cleanup": return map$3(fromNullishOr(action.batches[0]), (first) => ({
-			title: `Clean up ${action.paths.length} merged`,
-			cwd: first.main,
-			body: cleanupScript(action.batches, options),
-			gone: action.paths
-		}));
-		default: return none();
-	}
-};
-/** What to say when a job is asked for while `running` (its title) still runs. */
-const busyNotice = (running) => ({
-	title: "worktrunk is busy",
-	body: `Wait for "${running}" to finish.`
-});
 
 // src/reads.ts
 /** A repo's list after a read: the new worktrees, or the old ones with the read's error. */
@@ -11293,6 +11339,8 @@ const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
 		place
 	}] : [];
 });
+/** Where the space `id` is now; none for a space with no place here. */
+const placeOf = (places, id) => fromNullishOr(places.find((p) => p.space.id === id)?.place);
 /**
 * The space on each worktree path. A space sits on the longest worktree path that
 * contains its place, so a worktree nested in another's folder still gets its own.
@@ -11699,6 +11747,7 @@ const readViewState = (value) => {
 const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).flatMap(([key, folded]) => isBoolean(folded) ? [[key, folded]] : []));
 const oneOf = (options) => (value) => fromNullishOr(options.find((option) => option === value));
 const readMode = oneOf(["squash", "keep"]);
+const readAct = oneOf(SPACE_ACTS);
 const readClick = (value) => {
 	const f = fields(value);
 	switch (f._tag) {
@@ -11761,6 +11810,13 @@ const readAction = (value) => {
 		}), (cleanup) => ({
 			_tag: "Cleanup",
 			...cleanup
+		}));
+		case "SpaceWorktree": return map$3(all$2({
+			space: text(f.space),
+			act: readAct(f.act)
+		}), (request) => ({
+			_tag: "SpaceWorktree",
+			...request
 		}));
 		case "NewOrOpen": return map$3(textOrNull(f.folder), (folder) => ({
 			_tag: "NewOrOpen",
@@ -11890,7 +11946,7 @@ const SYNC_RECORD = `iangregsondev-sync.json`;
 /** The installed Herdr version the "run herdr:sync" toast was last shown for. */
 const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
-const REQUEST_KEY = `iangregsondev-worktrunk.request.v1`;
+const REQUEST_KEY = requestKey("iangregsondev-worktrunk");
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
@@ -12374,6 +12430,7 @@ var Worktrunk = class extends View {
 				});
 				return;
 			case "NewOrOpen": return this.openNewOrOpen(cx, action.folder);
+			case "SpaceWorktree": return this.forSpace(cx, action.space, action.act);
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
 				return;
@@ -12400,6 +12457,28 @@ var Worktrunk = class extends View {
 				return;
 			default: map$3(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
 		}
+	}
+	/**
+	* Acts on the worktree the space `space` sits on, as Herdr's space menu asks: the
+	* New-or-open dialog for its repo, or a merge or remove of it, confirmed as from a row.
+	*/
+	forSpace(cx, space, act) {
+		const warn = (body) => notify({
+			title: "No worktree to act on",
+			body,
+			level: "warning"
+		});
+		const found = placeOf(localPlaces(spaces(), panes()), space);
+		if (isNone(found)) return warn("That space has no folder on this machine.");
+		const place = found.value;
+		if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
+		cx.spawn(async () => {
+			const asked = await runEdge(spaceWorktree(act, place), fail$2);
+			match$4(asked, {
+				onSuccess: ask,
+				onFailure: warn
+			});
+		});
 	}
 	/** Busy with another job: says so and gives true. */
 	busy() {

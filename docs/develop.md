@@ -103,18 +103,22 @@ or, once it's pushed:
 
 ## Your layout: `herdr:sync`
 
-`vp run herdr:sync` builds your own layout, `iangregsondev`, from Herdr's current default layout (`main`) plus this repo's additions: the worktrunk panel on the right and its toggle button at the end of the tab bar. It writes `~/.config/herdr-app/layouts/iangregsondev.json` and a record of the Herdr version it built from, `~/.config/herdr-app/iangregsondev-sync.json`. A file that already holds what it would write is left untouched, so Herdr reloads nothing.
+`vp run herdr:sync` builds your own layout, `iangregsondev`, from Herdr's current default layout (`main`) plus this repo's additions: the worktrunk panel on the right, its toggle button at the end of the tab bar, and, when the `menus` mod is installed, Herdr's tab bar and sidebar swapped for the `menus` mod's copies of them, whose "+" and space menus carry worktrunk items. It writes `~/.config/herdr-app/layouts/iangregsondev.json` and a record of the Herdr version it built from, `~/.config/herdr-app/iangregsondev-sync.json`. A file that already holds what it would write is left untouched, so Herdr reloads nothing.
 
 - **It's safe to run any time.** It reads Herdr's files and never edits them, never switches your layout, and keeps none of Herdr's code in this repo. Herdr's `main` stays as it is, so Herdr's usual layout switch (`layout.switch`, default `ctrl-shift-l`) moves between the two. To switch from a shell: `herdr-app do layout.switch --name iangregsondev`.
 - **It works on this machine's Herdr only.** Unlike the dev loop, it doesn't follow the dev target yet: with a `remote` target, run it on the Herdr host itself.
 - **The worktrunk mod must be installed** (or running as a dev build) for the panel and toggle to show in the layout.
 - **`vp run dev:remove` leaves this layout alone.** Its blocks belong to the sync, so they stay when a dev build goes: after `dev:remove worktrunk` the layout still names the panel and toggle, and they come back with the next `vp run worktrunk#dev`.
+- **Worktrunk items in Herdr's menus need the repo and the sync.** Herdr gives mods no way to add menu items, so the `menus` mod plays Herdr's own `tabs`, `spaces`, `new-menu` and `menu` from copies of Herdr's installed code, patched at run time ([ADR 0002](adr/0002-extend-herdr-menus.md)). Only a layout that names it uses it, and `herdr:sync` writes that layout. The sync swaps the tab bar and sidebar only when `menus` is installed (or running as a dev build), and says so when it isn't; the items also need the worktrunk mod. After `dev:remove menus` the layout still names it, so the window has no tab bar or sidebar until `vp run menus#dev` runs again or a sync with the mod gone puts Herdr's own back.
 - **The layout is generated.** Every run rebuilds it from `main`, so hand edits to `iangregsondev.json` are lost. Change the additions in `scripts/herdr-sync.ts` (`LAYOUT_EDITS`) instead.
 
 **When to re-run it:**
 
 - after every Herdr update, so your layout picks up Herdr's changes to `main`. The worktrunk panel shows a toast, "Herdr updated: run herdr:sync", once per new version, when the installed Herdr differs from the recorded one;
-- after pulling changes to `scripts/herdr-sync.ts`.
+- after pulling changes to `scripts/herdr-sync.ts`;
+- after installing or removing the `menus` mod.
+
+**When a menu patch point no longer fits** Herdr's code (after a Herdr update), the `menus` mod uses Herdr's own unpatched copy and shows a toast naming the patch point, for example `tabs: "+" button opens new-menu (not found)`. The menus then work as Herdr's, without worktrunk items. Update that patch in `apps/menus/src/wraps.ts` (test first, against the stand-ins in `apps/menus/tests/fixtures/`).
 
 **When it fails**, it writes nothing and names the patch point that no longer fits, for example `tab-bar toggle: expected exactly one block showing the "tabs" mod, found 0`. That means Herdr's default layout changed shape: update that edit in `scripts/herdr-sync.ts` (test first), then run it again. Your existing layout keeps working meanwhile. It also stops, writing nothing, when it can't read `main.json`, when `herdr-app --version` gives no version, or when Herdr itself ships a layout named `iangregsondev`.
 

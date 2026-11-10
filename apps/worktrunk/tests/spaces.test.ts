@@ -3,6 +3,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   focusedFolder,
   localPlaces,
+  placeOf,
   spacesInGone,
   spacesOnWorktrees,
   type PaneLike,
@@ -135,5 +136,20 @@ describe("focusedFolder", () => {
   test("nothing focused, or a focused space with no place: none", () => {
     expect(focusedFolder(null, places)).toEqual(Option.none());
     expect(focusedFolder({ space: "remote/s9", cwd: null }, places)).toEqual(Option.none());
+  });
+});
+
+describe("placeOf", () => {
+  const places = localPlaces(
+    [space("s1", "/r/app", ["t1"]), space("s2", "/r/app.feat", ["t2"])],
+    [pane("t2", "/r/app.feat/src")],
+  );
+
+  test("where the space with that id is now", () => {
+    expect(placeOf(places, "s2")).toEqual(Option.some("/r/app.feat/src"));
+  });
+
+  test("none for a space it doesn't know, such as one on another machine", () => {
+    expect(placeOf(places, "vps/s9")).toEqual(Option.none());
   });
 });

@@ -46,6 +46,10 @@ export const localPlaces = (
     return place ? [{ space: { id: space.id, active: space.active }, place }] : [];
   });
 
+/** Where the space `id` is now; none for a space with no place here. */
+export const placeOf = (places: readonly Place[], id: string): Option.Option<string> =>
+  Option.fromNullishOr(places.find((p) => p.space.id === id)?.place);
+
 /**
  * The space on each worktree path. A space sits on the longest worktree path that
  * contains its place, so a worktree nested in another's folder still gets its own.

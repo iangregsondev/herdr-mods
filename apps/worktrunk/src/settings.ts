@@ -5,7 +5,7 @@
 //   "hidden": ["/code/work/old-repo"], "noWrapper": false }
 // Each folder is scanned for repos and names a group.
 import { Option, Predicate, Result } from "effect";
-import { finite, parseJson } from "./json.ts";
+import { finite, parseJson } from "worktrunk-mailbox";
 
 export interface GroupFolder {
   /** The group's name, such as "Work". */
