@@ -18,6 +18,8 @@ import {
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const usage = "usage: vp run dev:remove <name>";
+/** The mod id `dev:remove hello` acts on: the short name with the namespace added. */
+const id = "iangregsondev-hello";
 
 /** Writes `<home>/layouts/<name>.json`: a root row holding a slot for each mod given. */
 function writeLayout(home: string, name: string, mods: readonly string[]): string {
@@ -60,16 +62,36 @@ describe("devRemove", () => {
     ["a name starting with a dot", [".hidden"]],
   ])("rejects %s with code 2 and the usage line", (_label, args) => {
     const home = tempDir();
-    writeDevBuild(home, "hello");
+    writeDevBuild(home, id);
     expect(devRemove(args, home)).toEqual({ code: 2, out: [], err: [usage] });
-    expect(existsSync(join(home, "mods", "hello"))).toBe(true);
+    expect(existsSync(join(home, "mods", id))).toBe(true);
+  });
+
+  test("takes the short name and acts only on the namespaced mod id", () => {
+    const home = tempDir();
+    const dir = writeDevBuild(home, id);
+    const plain = writeDevBuild(home, "hello");
+    const work = writeLayout(home, "work", ["hello", id]);
+
+    expect(devRemove(["hello"], home)).toEqual({
+      code: 0,
+      out: [
+        `dev-remove: removed ${dir}`,
+        'dev-remove: removed the iangregsondev-hello panel from "work"',
+      ],
+      err: [],
+    });
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(plain)).toBe(true);
+    expect(hasSlot(readLayout(work), id)).toBe(false);
+    expect(hasSlot(readLayout(work), "hello")).toBe(true);
   });
 
   test("leaves an installed mod and its slots alone, with code 1", () => {
     const home = tempDir();
-    writeFile(home, "mods/hello/main.js", "export default {};\n");
-    const layout = writeLayout(home, "work", ["hello"]);
-    const dir = join(home, "mods", "hello");
+    writeFile(home, `mods/${id}/main.js`, "export default {};\n");
+    const layout = writeLayout(home, "work", [id]);
+    const dir = join(home, "mods", id);
 
     expect(devRemove(["hello"], home)).toEqual({
       code: 1,
@@ -77,12 +99,12 @@ describe("devRemove", () => {
       err: [`dev-remove: ${dir} is an installed mod, not a dev build; left alone`],
     });
     expect(existsSync(join(dir, "main.js"))).toBe(true);
-    expect(hasSlot(readLayout(layout), "hello")).toBe(true);
+    expect(hasSlot(readLayout(layout), id)).toBe(true);
   });
 
   test("removes a dev build's folder and says so", () => {
     const home = tempDir();
-    const dir = writeDevBuild(home, "hello");
+    const dir = writeDevBuild(home, id);
 
     const result = devRemove(["hello"], home);
     expect(result.code).toBe(0);
@@ -95,45 +117,52 @@ describe("devRemove", () => {
     const home = tempDir();
     const result = devRemove(["hello"], home);
     expect(result.code).toBe(0);
-    expect(result.out[0]).toBe(`dev-remove: no files at ${join(home, "mods", "hello")}`);
+    expect(result.out[0]).toBe(`dev-remove: no files at ${join(home, "mods", id)}`);
   });
 
   test("removes the mod's slots and names each layout it changed", () => {
     const home = tempDir();
-    writeDevBuild(home, "hello");
-    const work = writeLayout(home, "work", ["tabs", "hello"]);
-    const play = writeLayout(home, "play", ["hello"]);
+    writeDevBuild(home, id);
+    const work = writeLayout(home, "work", ["tabs", id]);
+    const play = writeLayout(home, "play", [id]);
     const other = writeLayout(home, "other", ["tabs"]);
     const otherBefore = readFileSync(other, "utf8");
 
     const result = devRemove(["hello"], home);
-    expect(result.out[1]).toBe('dev-remove: removed the hello panel from "play", "work"');
-    expect(hasSlot(readLayout(work), "hello")).toBe(false);
+    expect(result.out[1]).toBe(
+      'dev-remove: removed the iangregsondev-hello panel from "play", "work"',
+    );
+    expect(hasSlot(readLayout(work), id)).toBe(false);
     expect(hasSlot(readLayout(work), "tabs")).toBe(true);
-    expect(hasSlot(readLayout(play), "hello")).toBe(false);
+    expect(hasSlot(readLayout(play), id)).toBe(false);
     expect(readFileSync(other, "utf8")).toBe(otherBefore);
   });
 
   test("says there is no panel when no layout has a slot for the mod", () => {
     const home = tempDir();
-    writeDevBuild(home, "hello");
+    writeDevBuild(home, id);
     writeLayout(home, "work", ["tabs"]);
-    expect(devRemove(["hello"], home).out[1]).toBe("dev-remove: no hello panel in your layouts");
+    expect(devRemove(["hello"], home).out[1]).toBe(
+      "dev-remove: no iangregsondev-hello panel in your layouts",
+    );
   });
 
   test("still removes the folder and cleans readable layouts when one layout can't be read, with code 1", () => {
     const home = tempDir();
-    const dir = writeDevBuild(home, "hello");
-    const work = writeLayout(home, "work", ["tabs", "hello"]);
+    const dir = writeDevBuild(home, id);
+    const work = writeLayout(home, "work", ["tabs", id]);
     const bad = writeFile(home, "layouts/bad.json", "{");
 
     expect(devRemove(["hello"], home)).toEqual({
       code: 1,
-      out: [`dev-remove: removed ${dir}`, 'dev-remove: removed the hello panel from "work"'],
+      out: [
+        `dev-remove: removed ${dir}`,
+        'dev-remove: removed the iangregsondev-hello panel from "work"',
+      ],
       err: ['dev-remove: could not read these layouts, so left them alone: "bad"'],
     });
     expect(existsSync(dir)).toBe(false);
-    expect(hasSlot(readLayout(work), "hello")).toBe(false);
+    expect(hasSlot(readLayout(work), id)).toBe(false);
     expect(hasSlot(readLayout(work), "tabs")).toBe(true);
     expect(readFileSync(bad, "utf8")).toBe("{");
   });
@@ -193,7 +222,7 @@ describe("dev-remove CLI", () => {
   test("follows the dev config: exits 1 when its Herdr host can't be reached", () => {
     const fake = fakeHerdrHost({ unreachable: true });
     const home = tempDir();
-    const dir = writeDevBuild(home, "hello");
+    const dir = writeDevBuild(home, id);
 
     const result = runWith(["hello"], { HERDR_APP_HOME: home, HERDR_DEV_CONFIG: fake.config });
     expect(result.status).toBe(1);
@@ -207,14 +236,14 @@ describe("dev-remove CLI", () => {
 
   test("prints its lines to the shell and exits 0", () => {
     const home = tempDir();
-    const dir = writeDevBuild(home, "hello");
-    writeLayout(home, "work", ["hello"]);
+    const dir = writeDevBuild(home, id);
+    writeLayout(home, "work", [id]);
 
     const result = run(["hello"], home);
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(
-      `dev-remove: removed ${dir}\ndev-remove: removed the hello panel from "work"\n`,
+      `dev-remove: removed ${dir}\ndev-remove: removed the iangregsondev-hello panel from "work"\n`,
     );
     expect(existsSync(dir)).toBe(false);
   });
@@ -231,14 +260,14 @@ describe("dev-remove CLI", () => {
 describe("runDevRemove, remote target", () => {
   it.effect("removes a dev build's folder on the Herdr host and says so", () => {
     const fake = fakeHerdrHost();
-    const dir = writeDevBuild(fake.home, "hello");
+    const dir = writeDevBuild(fake.home, id);
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
       assert.deepStrictEqual(result, {
         code: 0,
         out: [
-          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/hello",
-          "dev-remove: no hello panel in your layouts",
+          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/iangregsondev-hello",
+          "dev-remove: no iangregsondev-hello panel in your layouts",
         ],
         err: [],
       });
@@ -248,71 +277,74 @@ describe("runDevRemove, remote target", () => {
 
   it.effect("leaves an installed mod and its slots alone on the Herdr host, with code 1", () => {
     const fake = fakeHerdrHost();
-    writeFile(fake.home, "mods/hello/main.js", "export default {};\n");
-    const layout = writeLayout(fake.home, "work", ["hello"]);
+    writeFile(fake.home, `mods/${id}/main.js`, "export default {};\n");
+    const layout = writeLayout(fake.home, "work", [id]);
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
       assert.deepStrictEqual(result, {
         code: 1,
         out: [],
         err: [
-          "dev-remove: ann@herdr-host:~/.config/herdr-app/mods/hello is an installed mod, " +
+          "dev-remove: ann@herdr-host:~/.config/herdr-app/mods/iangregsondev-hello is an installed mod, " +
             "not a dev build; left alone",
         ],
       });
-      assert.isTrue(existsSync(join(fake.home, "mods/hello/main.js")));
-      assert.isTrue(hasSlot(readLayout(layout), "hello"));
+      assert.isTrue(existsSync(join(fake.home, `mods/${id}/main.js`)));
+      assert.isTrue(hasSlot(readLayout(layout), id));
     });
   });
 
   it.effect("removes the mod's slots from the host's layouts and names each one it changed", () => {
     const fake = fakeHerdrHost();
-    writeDevBuild(fake.home, "hello");
-    const work = writeLayout(fake.home, "work", ["tabs", "hello"]);
-    const play = writeLayout(fake.home, "play", ["hello"]);
+    writeDevBuild(fake.home, id);
+    const work = writeLayout(fake.home, "work", ["tabs", id]);
+    const play = writeLayout(fake.home, "play", [id]);
     const other = writeLayout(fake.home, "other", ["tabs"]);
     const otherBefore = readFileSync(other, "utf8");
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
       assert.strictEqual(result.code, 0);
-      assert.strictEqual(result.out[1], 'dev-remove: removed the hello panel from "play", "work"');
-      assert.isFalse(hasSlot(readLayout(work), "hello"));
+      assert.strictEqual(
+        result.out[1],
+        'dev-remove: removed the iangregsondev-hello panel from "play", "work"',
+      );
+      assert.isFalse(hasSlot(readLayout(work), id));
       assert.isTrue(hasSlot(readLayout(work), "tabs"));
-      assert.isFalse(hasSlot(readLayout(play), "hello"));
+      assert.isFalse(hasSlot(readLayout(play), id));
       assert.strictEqual(readFileSync(other, "utf8"), otherBefore);
     });
   });
 
   it.effect("never edits a layout that ships with Herdr", () => {
     const fake = fakeHerdrHost();
-    writeDevBuild(fake.home, "hello");
+    writeDevBuild(fake.home, id);
     writeFile(fake.home, "installed.json", JSON.stringify({ "layout:default": {} }));
-    const shipped = writeLayout(fake.home, "default", ["hello"]);
+    const shipped = writeLayout(fake.home, "default", [id]);
     const shippedBefore = readFileSync(shipped, "utf8");
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
       assert.strictEqual(result.code, 0);
-      assert.strictEqual(result.out[1], "dev-remove: no hello panel in your layouts");
+      assert.strictEqual(result.out[1], "dev-remove: no iangregsondev-hello panel in your layouts");
       assert.strictEqual(readFileSync(shipped, "utf8"), shippedBefore);
     });
   });
 
   it.effect("skips and names a layout it can't read, cleans the rest, with code 1", () => {
     const fake = fakeHerdrHost();
-    writeDevBuild(fake.home, "hello");
-    const work = writeLayout(fake.home, "work", ["tabs", "hello"]);
+    writeDevBuild(fake.home, id);
+    const work = writeLayout(fake.home, "work", ["tabs", id]);
     const bad = writeFile(fake.home, "layouts/bad.json", "{");
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
       assert.deepStrictEqual(result, {
         code: 1,
         out: [
-          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/hello",
-          'dev-remove: removed the hello panel from "work"',
+          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/iangregsondev-hello",
+          'dev-remove: removed the iangregsondev-hello panel from "work"',
         ],
         err: ['dev-remove: could not read these layouts, so left them alone: "bad"'],
       });
-      assert.isFalse(hasSlot(readLayout(work), "hello"));
+      assert.isFalse(hasSlot(readLayout(work), id));
       assert.strictEqual(readFileSync(bad, "utf8"), "{");
     });
   });
@@ -321,8 +353,8 @@ describe("runDevRemove, remote target", () => {
 describe("runDevRemove, host can't carry out a change", () => {
   it.effect("exits 1 naming what it couldn't do, and writes no layout", () => {
     const fake = fakeHerdrHost();
-    writeDevBuild(fake.home, "hello");
-    const layout = writeLayout(fake.home, "work", ["hello"]);
+    writeDevBuild(fake.home, id);
+    const layout = writeLayout(fake.home, "work", [id]);
     const layoutBefore = readFileSync(layout, "utf8");
     // The folder can't be removed from a mods folder nobody may write to.
     const mods = join(fake.home, "mods");
@@ -335,7 +367,7 @@ describe("runDevRemove, host can't carry out a change", () => {
       assert.lengthOf(result.err, 1);
       assert.match(
         result.err[0] ?? "",
-        /^dev-remove: couldn't remove ann@herdr-host:~\/\.config\/herdr-app\/mods\/hello /,
+        /^dev-remove: couldn't remove ann@herdr-host:~\/\.config\/herdr-app\/mods\/iangregsondev-hello /,
       );
       assert.strictEqual(readFileSync(layout, "utf8"), layoutBefore);
     });
@@ -343,7 +375,7 @@ describe("runDevRemove, host can't carry out a change", () => {
 
   it.effect("names what the host said when a command on it fails", () => {
     const fake = fakeHerdrHost();
-    writeDevBuild(fake.home, "hello");
+    writeDevBuild(fake.home, id);
     const mods = join(fake.home, "mods");
     chmodSync(mods, 0o555);
     onTestFinished(() => chmodSync(mods, 0o755));
@@ -357,8 +389,8 @@ describe("runDevRemove, host can't carry out a change", () => {
 describe("runDevRemove, unreachable host", () => {
   it.effect("exits 1 saying the Herdr host is unreachable, and changes nothing", () => {
     const fake = fakeHerdrHost({ unreachable: true });
-    const dir = writeDevBuild(fake.home, "hello");
-    const layout = writeLayout(fake.home, "work", ["hello"]);
+    const dir = writeDevBuild(fake.home, id);
+    const layout = writeLayout(fake.home, "work", [id]);
     const layoutBefore = readFileSync(layout, "utf8");
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
@@ -378,9 +410,9 @@ describe("runDevRemove, unreachable host", () => {
   it.effect("exits 1 and changes nothing when the host drops while layouts are read", () => {
     const fake = fakeHerdrHost();
     dropWhenTouching("layouts/work.json");
-    const dir = writeDevBuild(fake.home, "hello");
-    const play = writeLayout(fake.home, "play", ["hello"]);
-    const work = writeLayout(fake.home, "work", ["hello"]);
+    const dir = writeDevBuild(fake.home, id);
+    const play = writeLayout(fake.home, "play", [id]);
+    const work = writeLayout(fake.home, "work", [id]);
     const playBefore = readFileSync(play, "utf8");
     const workBefore = readFileSync(work, "utf8");
     return Effect.gen(function* () {

@@ -1,10 +1,12 @@
 // Removes a mod's dev build from the Herdr app (made by `vp run <name>#dev`):
-// its folder, <app home>/mods/<name>/, and its slots in your layouts, so the panel goes too.
+// its folder, <app home>/mods/<mod id>/, and its slots in your layouts, so the panel goes too.
+// It takes the short name, as `#dev` does, and adds the namespace (mod-pack.ts).
 // A folder without the dev marker is a real installed mod: it and its slots are left alone.
 // It acts on the dev target's Herdr host: this machine for `local`, over SSH for `remote`.
 //
 //   vp run dev:remove <name>
 import { Effect } from "effect";
+import { modId } from "../mod-pack.ts";
 import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import {
   causeText,
@@ -37,20 +39,21 @@ const failed = (message: string): DevRemoveResult => ({
   err: [`dev-remove: ${message}`],
 });
 
-/** Removes the dev build named in `args` from the Herdr host. */
+/** Removes the dev build whose short name is in `args` from the Herdr host. */
 export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   args: readonly string[],
 ): Effect.fn.Return<DevRemoveResult, TransportError | HostUnreachable, HerdrHost> {
   const name = args[0];
   if (!name || args.length > 1 || name.includes("/") || name.startsWith(".")) return usage;
 
+  const id = modId(name);
   const host = yield* HerdrHost;
-  const dir = host.location(`mods/${name}`);
+  const dir = host.location(`mods/${id}`);
   // Every layout is read before anything on the host changes, so a host that
   // can't be reached, or drops while being read, leaves it all as it was.
-  const plan = yield* planSlotRemoval(name);
+  const plan = yield* planSlotRemoval(id);
   const removed = yield* host
-    .removeDevBuild(name)
+    .removeDevBuild(id)
     .pipe(Effect.catchTag("InstalledModInTheWay", () => Effect.succeed("Installed" as const)));
   if (removed === "Installed") {
     return {
@@ -68,8 +71,8 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   const quoted = (names: readonly string[]) => names.map((l) => `"${l}"`).join(", ");
   const panel =
     changed.length > 0
-      ? `dev-remove: removed the ${name} panel from ${quoted(changed)}`
-      : `dev-remove: no ${name} panel in your layouts`;
+      ? `dev-remove: removed the ${id} panel from ${quoted(changed)}`
+      : `dev-remove: no ${id} panel in your layouts`;
 
   return skipped.length > 0
     ? {

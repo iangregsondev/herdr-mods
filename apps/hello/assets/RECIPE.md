@@ -1,6 +1,6 @@
 # hello
 
-A small panel docked on the right of the window that says how many spaces are open, such as "Hello! 3 spaces open." It is the example mod for this repo: the smallest working mod, and the one to copy when starting a new one.
+A small panel docked on the right of the window that says how many spaces are open, such as "Hello! 3 spaces open.", with its own mod id, `iangregsondev-hello`, underneath. It is the example mod for this repo: the smallest working mod, and the one to copy when starting a new one.
 
 ![hello](preview.png)
 
@@ -12,6 +12,7 @@ A small panel docked on the right of the window that says how many spaces are op
   - no spaces: "Hello! No spaces open."
   - one space: "Hello! 1 space open."
   - more: "Hello! N spaces open."
+- Below it, 4px down, the mod id `iangregsondev-hello` at 11px in the theme's `muted` colour.
 
 ## How it behaves
 
@@ -22,7 +23,8 @@ A small panel docked on the right of the window that says how many spaces are op
 ## Built from
 
 - `mod.json`: `{ "place": "right", "size": 240, "title": "hello" }`.
-- `main.js` default-exports a class extending `View` from `gpui-kit`. `render()` returns a `v_flex()` from `gpui-base` with `.size_full().p(10).bg(theme().surface).text_color(theme().foreground).text_size(13)` and the greeting text as its child.
+- The folder, and so the mod id, is `iangregsondev-hello`: the `iangregsondev-` namespace keeps it from clashing with other mods. The id is written into `main.js` at build time as a plain string.
+- `main.js` default-exports a class extending `View` from `gpui-kit`. `render()` returns a `v_flex()` from `gpui-base` with `.size_full().p(10).bg(theme().surface).text_color(theme().foreground).text_size(13).gap(4)`, the greeting text as its first child, and a `div()` from `gpui-kit` with `.text_size(11).text_color(theme().muted)` holding the mod id as its second.
 - `herdr` functions: `spaces()` for the count and `theme()` for the colours. It runs no programs, reads no files and makes no network calls.
 - The text comes from a pure function, `greeting(spaceCount)`, kept in its own module with no `herdr` or `gpui` imports so it can be unit-tested.
 
@@ -33,7 +35,8 @@ A small panel docked on the right of the window that says how many spaces are op
 
 ## Done when
 
-- `herdr-app check ~/.config/herdr-app/mods/hello` passes.
+- `herdr-app check ~/.config/herdr-app/mods/iangregsondev-hello` passes.
+- The mod id shows under the greeting.
 - The panel appears on the right and shows the current number of open spaces.
 - Opening or closing a space changes the number.
 - With exactly one space open, it says "1 space", not "1 spaces".

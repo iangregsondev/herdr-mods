@@ -5,13 +5,15 @@ How to work on a mod and see each change live in Herdr, start a new mod, and get
 ## Quick start
 
 ```bash
-vp run hello#dev          # 1. start: the hello panel appears on the right of Herdr
+vp run hello#dev          # 1. start: the iangregsondev-hello panel appears on the right of Herdr
                           # 2. edit apps/hello/src/greeting.ts and save: the panel updates within a second or two
                           # 3. stop the watch with ctrl-c when you're done
 vp run dev:remove hello   # 4. clean up: the files and the panel go
 ```
 
-Swap `hello` for any mod in `apps/`. This works as it is when Herdr runs on the same machine as the repo. If Herdr runs on another machine, set that up first: [Remote Herdr host](#remote-herdr-host).
+Swap `hello` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0001](adr/0001-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
+
+This works as it is when Herdr runs on the same machine as the repo. If Herdr runs on another machine, set that up first: [Remote Herdr host](#remote-herdr-host).
 
 ## Dev target: where dev builds go
 
@@ -35,7 +37,7 @@ A mod in Herdr has two parts. Both live in the Herdr home (`~/.config/herdr-app`
 
 | Part      | Where                                           | Made by                                             |
 | --------- | ----------------------------------------------- | --------------------------------------------------- |
-| its files | `<Herdr home>/mods/<name>/`                     | the build                                           |
+| its files | `<Herdr home>/mods/iangregsondev-<name>/`       | the build                                           |
 | its slot  | a block in `<Herdr home>/layouts/<layout>.json` | Herdr, but only the first time it ever sees the mod |
 
 The slot is what shows the panel. Files with no slot show nothing. A slot with no files shows an empty panel.
@@ -43,9 +45,9 @@ The slot is what shows the panel. Files with no slot show nothing. A slot with n
 **`vp run <name>#dev`** runs `vp pack --watch` for `apps/<name>/`, and in watch mode:
 
 1. It prints the dev target and refreshes Herdr's type files from it (see [types.md](types.md)).
-2. It builds the **dev build**, never into the repo's `mods/<name>/`:
-   - `local`: straight into the Herdr home's `mods/<name>/`.
-   - `remote`: into a staging folder on this machine, `node_modules/.herdr-dev/<name>/` (git-ignored, kept between runs). After every good build, rsync copies it into the Herdr host's `mods/<name>/`. A failed build is never copied, so Herdr never loads half a mod.
+2. It builds the **dev build**, never into the repo's `mods/iangregsondev-<name>/`:
+   - `local`: straight into the Herdr home's `mods/iangregsondev-<name>/`.
+   - `remote`: into a staging folder on this machine, `node_modules/.herdr-dev/iangregsondev-<name>/` (git-ignored, kept between runs). After every good build, rsync copies it into the Herdr host's `mods/iangregsondev-<name>/`. A failed build is never copied, so Herdr never loads half a mod.
 3. After the first good build (remote: the first good copy), it checks the layout Herdr is showing. If the mod has no slot there, it adds one at the edge `mod.json`'s `"place"` names (`"right"` or `"left"`), at its `"size"`.
 4. On every save it rebuilds. Herdr notices the changed files and reloads the panel.
 
@@ -72,12 +74,12 @@ vp run herdr shot panel.png --crop 3800,120,1300,900  # only that box, in pixels
 - A folder **without** the marker is an **installed mod**. The watch refuses to build over it, and `dev:remove` refuses to delete it or its panel.
 - Only slots for that one mod are ever added or removed, and only in your own layouts. Layouts that ship with Herdr (`main`, `terminals`, `win98`) are never edited.
 - Watch mode never clears the folder, so the files Herdr writes there (`jsconfig.json`, `gpui-kit.d.ts`) stay. The remote copy never deletes files on the Herdr host either (no `--delete`).
-- The repo's `mods/<name>/` isn't touched by the watch.
+- The repo's `mods/iangregsondev-<name>/` isn't touched by the watch.
 - `dev:remove` on an unreachable Herdr host stops with `Herdr host unreachable` before changing anything, so nothing is half removed.
 
 ### Things that don't work (tested 2026-11-08)
 
-- **A symlink** from Herdr's `mods/<name>` to the repo: it loads once but never reloads, and it can leave Herdr not watching that folder until Herdr restarts.
+- **A symlink** from Herdr's `mods/iangregsondev-<name>` to the repo: it loads once but never reloads, and it can leave Herdr not watching that folder until Herdr restarts.
 - **Editing `seen.json`** (Herdr's list of mods it has seen): Herdr keeps the list in memory, so edits do nothing while it runs. That's why the watch adds the slot itself.
 
 ## Dev build or installed mod
@@ -93,11 +95,11 @@ Use one or the other for a mod, never both: the watch won't build over an instal
 
 To install a copy, paste this into your coding agent:
 
-> Read ~/.config/herdr-app/AGENTS.md, then add this mod: <path-to-your-clone>/mods/<name>
+> Read ~/.config/herdr-app/AGENTS.md, then add this mod: <path-to-your-clone>/mods/iangregsondev-<name>
 
 or, once it's pushed:
 
-> Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/iangregsondev/herdr-mods/tree/main/mods/<name>
+> Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/iangregsondev/herdr-mods/tree/main/mods/iangregsondev-<name>
 
 ## Troubleshooting
 
@@ -105,7 +107,7 @@ or, once it's pushed:
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `Task "dev:remove" not found`                                       | You're on a branch from before this tooling                                | Run it from a checkout that has it (`git pull` on `main`)                                                                        |
 | `... is an installed mod, not a dev build`                          | A real copy of the mod is installed                                        | Remove that copy first (or develop under another name)                                                                           |
-| `herdr-slots: ... add <name> by hand`                               | `"place"` is top, bottom or none, or the layout ships with Herdr           | Add the panel yourself, or switch to your own layout (clone a shipped one)                                                       |
+| `herdr-slots: ... add iangregsondev-<name> by hand`                 | `"place"` is top, bottom or none, or the layout ships with Herdr           | Add the panel yourself, or switch to your own layout (clone a shipped one)                                                       |
 | `herdr-slots: Herdr isn't running`                                  | `herdr-app status` didn't answer on the Herdr host                         | Open Herdr, then restart the watch                                                                                               |
 | `herdr-slots: herdr-app not found on PATH`                          | The Herdr app isn't installed, or its CLI isn't on your `PATH`             | Install the Herdr app, then restart the watch                                                                                    |
 | `dev-remove: could not read these layouts`                          | A layout file isn't valid JSON; it was left as it is                       | Fix or delete that file, then run `dev:remove` again for its panel                                                               |
@@ -166,7 +168,7 @@ Nothing from the repo runs on the Herdr host.
 
 ### What changes in remote mode
 
-- Builds go to the staging folder `node_modules/.herdr-dev/<name>/` first, and are copied with `rsync -rlt` after each good build. A copy takes a second or two.
+- Builds go to the staging folder `node_modules/.herdr-dev/iangregsondev-<name>/` first, and are copied with `rsync -rlt` after each good build. A copy takes a second or two.
 - If the Herdr host can't be reached, the watch prints the error and keeps running; the next save tries again. SSH gives up after 5 seconds, so an asleep host never hangs the watch.
 - `vp run check:mods` copies the repo's `mods/` to a temp folder on the Herdr host, checks every mod there and removes the temp folder, pass or fail. The host's real mods folder isn't touched.
 - Herdr's own docs (`AGENTS.md`) and type files live in the Herdr home on the host, not here.
@@ -176,7 +178,7 @@ Nothing from the repo runs on the Herdr host.
 The watch only writes into Herdr. Build into the repo and check:
 
 ```bash
-vp run -r build       # writes mods/<name>/ (commit it with the source)
+vp run -r build       # writes mods/iangregsondev-<name>/ (commit it with the source)
 vp run verify         # format, lint, type-check, all tests, config audit
 vp run check:mods     # herdr-app check on every built mod, on the dev target's Herdr host
 ```
@@ -186,17 +188,17 @@ CI fails if `mods/` doesn't match the source.
 ## Start a new mod
 
 1. Copy `apps/hello/` to `apps/<name>/`.
-2. Rename it in `package.json` (`"name"`), `vite.config.ts` (`modPack("<name>")`) and `assets/mod.json` (`"title"`). Set `"place"` and `"size"` in `mod.json`.
+2. Rename it in `package.json` (`"name"`), `vite.config.ts` (`modPack("<name>")`) and `assets/mod.json` (`"title"`), using the short name. Set `"place"` and `"size"` in `mod.json`.
 3. Run `vp install`.
 4. Run `vp run <name>#dev` and build it up, test-first for pure logic (`apps/<name>/tests/`).
 5. Write its `RECIPE.md` and `preview.png` (below).
-6. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/<name>/`.
+6. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/iangregsondev-<name>/`.
 
 ## Recipe and preview
 
 Herdr's shared-mod format expects both in every mod folder. Its rules are in `~/.config/herdr-app/AGENTS.md`, section "Layouts and mods other people made". Read that section before writing: Herdr updates it.
 
-- Keep both in `apps/<name>/assets/`. The build copies them into `mods/<name>/`.
+- Keep both in `apps/<name>/assets/`. The build copies them into `mods/iangregsondev-<name>/`.
 - **`RECIPE.md`** is a brief another agent could rebuild the mod from, starting with an empty folder. Its sections, in order: `# Name` with one paragraph and `![Name](preview.png)`, then **What you see**, **How it behaves**, **Built from**, **Watch out** and **Done when**. Write it from the real files, exact over vague. `apps/hello/assets/RECIPE.md` shows the shape.
 - **`preview.png`** is a screenshot of the mod. Take one with `vp run herdr shot apps/<name>/assets/preview.png --crop x,y,w,h` while the dev build runs, cropped to the mod alone. This repo is public, so nothing else from your window may show: other panels, repo or branch names, paths, terminal text.
 - Update the recipe in the same change as any behaviour change.

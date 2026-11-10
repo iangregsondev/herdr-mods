@@ -1,14 +1,17 @@
 // Shared `vp pack` settings for every mod in apps/.
-// A mod builds from apps/<name>/src/main.ts into the repo-root mods/<name>/,
+// A mod builds from apps/<name>/src/main.ts into the repo-root mods/<mod id>/,
 // the folder Herdr users install. That output is committed.
+// The mod id is the namespace, a hyphen and the short name (docs/adr/0001):
+// apps/hello/ installs as iangregsondev-hello. The source, package names and dev
+// commands keep the short name; only the installed folders carry the id.
 //
 // Watch mode (`vp run <name>#dev`) builds into the Herdr app instead, on the dev
 // target (herdr-dev.json; see scripts/dev-config.ts), so every save reloads the mod
 // in the window. Herdr hot-reloads only real files in its own mods/ folder (a symlink
-// to mods/<name>/ does not reload), so the build has to land there.
-// - local: builds straight into <app home>/mods/<name>/.
-// - remote: builds into node_modules/.herdr-dev/<name>/ (git-ignored, never cleaned),
-//   then rsyncs that into the Herdr host's mods/<name>/ after each good build.
+// to mods/<mod id>/ does not reload), so the build has to land there.
+// - local: builds straight into <app home>/mods/<mod id>/.
+// - remote: builds into node_modules/.herdr-dev/<mod id>/ (git-ignored, never cleaned),
+//   then rsyncs that into the Herdr host's mods/<mod id>/ after each good build.
 // When it starts, a watch prints its dev target and puts Herdr's type files from
 // that target into .herdr-types/ (scripts/herdr-types.ts).
 // Every read and write of the Herdr home goes through HerdrHost; the one file read
@@ -38,6 +41,17 @@ import { ensureSlot, ensureSlotOnHost, type ModJson } from "./scripts/herdr-slot
 import { refreshHerdrTypes, TYPES_DIR, type TypesResult } from "./scripts/herdr-types.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
+
+/**
+ * The namespace every mod from this repo is installed under. The separator is a
+ * hyphen, not a dot: Herdr writes commands as `<mod>.<command>`.
+ */
+export const NAMESPACE = "iangregsondev";
+
+/** The installed id of the mod whose short name is `name`: `<namespace>-<name>`. */
+export function modId(name: string): string {
+  return `${NAMESPACE}-${name}`;
+}
 
 /** Modules the Herdr app provides at run time. Never bundle them. */
 const HERDR_BUILTINS = [
@@ -111,32 +125,33 @@ export interface ModPackOptions {
   onStarted?: (started: Promise<void>) => void;
 }
 
-/** What the dev marker says, for anyone who finds it in a mod's folder. */
+/** What the dev marker says, for anyone who finds it in a mod's folder: its id, and its short-name commands. */
 const markerText = (name: string): string =>
-  `Dev build of "${name}" from herdr-mods (vp run ${name}#dev).\n` +
+  `Dev build of "${modId(name)}" from herdr-mods (vp run ${name}#dev).\n` +
   `Remove it with: vp run dev:remove ${name}\n`;
 
 /**
- * Checks that `mods/<name>/` on the Herdr host can take a dev build: fails with
+ * Checks that `mods/<mod id>/` on the Herdr host can take a dev build of the short
+ * name `name`: fails with
  * InstalledModInTheWay when an installed mod is there, and with FileMissing when
  * the host has no `mods/` folder.
  */
 export const guardDevBuild = Effect.fn("guardDevBuild")(function* (name: string) {
   const host = yield* HerdrHost;
   yield* host.listDir("mods");
-  if ((yield* host.modState(name)) === "Installed") {
-    return yield* new InstalledModInTheWay({ path: host.location(`mods/${name}`) });
+  if ((yield* host.modState(modId(name))) === "Installed") {
+    return yield* new InstalledModInTheWay({ path: host.location(`mods/${modId(name)}`) });
   }
 });
 
 /**
- * Claims `mods/<name>/` on the Herdr host for a dev build: refuses an installed
+ * Claims `mods/<mod id>/` on the Herdr host for a dev build of the short name `name`: refuses an installed
  * mod there (see `guardDevBuild`), and writes the dev marker (making the folder).
  */
 export const claimDevBuild = Effect.fn("claimDevBuild")(function* (name: string) {
   yield* guardDevBuild(name);
   const host = yield* HerdrHost;
-  yield* host.writeFile(`mods/${name}/${DEV_MARKER}`, markerText(name));
+  yield* host.writeFile(`mods/${modId(name)}/${DEV_MARKER}`, markerText(name));
 });
 
 /** The repo root: this file's folder. */
@@ -145,12 +160,12 @@ const REPO_ROOT = fileURLToPath(new URL(".", import.meta.url));
 /** Where remote watches stage their builds by default: under node_modules, so git-ignored. */
 export const STAGING_ROOT = join(REPO_ROOT, "node_modules", ".herdr-dev");
 
-/** Where a remote watch builds `name` before syncing it to the Herdr host. */
-export const stagingFolder = (name: string, stagingRoot: string = STAGING_ROOT): string =>
-  join(stagingRoot, name);
+/** The staging folder `folder` (a mod id) under `stagingRoot`. */
+export const stagingFolder = (folder: string, stagingRoot: string = STAGING_ROOT): string =>
+  join(stagingRoot, folder);
 
 /**
- * The staging folder for `name`, with the dev marker written in it, so the
+ * The staging folder for the short name `name` (named by its mod id), with the dev marker written in it, so the
  * first sync carries the marker to the Herdr host. It is never cleaned, so it
  * survives between runs. Throws, naming the file, when the marker can't be written.
  */
@@ -158,9 +173,9 @@ function stageDevBuild(name: string, stagingRoot: string): string {
   // The staging folder is on this machine, so the Local layer writes it.
   const written = Effect.runSync(
     Effect.result(
-      HerdrHost.use((host) => host.writeFile(`${name}/${DEV_MARKER}`, markerText(name))).pipe(
-        Effect.provide(HerdrHost.local(stagingRoot)),
-      ),
+      HerdrHost.use((host) =>
+        host.writeFile(`${modId(name)}/${DEV_MARKER}`, markerText(name)),
+      ).pipe(Effect.provide(HerdrHost.local(stagingRoot))),
     ),
   );
   if (Result.isFailure(written)) {
@@ -170,7 +185,7 @@ function stageDevBuild(name: string, stagingRoot: string): string {
       { cause: error },
     );
   }
-  return stagingFolder(name, stagingRoot);
+  return stagingFolder(modId(name), stagingRoot);
 }
 
 /** Says the watch won't overwrite the installed mod at `path`. */
@@ -178,7 +193,7 @@ const installedModLine = (path: string): string =>
   `mod-pack: ${path} is an installed mod, not a dev build; not overwriting it. ` +
   `Remove or rename it in Herdr first.`;
 
-/** The mod's folder in the Herdr app on this machine, claimed for a dev build. */
+/** The mod's folder in the Herdr app on this machine, claimed for a dev build of the short name `name`. */
 function devOutDir(name: string, home: string): string {
   const claimed = Effect.runSync(
     Effect.result(claimDevBuild(name).pipe(Effect.provide(HerdrHost.local(home)))),
@@ -194,7 +209,7 @@ function devOutDir(name: string, home: string): string {
         throw new Error(`mod-pack: couldn't ${error.operation}`, { cause: error.cause });
     }
   }
-  return join(home, "mods", name);
+  return join(home, "mods", modId(name));
 }
 
 /**
@@ -219,7 +234,7 @@ function slotOnFirstBuild(
     // `modDir/assets/mod.json` is the mod's own committed file, trusted unchecked.
     // An unknown `place` gets a "by hand" message from ensureSlot, not a guess.
     const modJson = JSON.parse(readFileSync(resolve(modDir, "assets/mod.json"), "utf8")) as ModJson;
-    const line = slot(name, modJson, target);
+    const line = slot(modId(name), modJson, target);
     return Predicate.isString(line) ? finish(line) : line.then(finish);
   };
 }
@@ -242,7 +257,7 @@ function syncProblem(
 
 /**
  * After each good build of a remote watch, syncs the staging folder into the
- * host's `mods/<name>/`, then runs `slotStep` (which does its work once). Before
+ * host's `mods/<mod id>/`, then runs `slotStep` (which does its work once). Before
  * the first sync it checks there is no installed mod there. A failure is printed
  * and never thrown, so the watch keeps going and the next build tries again.
  */
@@ -261,8 +276,8 @@ function syncAfterEachBuild(
       guarded = true;
     }
     const host = yield* HerdrHost;
-    yield* host.syncInto(staging, `mods/${name}`);
-    return host.location(`mods/${name}`);
+    yield* host.syncInto(staging, `mods/${modId(name)}`);
+    return host.location(`mods/${modId(name)}`);
   }).pipe(Effect.provide(hostLayer(target)));
   const syncOnce = async (): Promise<void> => {
     const synced = await Effect.runPromise(Effect.result(sync));
@@ -270,7 +285,7 @@ function syncAfterEachBuild(
       console.error(syncProblem(synced.failure));
       return;
     }
-    console.log(`mod-pack: synced ${name} to ${synced.success}`);
+    console.log(`mod-pack: synced ${modId(name)} to ${synced.success}`);
     // A failed slot step is printed, not thrown: vp pack doesn't wait on onSuccess,
     // so a rejection here would reach no one. The step does its work once, so the
     // next build tries it again until it has. It may throw at once or reject;
@@ -279,7 +294,7 @@ function syncAfterEachBuild(
       await slotStep();
     } catch (cause) {
       console.error(
-        `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
+        `mod-pack: couldn't put ${modId(name)}'s slot back (${causeText(cause)}); the next build tries again.`,
       );
     }
   };
@@ -293,7 +308,7 @@ function syncAfterEachBuild(
       .then(syncOnce)
       .catch((cause: unknown) =>
         console.error(
-          `mod-pack: couldn't sync ${name} (${causeText(cause)}); the next build tries again.`,
+          `mod-pack: couldn't sync ${modId(name)} (${causeText(cause)}); the next build tries again.`,
         ),
       );
     return previous;
@@ -336,6 +351,7 @@ function startWatch(target: DevTarget, typesDir: string): Promise<void> {
   return Effect.runPromise(refresh);
 }
 
+/** The `vp pack` settings for the mod whose short name (its apps/ folder) is `name`. */
 export function modPack(
   name: string,
   {
@@ -347,7 +363,7 @@ export function modPack(
     onStarted = () => undefined,
   }: ModPackOptions = {},
 ): PackConfig {
-  if (!watch) return packConfig(`../../mods/${name}`);
+  if (!watch) return packConfig(name, `../../mods/${modId(name)}`);
   const target = devTarget();
   // Handed on before the out dir is claimed, so a caller can wait on the start
   // even when claiming it throws.
@@ -355,6 +371,7 @@ export function modPack(
   return target._tag === "Remote"
     ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
     : packConfig(
+        name,
         devOutDir(name, target.herdrHome),
         slotOnFirstBuild(name, { target, modDir, slot }),
       );
@@ -372,17 +389,24 @@ function remoteWatchConfig(
 ): PackConfig {
   const staging = stageDevBuild(name, stagingRoot);
   const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
-  return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
+  return packConfig(name, staging, syncAfterEachBuild(name, { staging, target, slotStep }));
 }
 
 /**
- * The pack settings for building into `outDir`. A watch build passes `onSuccess`,
- * run after each good build; the out dir is then never cleaned.
+ * The pack settings for building the short name `name` into `outDir`. A watch
+ * build passes `onSuccess`, run after each good build; the out dir is then never cleaned.
  */
-function packConfig(outDir: string, onSuccess?: () => void | Promise<void>): PackConfig {
+function packConfig(
+  name: string,
+  outDir: string,
+  onSuccess?: () => void | Promise<void>,
+): PackConfig {
   const watch = onSuccess !== undefined;
   return {
     entry: { main: "src/main.ts" },
+    // The mod reads its own id as `__MOD_ID__` (declared in mod-env.d.ts), for its
+    // shared-state keys, settings file and layout references.
+    define: { __MOD_ID__: JSON.stringify(modId(name)) },
     outDir,
     format: "esm",
     platform: "neutral",

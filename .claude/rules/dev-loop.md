@@ -15,12 +15,12 @@ The loop acts on the **dev target**: `local` (the Herdr app on this machine) or 
 
 1. Start the watch **in the background**: `vp run <name>#dev`.
    - Its first line names the dev target: `target: local (no herdr-dev.json)`, `target: local (herdr-dev.json)` or `target: remote <user>@<host>:<port> (herdr-dev.json)`. If it isn't the target the person expects, stop the watch and tell them.
-   - Wait for `✔ Rebuilt` and a `herdr-slots:` line. A remote watch prints `mod-pack: synced <name> to …` before it.
-   - `added <name> to "<layout>"` or `already has a slot`: the panel is showing.
-   - `... add <name> by hand`: tell the person and stop; layout edits are theirs.
+   - Wait for `✔ Rebuilt` and a `herdr-slots:` line. A remote watch prints `mod-pack: synced iangregsondev-<name> to …` before it.
+   - `added iangregsondev-<name> to "<layout>"` or `already has a slot`: the panel is showing.
+   - `... add iangregsondev-<name> by hand`: tell the person and stop; layout edits are theirs.
    - `... is an installed mod, not a dev build`: a real copy is installed. Tell the person and leave it as it is.
    - `mod-pack: Herdr host unreachable: …; the next build tries again`: the host is asleep or offline. Tell the person; the watch keeps running and the next save retries.
-2. Edit `apps/<name>/src/`. Each save rebuilds the **dev build** and Herdr reloads it. Local: the build lands in `<Herdr home>/mods/<name>/`. Remote: it lands in the staging folder `node_modules/.herdr-dev/<name>/`, then rsync copies it to the Herdr host's `mods/<name>/`.
+2. Edit `apps/<name>/src/`. Each save rebuilds the **dev build** and Herdr reloads it. You always type the short name; `mod-pack.ts` adds the namespace to every folder. Local: the build lands in `<Herdr home>/mods/iangregsondev-<name>/`. Remote: it lands in the staging folder `node_modules/.herdr-dev/iangregsondev-<name>/`, then rsync copies it to the Herdr host's `mods/iangregsondev-<name>/`.
 3. Prove it, every time:
    - `vp run herdr status`: `errors` must be `[]`.
    - `vp run herdr shot .scratch/<file>.png --crop x,y,w,h`, then read the image. Shoot once without `--crop` to find the panel's pixel box, then again cropped to it. The screenshot is the evidence a change works.
