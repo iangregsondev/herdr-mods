@@ -366,11 +366,11 @@ describe("buildView: header, banners and empty states", () => {
     expect(buildView(s).body).toEqual({ _tag: "Message", text: "Looking for repos…" });
   });
 
-  test("no repos and no group folders: says where to add them", () => {
+  test("no repos and no group folders: says where to add them, Settings first", () => {
     const s = snapshot({ repos: [], settings: DEFAULT_SETTINGS });
     expect(buildView(s).body).toEqual({
       _tag: "Message",
-      text: "No repos yet. Add your repo folders to iangregsondev-worktrunk.json in Herdr's folder.",
+      text: "No repos yet. Add your repo folders in Settings, or in iangregsondev-worktrunk.json in Herdr's folder.",
     });
   });
 

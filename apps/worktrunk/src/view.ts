@@ -419,7 +419,7 @@ const repoView = (
 const emptyText = (snapshot: Snapshot): string => {
   if (!snapshot.discovered) return "Looking for repos…";
   if (snapshot.settings.folders.length === 0) {
-    return `No repos yet. Add your repo folders to ${snapshot.settingsFile} in Herdr's folder.`;
+    return `No repos yet. Add your repo folders in Settings, or in ${snapshot.settingsFile} in Herdr's folder.`;
   }
   return "No repos found in your group folders.";
 };

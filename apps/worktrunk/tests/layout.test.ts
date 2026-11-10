@@ -62,9 +62,12 @@ describe("roleOf", () => {
     expect(roleOf({ role })).toEqual(Option.some(role));
   });
 
-  test.each(["menu", "confirm", "new", "titlebar"])("reads the %s role an overlay gave", (role) => {
-    expect(roleOf({ role, overlay: "o1" })).toEqual(Option.some(role));
-  });
+  test.each(["menu", "confirm", "new", "titlebar", "settings"])(
+    "reads the %s role an overlay gave",
+    (role) => {
+      expect(roleOf({ role, overlay: "o1" })).toEqual(Option.some(role));
+    },
+  );
 
   test("is the panel when props give no role, or aren't an object", () => {
     expect(roleOf({})).toEqual(Option.some("panel"));

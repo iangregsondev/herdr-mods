@@ -20,6 +20,7 @@ import {
   makeTempDir,
   removeDir,
   repoAt,
+  removeTerminal,
   reposOf,
   reveal,
   runScript,
@@ -471,6 +472,16 @@ describe("stopJob", () => {
       const { api, calls } = hcAnswering([""]);
       yield* stopJob("t4g").pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(calls, [["kill", "t4g"]]);
+    }),
+  );
+});
+
+describe("removeTerminal", () => {
+  it.effect("removes the ended job's terminal from herdr-core", () =>
+    Effect.gen(function* () {
+      const { api, calls } = hcAnswering([""]);
+      yield* removeTerminal("t4g").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["rm", "t4g"]]);
     }),
   );
 });

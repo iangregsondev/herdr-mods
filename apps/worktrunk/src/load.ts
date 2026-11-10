@@ -12,6 +12,7 @@ import {
   parseSettings,
   hideRepo,
   planImport,
+  planSave,
   type ParsedSettings,
   type Settings,
 } from "./settings.ts";
@@ -186,6 +187,28 @@ export class SettingsBroken extends Data.TaggedError("SettingsBroken")<{
   readonly reason: string;
 }> {}
 
+/** The settings file couldn't be read, so nothing can be written over it safely. */
+export class SettingsUnreadable extends Data.TaggedError("SettingsUnreadable")<{
+  readonly cause: unknown;
+}> {}
+
+/** The settings file's text now; null when there is none. */
+const currentSettings = Effect.fnUntraced(function* (path: string) {
+  const disk = yield* Files;
+  return yield* disk.read(path).pipe(
+    Effect.catchTag("FileMissing", () => Effect.succeed(null)),
+    Effect.mapError((failed) => new SettingsUnreadable({ cause: failed.cause })),
+  );
+});
+
+/** What the panel says about a settings file it couldn't read. */
+const unreadableText = (name: string, failed: SettingsUnreadable): string =>
+  `${name}: couldn't read it (${causeText(failed.cause)})`;
+
+/** What the panel says about a settings file it couldn't write. */
+const unsavedText = (name: string, failed: FileError): string =>
+  `${name}: couldn't save it (${causeText(failed.cause)})`;
+
 /**
  * Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
  * made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
@@ -193,9 +216,7 @@ export class SettingsBroken extends Data.TaggedError("SettingsBroken")<{
 export const hideInSettings = Effect.fn("hideInSettings")(
   function* (files: Pick<SettingsFiles, "path" | "name">, root: string) {
     const disk = yield* Files;
-    const current = yield* disk
-      .read(files.path)
-      .pipe(Effect.catchTag("FileMissing", () => Effect.succeed(null)));
+    const current = yield* currentSettings(files.path);
     const next = yield* Effect.fromResult(hideRepo(current, root, files.name)).pipe(
       Effect.mapError((reason) => new SettingsBroken({ reason })),
     );
@@ -210,12 +231,11 @@ export const hideInSettings = Effect.fn("hideInSettings")(
     effect.pipe(
       Effect.catchTags({
         SettingsBroken: (broken) => Effect.succeed(Result.fail(broken.reason)),
+        SettingsUnreadable: (failed) =>
+          Effect.succeed(Result.fail(unreadableText(files.name, failed))),
         WriteConflict: () =>
           Effect.succeed(Result.fail(`${files.name} changed while hiding the repo: try again.`)),
-        FileError: (failed) =>
-          Effect.succeed(
-            Result.fail(`${files.name}: couldn't save it (${causeText(failed.cause)})`),
-          ),
+        FileError: (failed) => Effect.succeed(Result.fail(unsavedText(files.name, failed))),
       }),
     ),
 );
@@ -305,4 +325,89 @@ export const newWorktree = Effect.fn("newWorktree")(
       switched: Option.none(),
     }),
   ),
+);
+
+/** The group folder picked in the system's folder picker (none if cancelled), or why it couldn't open. */
+export const pickGroupFolder = Effect.fn("pickGroupFolder")(
+  function* () {
+    const disk = yield* Files;
+    const picked = yield* disk.pickFolder("Add group folder");
+    const answer: Result.Result<Option.Option<string>, string> = Result.succeed(picked);
+    return answer;
+  },
+  Effect.catchTag("PickerFailed", (failed) =>
+    Effect.succeed(Result.fail(`couldn't open the folder picker (${causeText(failed.cause)})`)),
+  ),
+);
+
+/** The settings file's text for the Settings dialog to open on (null: no file), or why it can't be read. */
+export const settingsText = Effect.fn("settingsText")(
+  function* (files: Pick<SettingsFiles, "path" | "name">) {
+    const answer: Result.Result<string | null, string> = Result.succeed(
+      yield* currentSettings(files.path),
+    );
+    return answer;
+  },
+  (effect, files) =>
+    effect.pipe(
+      Effect.catchTag("SettingsUnreadable", (failed) =>
+        Effect.succeed(Result.fail(unreadableText(files.name, failed))),
+      ),
+    ),
+);
+
+/** What a save from the Settings dialog did: wrote the file, or found nothing to change. */
+export type Saved = "Saved" | "Unchanged";
+
+/** The settings file changed since the Settings dialog opened on it. */
+export class SettingsChanged extends Data.TaggedError("SettingsChanged")<{}> {}
+
+const CHANGED_TEXT =
+  "The settings file changed since this dialog opened, so nothing was saved. Close and open Settings again to edit the new file.";
+
+/**
+ * Saves `settings` from the Settings dialog to the settings file (`files.path`), whose
+ * text was `opened` when the dialog opened (null: no file), never over a hand edit made
+ * since. The answer is the one-line reason it couldn't, if it couldn't.
+ */
+export const saveSettings = Effect.fn("saveSettings")(
+  function* (
+    files: Pick<SettingsFiles, "path" | "name">,
+    opened: string | null,
+    settings: Settings,
+  ) {
+    const disk = yield* Files;
+    const onDisk = yield* currentSettings(files.path);
+    const plan = planSave(opened, onDisk, settings, files.name);
+    switch (plan._tag) {
+      case "Broken":
+        return yield* new SettingsBroken({
+          reason: `${plan.error}. Fix the file by hand; Settings can't save over it.`,
+        });
+      case "Changed":
+        return yield* new SettingsChanged();
+      case "Write": {
+        yield* plan.expected === null
+          ? disk.create(files.path, plan.text)
+          : disk.replace(files.path, plan.text, plan.expected);
+        const saved: Result.Result<Saved, string> = Result.succeed("Saved");
+        return saved;
+      }
+      case "Unchanged": {
+        const answer: Result.Result<Saved, string> = Result.succeed("Unchanged");
+        return answer;
+      }
+    }
+  },
+  (effect, files) =>
+    effect.pipe(
+      Effect.catchTags({
+        SettingsBroken: (broken) => Effect.succeed(Result.fail(broken.reason)),
+        SettingsChanged: () => Effect.succeed(Result.fail(CHANGED_TEXT)),
+        WriteConflict: () => Effect.succeed(Result.fail(CHANGED_TEXT)),
+        SettingsUnreadable: (failed) =>
+          Effect.succeed(Result.fail(unreadableText(files.name, failed))),
+        FileError: (failed) => Effect.succeed(Result.fail(unsavedText(files.name, failed))),
+      }),
+    ),
 );

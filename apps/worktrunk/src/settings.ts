@@ -97,6 +97,14 @@ export const lastSegment = (path: string): string =>
     .filter((part) => part !== "")
     .at(-1) ?? path;
 
+/** `path` with a leading `~` turned into `home`. */
+export const expandHome = (path: string, home: string): string =>
+  path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
+
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+export const tildePath = (path: string, home: string): string =>
+  path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+
 const trimSlashes = (path: string): string => path.trim().replace(/\/+$/, "");
 
 const clampDepth = (depth: number): number => Math.min(8, Math.max(1, Math.round(depth)));
@@ -198,3 +206,100 @@ export const hideRepo = (
   if (current !== null && settings.hidden.includes(root)) return Result.succeed(current);
   return Result.succeed(serializeSettings({ ...settings, hidden: [...settings.hidden, root] }));
 };
+
+/** What a save from the Settings dialog does. */
+export type SavePlan =
+  /** Write `text`, only while the file still reads `expected` (null: there is no file). */
+  | { readonly _tag: "Write"; readonly text: string; readonly expected: string | null }
+  /** Nothing changed: the file stays as it is, hand formatting included. */
+  | { readonly _tag: "Unchanged" }
+  /** The file changed on disk since the dialog opened: saving would lose that edit. */
+  | { readonly _tag: "Changed" }
+  /** The file didn't parse when the dialog opened, so it is never replaced. */
+  | { readonly _tag: "Broken"; readonly error: string };
+
+/**
+ * How to save `settings` from the dialog, given the file's text when the dialog opened
+ * (`opened`) and now (`onDisk`), null when there was no file. A hand edit made since the
+ * dialog opened is never overwritten: the plan says so instead, and a Write expects the
+ * opened text, so an edit landing after this check makes the write fail too.
+ */
+export const planSave = (
+  opened: string | null,
+  onDisk: string | null,
+  settings: Settings,
+  fileName: string,
+): SavePlan => {
+  const before = parseSettings(opened, fileName);
+  if (Option.isSome(before.error)) return { _tag: "Broken", error: before.error.value };
+  if (onDisk !== opened) return { _tag: "Changed" };
+  const text = serializeSettings(settings);
+  if (opened !== null && text === serializeSettings(before.settings)) return { _tag: "Unchanged" };
+  return { _tag: "Write", text, expected: opened };
+};
+
+/** The settings with `root` no longer hidden. */
+export const unhide = (settings: Settings, root: string): Settings => ({
+  ...settings,
+  hidden: settings.hidden.filter((hidden) => hidden !== root),
+});
+
+/**
+ * The settings with the folder picked at `picked` added as the last group, named after
+ * its last segment and written with `~` under `home`. A folder already listed changes
+ * nothing.
+ */
+export const addFolder = (settings: Settings, picked: string, home: string): Settings => {
+  const path = tildePath(trimSlashes(picked), home);
+  if (path === "") return settings;
+  const listed = settings.folders.some(
+    (folder) => expandHome(folder.path, home) === expandHome(path, home),
+  );
+  return listed
+    ? settings
+    : { ...settings, folders: [...settings.folders, { name: lastSegment(path), path }] };
+};
+
+/** The settings with the folder at `index` moved `by` places; past either end, unchanged. */
+export const moveFolder = (settings: Settings, index: number, by: number): Settings => {
+  const { folders } = settings;
+  const to = index + by;
+  const inside = (i: number) => i >= 0 && i < folders.length;
+  if (by === 0 || !inside(index) || !inside(to)) return settings;
+  const moved = folders.slice(index, index + 1);
+  const without = folders.filter((_, i) => i !== index);
+  return { ...settings, folders: [...without.slice(0, to), ...moved, ...without.slice(to)] };
+};
+
+/** The settings without the folder at `index`. */
+export const removeFolder = (settings: Settings, index: number): Settings => ({
+  ...settings,
+  folders: settings.folders.filter((_, i) => i !== index),
+});
+
+/** The skip names as the dialog's field shows them. */
+export const skipText = (skip: readonly string[]): string => skip.join(", ");
+
+/** What the dialog's text fields hold: one name per folder, in order, the skip list, depth. */
+export interface Fields {
+  readonly names: readonly string[];
+  readonly skip: string;
+  readonly depth: number;
+}
+
+/**
+ * The settings with the dialog's fields applied: names trimmed (a blank one is the
+ * folder's last segment), skip names split on commas, depth kept to 1 to 8.
+ */
+export const withFields = (settings: Settings, fields: Fields): Settings => ({
+  ...settings,
+  folders: settings.folders.map((folder, i) => {
+    const name = (fields.names[i] ?? folder.name).trim();
+    return { name: name === "" ? lastSegment(folder.path) : name, path: folder.path };
+  }),
+  skip: fields.skip
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== ""),
+  depth: clampDepth(fields.depth),
+});

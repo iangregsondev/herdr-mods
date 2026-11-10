@@ -1,6 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Result } from "effect";
-import { FileError, FileMissing, Files, WriteConflict, type FilesApi } from "../src/files.ts";
+import { Effect, Option, Result } from "effect";
+import {
+  FileError,
+  FileMissing,
+  Files,
+  PickerFailed,
+  WriteConflict,
+  type FilesApi,
+} from "../src/files.ts";
 
 /**
  * A result with its error's tag and fields as a plain list, so a deep comparison checks
@@ -11,8 +18,12 @@ const failureOf = <A, E>(result: Result.Result<A, E>) =>
     if (error instanceof FileMissing) return [error._tag, error.path];
     if (error instanceof FileError) return [error._tag, error.path, error.cause];
     if (error instanceof WriteConflict) return [error._tag, error.path];
+    if (error instanceof PickerFailed) return [error._tag, error.cause];
     return [String(error)];
   });
+
+/** The folder picker for fakes of tests that never open it. */
+const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
 /** A Herdr API over `disk` (path to text); writes are refused unless `write` is given. */
 const onDisk = (
@@ -21,6 +32,7 @@ const onDisk = (
 ): FilesApi => ({
   readTextFile: (path) => Promise.resolve(disk[path] ?? null),
   writeTextFile: write ?? (() => Promise.reject(new Error("read-only"))),
+  pickFolder: noPicker,
 });
 
 describe("Files.read", () => {
@@ -135,5 +147,46 @@ describe("Files.replace", () => {
           Files.layer(onDisk({ "/a.json": '{"old":1}' }, () => Promise.reject("disk full"))),
         ),
       ),
+  );
+});
+
+describe("Files.pickFolder", () => {
+  it.effect("the folder picked, asked with the prompt; none when the picker is cancelled", () =>
+    Effect.gen(function* () {
+      const prompts: unknown[] = [];
+      const answers = ["/Users/me/oss", null];
+      const api: FilesApi = {
+        ...onDisk({}),
+        pickFolder: (options) => {
+          prompts.push(options);
+          return Promise.resolve(answers.shift() ?? null);
+        },
+      };
+      const files = Files.layer(api);
+      const picked = yield* Files.use((f) => f.pickFolder("Add group folder")).pipe(
+        Effect.provide(files),
+      );
+      const cancelled = yield* Files.use((f) => f.pickFolder("Add group folder")).pipe(
+        Effect.provide(files),
+      );
+      assert.deepStrictEqual(
+        [picked, cancelled, prompts],
+        [
+          Option.some("/Users/me/oss"),
+          Option.none(),
+          [{ prompt: "Add group folder" }, { prompt: "Add group folder" }],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a picker that can't be shown is PickerFailed, with the cause", () =>
+    Effect.gen(function* () {
+      const api: FilesApi = { ...onDisk({}), pickFolder: () => Promise.reject("no window") };
+      const result = yield* Effect.result(
+        Files.use((f) => f.pickFolder("Add group folder")).pipe(Effect.provide(Files.layer(api))),
+      );
+      assert.deepStrictEqual(failureOf(result), Result.fail(["PickerFailed", "no window"]));
+    }),
   );
 });

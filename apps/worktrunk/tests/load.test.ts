@@ -7,10 +7,13 @@ import {
   loadSettings,
   lookUpCurrent,
   newWorktree,
+  pickGroupFolder,
   readCi,
   readEach,
   readList,
   runJob,
+  saveSettings,
+  settingsText,
   syncToast,
 } from "../src/load.ts";
 import { newScript } from "../src/commands.ts";
@@ -18,7 +21,10 @@ import { parseList } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
-import { DEFAULT_SETTINGS, serializeSettings } from "../src/settings.ts";
+import { DEFAULT_SETTINGS, parseSettings, serializeSettings } from "../src/settings.ts";
+
+/** The folder picker for fakes of tests that never open it. */
+const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
 /** `hc` for fakes of tests that never call it. */
 const noHc: ExecApi["hc"] = () => Promise.reject(new Error("hc isn't called here"));
@@ -44,6 +50,7 @@ const disk = (files: Readonly<Record<string, string>>) => {
       writes.push([path, text, expected]);
       return Promise.resolve(null);
     },
+    pickFolder: noPicker,
   };
   return { api, reads, writes };
 };
@@ -166,6 +173,7 @@ describe("loadSettings", () => {
           files[path] = '{"depth": 7}';
           return Promise.reject(new Error("stale"));
         },
+        pickFolder: noPicker,
       };
       const loaded = yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(loaded, {
@@ -493,6 +501,7 @@ describe("hideInSettings", () => {
           files[path] = "{}";
           return Promise.reject(new Error("stale"));
         },
+        pickFolder: noPicker,
       };
       const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(
@@ -502,16 +511,36 @@ describe("hideInSettings", () => {
     }),
   );
 
-  it.effect("a file that can't be read or written: the answer names the file and the cause", () =>
+  it.effect("a file that can't be written: the answer says it couldn't be saved, and why", () =>
     Effect.gen(function* () {
       const api: FilesApi = {
         readTextFile: () => Promise.resolve(WORK),
         writeTextFile: () => Promise.reject(new Error("disk full")),
+        pickFolder: noPicker,
       };
       const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(
         hid,
         Result.fail("iangregsondev-worktrunk.json: couldn't save it (disk full)"),
+      );
+    }),
+  );
+
+  it.effect("a file that can't be read is left alone: the answer says it couldn't be read", () =>
+    Effect.gen(function* () {
+      const writes: unknown[] = [];
+      const api: FilesApi = {
+        readTextFile: () => Promise.reject(new Error("no access")),
+        writeTextFile: (path) => {
+          writes.push(path);
+          return Promise.resolve(null);
+        },
+        pickFolder: noPicker,
+      };
+      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        [hid, writes],
+        [Result.fail("iangregsondev-worktrunk.json: couldn't read it (no access)"), []],
       );
     }),
   );
@@ -717,5 +746,203 @@ describe("newWorktree", () => {
       });
       assert.deepStrictEqual(log, [["mktemp"]]);
     }),
+  );
+});
+
+describe("pickGroupFolder", () => {
+  it.effect("the folder picked in the folder picker, or none when it was cancelled", () =>
+    Effect.gen(function* () {
+      const answers = ["/Users/me/oss", null];
+      const api: FilesApi = {
+        ...disk({}).api,
+        pickFolder: () => Promise.resolve(answers.shift() ?? null),
+      };
+      const files = Files.layer(api);
+      const picked = yield* pickGroupFolder().pipe(Effect.provide(files));
+      const cancelled = yield* pickGroupFolder().pipe(Effect.provide(files));
+      assert.deepStrictEqual(
+        [picked, cancelled],
+        [Result.succeed(Option.some("/Users/me/oss")), Result.succeed(Option.none())],
+      );
+    }),
+  );
+
+  it.effect("a folder picker that can't be shown says why", () =>
+    Effect.gen(function* () {
+      const api: FilesApi = { ...disk({}).api, pickFolder: () => Promise.reject("no window") };
+      const picked = yield* pickGroupFolder().pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(picked, Result.fail("couldn't open the folder picker (no window)"));
+    }),
+  );
+});
+
+describe("settingsText", () => {
+  it.effect("the settings file's text, as the dialog opens on it", () =>
+    Effect.gen(function* () {
+      const { api } = disk({ [FILES.path]: WORK });
+      const text = yield* settingsText(FILES).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(text, Result.succeed(WORK));
+    }),
+  );
+
+  it.effect("no settings file: null, so the dialog opens on the defaults", () =>
+    Effect.gen(function* () {
+      const { api } = disk({});
+      const text = yield* settingsText(FILES).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(text, Result.succeed(null));
+    }),
+  );
+
+  it.effect("a settings file that can't be read: the answer says so, and why", () =>
+    Effect.gen(function* () {
+      const api: FilesApi = { ...disk({}).api, readTextFile: () => Promise.reject("EACCES") };
+      const text = yield* settingsText(FILES).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        text,
+        Result.fail("iangregsondev-worktrunk.json: couldn't read it (EACCES)"),
+      );
+    }),
+  );
+});
+
+describe("saveSettings", () => {
+  const edited = { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "~/w" }], depth: 5 };
+  const CHANGED =
+    "The settings file changed since this dialog opened, so nothing was saved. Close and open Settings again to edit the new file.";
+
+  it.effect("writes the settings over the file, expecting it as the dialog opened on it", () =>
+    Effect.gen(function* () {
+      const { api, writes } = disk({ [FILES.path]: WORK });
+      const saved = yield* saveSettings(FILES, WORK, edited).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        [saved, writes],
+        [Result.succeed("Saved"), [[FILES.path, serializeSettings(edited), WORK]]],
+      );
+    }),
+  );
+
+  it.effect("with no file when the dialog opened, creates it", () =>
+    Effect.gen(function* () {
+      const { api, writes } = disk({});
+      const saved = yield* saveSettings(FILES, null, edited).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        [saved, writes],
+        [Result.succeed("Saved"), [[FILES.path, serializeSettings(edited), null]]],
+      );
+    }),
+  );
+
+  it.effect("settings unchanged since the dialog opened: nothing is written", () =>
+    Effect.gen(function* () {
+      const { api, writes } = disk({ [FILES.path]: WORK });
+      const same = parseSettings(WORK, FILES.name).settings;
+      const saved = yield* saveSettings(FILES, WORK, same).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual([saved, writes], [Result.succeed("Unchanged"), []]);
+    }),
+  );
+
+  it.effect(
+    "a hand edit made since the dialog opened is never written over: the answer says so",
+    () =>
+      Effect.gen(function* () {
+        const { api, writes } = disk({ [FILES.path]: "{}" });
+        const saved = yield* saveSettings(FILES, WORK, edited).pipe(
+          Effect.provide(Files.layer(api)),
+        );
+        assert.deepStrictEqual([saved, writes], [Result.fail(CHANGED), []]);
+      }),
+  );
+
+  it.effect("a hand edit landing while it saves is never written over: the answer says so", () =>
+    Effect.gen(function* () {
+      const files: Record<string, string> = { [FILES.path]: WORK };
+      const api: FilesApi = {
+        readTextFile: (path) => Promise.resolve(files[path] ?? null),
+        // The person saves the file between the check and the write.
+        writeTextFile: (path) => {
+          files[path] = "{}";
+          return Promise.reject(new Error("stale"));
+        },
+        pickFolder: noPicker,
+      };
+      const saved = yield* saveSettings(FILES, WORK, edited).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(saved, Result.fail(CHANGED));
+    }),
+  );
+
+  it.effect("a settings file made by hand while it creates one is never written over", () =>
+    Effect.gen(function* () {
+      const files: Record<string, string> = {};
+      const api: FilesApi = {
+        readTextFile: (path) => Promise.resolve(files[path] ?? null),
+        // The person makes the file between the check and the write.
+        writeTextFile: (path) => {
+          files[path] = "{}";
+          return Promise.reject(new Error("exists"));
+        },
+        pickFolder: noPicker,
+      };
+      const saved = yield* saveSettings(FILES, null, edited).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual([saved, files], [Result.fail(CHANGED), { [FILES.path]: "{}" }]);
+    }),
+  );
+
+  it.effect(
+    "a file that didn't parse when the dialog opened is never replaced: the answer says why",
+    () =>
+      Effect.gen(function* () {
+        const broken = '{"depth": "4"}';
+        const { api, writes } = disk({ [FILES.path]: broken });
+        const saved = yield* saveSettings(FILES, broken, edited).pipe(
+          Effect.provide(Files.layer(api)),
+        );
+        assert.deepStrictEqual(
+          [saved, writes],
+          [
+            Result.fail(
+              'iangregsondev-worktrunk.json: "depth" must be a number. Fix the file by hand; Settings can\'t save over it.',
+            ),
+            [],
+          ],
+        );
+      }),
+  );
+
+  it.effect("a settings file that can't be read now is left alone: the answer says why", () =>
+    Effect.gen(function* () {
+      const writes: unknown[] = [];
+      const api: FilesApi = {
+        readTextFile: () => Promise.reject(new Error("no access")),
+        writeTextFile: (path) => {
+          writes.push(path);
+          return Promise.resolve(null);
+        },
+        pickFolder: noPicker,
+      };
+      const saved = yield* saveSettings(FILES, WORK, edited).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        [saved, writes],
+        [Result.fail("iangregsondev-worktrunk.json: couldn't read it (no access)"), []],
+      );
+    }),
+  );
+
+  it.effect(
+    "a settings file that can't be written: the answer says it couldn't be saved, and why",
+    () =>
+      Effect.gen(function* () {
+        const api: FilesApi = {
+          readTextFile: () => Promise.resolve(WORK),
+          writeTextFile: () => Promise.reject(new Error("disk full")),
+          pickFolder: noPicker,
+        };
+        const saved = yield* saveSettings(FILES, WORK, edited).pipe(
+          Effect.provide(Files.layer(api)),
+        );
+        assert.deepStrictEqual(
+          saved,
+          Result.fail("iangregsondev-worktrunk.json: couldn't save it (disk full)"),
+        );
+      }),
   );
 });

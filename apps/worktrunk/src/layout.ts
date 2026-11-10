@@ -14,9 +14,9 @@ export interface ModBlock {
  * Every role a copy of the worktrunk mod plays, as its props' `role` names it. One mod
  * folder serves them all: layout blocks show the side `panel` (no role) and the tab-bar
  * `toggle` that shows and hides it; overlays are a `menu`, a `confirm` dialog, the `new`
- * worktree dialog, and a job window's `titlebar`.
+ * worktree dialog, the `settings` dialog, and a job window's `titlebar`.
  */
-export const ROLES = ["panel", "toggle", "menu", "confirm", "new", "titlebar"] as const;
+export const ROLES = ["panel", "toggle", "menu", "confirm", "new", "settings", "titlebar"] as const;
 
 export type Role = (typeof ROLES)[number];
 

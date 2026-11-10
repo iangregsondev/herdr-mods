@@ -14,8 +14,10 @@ import {
   readMenuProps,
   readNewProps,
   readRequest,
+  readSettingsText,
   readTitlebarProps,
   readViewState,
+  settingsProps,
   titlebarProps,
   writeViewState,
 } from "../src/wire.ts";
@@ -103,6 +105,11 @@ describe("readAction", () => {
     { _tag: "Create", main: "/r/app", name: "feat", base: null },
     { _tag: "Create", main: "/r/app", name: "feat", base: "main" },
   ] as const)("reads back a Create with base $base", (action) => {
+    expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test("reads back a Settings action, as the header's settings button sends it", () => {
+    const action = { _tag: "Settings" } as const;
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
@@ -219,6 +226,16 @@ describe("readNewProps", () => {
   });
 });
 
+describe("readSettingsText", () => {
+  test("the file's text the dialog opens on, or null when there was none", () => {
+    expect([
+      readSettingsText({ role: "settings", text: "{}" }),
+      readSettingsText({ role: "settings", text: null }),
+      readSettingsText(undefined),
+    ]).toEqual(["{}", null, null]);
+  });
+});
+
 describe("overlay props writers", () => {
   const items = repoMenu("/r/app", [MAIN, DONE]);
   const remove = Option.getOrThrow(Option.fromNullishOr(items[1]?.action));
@@ -244,5 +261,12 @@ describe("overlay props writers", () => {
       Option.some("new"),
       Option.some("/r/app"),
     ]);
+    const settings = overTheWire(settingsProps('{ "depth": 3 }'));
+    expect([roleOf(settings), readSettingsText(settings)]).toEqual([
+      Option.some("settings"),
+      '{ "depth": 3 }',
+    ]);
+    const none = overTheWire(settingsProps(null));
+    expect(readSettingsText(none)).toBeNull();
   });
 });

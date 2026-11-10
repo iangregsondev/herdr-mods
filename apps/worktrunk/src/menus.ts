@@ -49,7 +49,9 @@ export type Action =
   | { readonly _tag: "CopyPath"; readonly path: string }
   | { readonly _tag: "Reveal"; readonly path: string }
   | { readonly _tag: "Refresh" }
-  | { readonly _tag: "Hide"; readonly root: string };
+  | { readonly _tag: "Hide"; readonly root: string }
+  /** Open the Settings dialog. */
+  | { readonly _tag: "Settings" };
 
 export type CleanupAction = Extract<Action, { readonly _tag: "Cleanup" }>;
 

@@ -4,7 +4,7 @@ import { Context, Data, Effect, Layer, Option, Predicate } from "effect";
 import type * as herdr from "herdr";
 
 /** The parts of Herdr's API this service calls. */
-export type FilesApi = Pick<typeof herdr, "readTextFile" | "writeTextFile">;
+export type FilesApi = Pick<typeof herdr, "readTextFile" | "writeTextFile" | "pickFolder">;
 
 /** There is no file at `path`. */
 export class FileMissing extends Data.TaggedError("FileMissing")<{ readonly path: string }> {}
@@ -20,6 +20,9 @@ export class WriteConflict extends Data.TaggedError("WriteConflict")<{
   readonly path: string;
 }> {}
 
+/** The system's folder picker couldn't be shown. */
+export class PickerFailed extends Data.TaggedError("PickerFailed")<{ readonly cause: unknown }> {}
+
 export class Files extends Context.Service<
   Files,
   {
@@ -33,6 +36,8 @@ export class Files extends Context.Service<
       text: string,
       expected: string,
     ) => Effect.Effect<void, WriteConflict | FileError>;
+    /** The folder picked in the system's folder picker, titled `prompt`; none if cancelled. */
+    readonly pickFolder: (prompt: string) => Effect.Effect<Option.Option<string>, PickerFailed>;
   }
 >()("iangregsondev-worktrunk/Files") {
   static readonly layer = (api: FilesApi) => {
@@ -77,6 +82,11 @@ export class Files extends Context.Service<
           ),
         ),
       );
-    return Layer.succeed(Files, Files.of({ read, create, replace }));
+    const pickFolder = (prompt: string) =>
+      Effect.tryPromise({
+        try: () => api.pickFolder({ prompt }),
+        catch: (cause) => new PickerFailed({ cause }),
+      }).pipe(Effect.map(Option.fromNullishOr));
+    return Layer.succeed(Files, Files.of({ read, create, replace, pickFolder }));
   };
 }

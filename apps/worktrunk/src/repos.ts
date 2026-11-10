@@ -2,11 +2,9 @@
 // imports. The folder scan and the open spaces' repos are found by shell scripts; this
 // module reads their output.
 import { Option } from "effect";
-import { lastSegment, type GroupFolder } from "./settings.ts";
+import { expandHome, lastSegment, type GroupFolder } from "./settings.ts";
 
-/** `path` with a leading `~` turned into `home`. */
-export const expandHome = (path: string, home: string): string =>
-  path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
+export { expandHome };
 
 /** True when `path` is `root` or inside it. */
 export const isUnder = (path: string, root: string): boolean =>

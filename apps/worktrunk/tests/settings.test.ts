@@ -1,11 +1,20 @@
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  addFolder,
   DEFAULT_SETTINGS,
   hideRepo,
+  moveFolder,
   parseSettings,
   planImport,
+  planSave,
+  removeFolder,
   serializeSettings,
+  skipText,
+  tildePath,
+  unhide,
+  withFields,
+  type Settings,
 } from "../src/settings.ts";
 
 const FILE = "iangregsondev-worktrunk.json";
@@ -245,5 +254,171 @@ describe("hideRepo", () => {
     expect(hideRepo('{"depth": ', "/w/api", FILE)).toEqual(
       Result.fail(Option.getOrThrow(parseSettings('{"depth": ', FILE).error)),
     );
+  });
+});
+
+describe("planSave", () => {
+  const opened = serializeSettings({ ...DEFAULT_SETTINGS, depth: 3 });
+  const edited = { ...DEFAULT_SETTINGS, depth: 5 };
+
+  test("writes the new settings, expecting the file as it was when the dialog opened", () => {
+    expect(planSave(opened, opened, edited, FILE)).toEqual({
+      _tag: "Write",
+      text: serializeSettings(edited),
+      expected: opened,
+    });
+  });
+
+  test("a hand edit made since the dialog opened is never overwritten", () => {
+    const handEdited = serializeSettings({ ...DEFAULT_SETTINGS, depth: 7 });
+    expect(planSave(opened, handEdited, edited, FILE)).toEqual({ _tag: "Changed" });
+  });
+
+  test("a file made by hand since the dialog opened on none is never overwritten", () => {
+    expect(planSave(null, "{}", edited, FILE)).toEqual({ _tag: "Changed" });
+  });
+
+  test("with no file when the dialog opened, saving creates it", () => {
+    expect(planSave(null, null, edited, FILE)).toEqual({
+      _tag: "Write",
+      text: serializeSettings(edited),
+      expected: null,
+    });
+  });
+
+  test("saving unchanged settings leaves a hand-formatted file as it is", () => {
+    const handFormatted = '{ "depth": 3 }\n';
+    expect(planSave(handFormatted, handFormatted, { ...DEFAULT_SETTINGS, depth: 3 }, FILE)).toEqual(
+      { _tag: "Unchanged" },
+    );
+  });
+
+  test("a file that didn't parse when the dialog opened is never replaced", () => {
+    const broken = '{"depth": ';
+    expect(planSave(broken, broken, edited, FILE)).toEqual({
+      _tag: "Broken",
+      error: Option.getOrThrow(parseSettings(broken, FILE).error),
+    });
+  });
+});
+
+describe("editing in the Settings dialog", () => {
+  const HOME = "/Users/me";
+  const two = {
+    ...DEFAULT_SETTINGS,
+    folders: [
+      { name: "Work", path: "~/code/work" },
+      { name: "Personal", path: "~/code/personal" },
+    ],
+  };
+  const names = (settings: Settings) => settings.folders.map((folder) => folder.name);
+
+  test("un-hiding a repo takes it off the hidden list, the rest stay hidden", () => {
+    const hidden = { ...DEFAULT_SETTINGS, hidden: ["/r/a", "/r/b"] };
+    expect(unhide(hidden, "/r/a").hidden).toEqual(["/r/b"]);
+  });
+
+  test("a picked folder joins the end, under home written with ~, named after its last segment", () => {
+    expect(addFolder(two, "/Users/me/src/oss/", HOME).folders).toEqual([
+      ...two.folders,
+      { name: "oss", path: "~/src/oss" },
+    ]);
+  });
+
+  test("a folder outside home keeps its full path", () => {
+    expect(addFolder(DEFAULT_SETTINGS, "/Volumes/x", HOME).folders).toEqual([
+      { name: "x", path: "/Volumes/x" },
+    ]);
+  });
+
+  test("the home folder itself is written ~, and a folder that only starts like it is not", () => {
+    expect([tildePath(HOME, HOME), tildePath("/Users/meg", HOME)]).toEqual(["~", "/Users/meg"]);
+  });
+
+  test("picking a folder already in the list changes nothing", () => {
+    expect(addFolder(two, "/Users/me/code/work", HOME)).toBe(two);
+  });
+
+  test("a blank pick changes nothing", () => {
+    expect(addFolder(two, " / ", HOME)).toBe(two);
+  });
+
+  test("moving a folder up or down changes the group order", () => {
+    expect([names(moveFolder(two, 1, -1)), names(moveFolder(two, 0, 1))]).toEqual([
+      ["Personal", "Work"],
+      ["Personal", "Work"],
+    ]);
+  });
+
+  test("moving a folder past either end changes nothing", () => {
+    expect(moveFolder(two, 0, -1)).toBe(two);
+    expect(moveFolder(two, 1, 1)).toBe(two);
+    expect(moveFolder(two, 5, -1)).toBe(two);
+  });
+
+  test("removing a folder keeps the others in order", () => {
+    const three = { ...two, folders: [...two.folders, { name: "Oss", path: "~/oss" }] };
+    expect(names(removeFolder(three, 1))).toEqual(["Work", "Oss"]);
+  });
+
+  test("the skip field shows the names joined with commas", () => {
+    expect(skipText(["node_modules", ".cache"])).toBe("node_modules, .cache");
+  });
+
+  test("the name fields name the folders, trimmed", () => {
+    const next = withFields(two, { names: [" Jobs ", "Home"], skip: "", depth: 4 });
+    expect(next.folders).toEqual([
+      { name: "Jobs", path: "~/code/work" },
+      { name: "Home", path: "~/code/personal" },
+    ]);
+  });
+
+  test("a blank name field names the folder after its last segment", () => {
+    const next = withFields(two, { names: ["Work", "  "], skip: "", depth: 4 });
+    expect(names(next)).toEqual(["Work", "personal"]);
+  });
+
+  test("the skip field is split on commas, each name trimmed, blanks dropped", () => {
+    const next = withFields(two, { names: [], skip: " dist, ,vendor,", depth: 4 });
+    expect(next.skip).toEqual(["dist", "vendor"]);
+  });
+
+  test("the depth is kept to a whole number from 1 to 8", () => {
+    const depthOf = (depth: number) => withFields(two, { names: [], skip: "", depth }).depth;
+    expect([depthOf(11), depthOf(0), depthOf(2.6)]).toEqual([8, 1, 3]);
+  });
+
+  test("the no-wrapper setting saves to the file and reads back", () => {
+    const opened = serializeSettings(DEFAULT_SETTINGS);
+    const plan = planSave(opened, opened, { ...DEFAULT_SETTINGS, noWrapper: true }, FILE);
+    const text = plan._tag === "Write" ? plan.text : "";
+    expect([
+      text.includes('"noWrapper": true'),
+      parseSettings(text, FILE).settings.noWrapper,
+    ]).toEqual([true, true]);
+  });
+
+  test("every field round-trips through a save", () => {
+    const opened = serializeSettings(two);
+    const edited = withFields(
+      unhide(
+        moveFolder(addFolder({ ...two, hidden: ["/r/a"] }, "/Users/me/oss", HOME), 2, -1),
+        "/r/a",
+      ),
+      { names: ["W", "O", "P"], skip: "vendor", depth: 2 },
+    );
+    const plan = planSave(opened, opened, { ...edited, noWrapper: true }, FILE);
+    const text = plan._tag === "Write" ? plan.text : "";
+    expect(parseSettings(text, FILE).settings).toEqual({
+      folders: [
+        { name: "W", path: "~/code/work" },
+        { name: "O", path: "~/oss" },
+        { name: "P", path: "~/code/personal" },
+      ],
+      depth: 2,
+      skip: ["vendor"],
+      hidden: [],
+      noWrapper: true,
+    });
   });
 });

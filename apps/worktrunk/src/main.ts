@@ -1,6 +1,6 @@
 // The worktrunk panel: your repos and their worktrees, from `wt list`, in a side panel,
-// with the row and repo menus, the confirm and New worktree dialogs and the job window's
-// title bar as overlays of the same mod. This file is the thin Herdr layer: it runs the
+// with the row and repo menus, the confirm, New worktree and Settings dialogs and the job
+// window's title bar as overlays of the same mod. This file is the thin Herdr layer: it runs the
 // Effect programs in load.ts at the edge, keeps what they return and draws what the pure
 // builders (view.ts, menus.ts) return.
 import {
@@ -24,6 +24,7 @@ import {
   notify,
   openOverlay,
   panes,
+  pickFolder,
   props,
   readTextFile,
   run,
@@ -45,10 +46,13 @@ import {
   loadSettings,
   lookUpCurrent,
   newWorktree,
+  pickGroupFolder,
   readCi,
   readEach,
   readList,
   runJob,
+  saveSettings,
+  settingsText,
   syncToast,
   type JobOutcome,
   type LoadedSettings,
@@ -92,7 +96,19 @@ import {
   type RepoList,
 } from "./reads.ts";
 import type { FoundRepo, Repo } from "./repos.ts";
-import { DEFAULT_SETTINGS, lastSegment, type Settings } from "./settings.ts";
+import {
+  DEFAULT_SETTINGS,
+  addFolder,
+  lastSegment,
+  moveFolder,
+  parseSettings,
+  removeFolder,
+  skipText,
+  tildePath,
+  unhide,
+  withFields,
+  type Settings,
+} from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
 import { focusedFolder, localPlaces, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
 import {
@@ -118,8 +134,10 @@ import {
   readMenuProps,
   readNewProps,
   readRequest,
+  readSettingsText,
   readTitlebarProps,
   readViewState,
+  settingsProps,
   titlebarProps,
   writeViewState,
   type ConfirmProps,
@@ -162,7 +180,7 @@ const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
 const services = Layer.mergeAll(
   Shell.layer({ exec, hc }),
-  Files.layer({ readTextFile, writeTextFile }),
+  Files.layer({ readTextFile, writeTextFile, pickFolder }),
 );
 
 /**
@@ -210,7 +228,13 @@ const BUTTON_COLORS: Readonly<Record<ButtonTone, (t: Colors) => readonly [Hex, H
 };
 
 /** The dialogs' text buttons. */
-const button = (t: Colors, id: string, label: string, tone: ButtonTone, onClick: () => void) => {
+const button = (
+  t: Colors,
+  id: string,
+  label: string,
+  tone: ButtonTone,
+  onClick: (event: unknown, cx: Context) => void,
+) => {
   const [bg, fg] = BUTTON_COLORS[tone](t);
   return div()
     .id(id)
@@ -343,6 +367,24 @@ const closeSelf = () => Option.map(overlayOf(ownProps()), closeOverlay);
 
 const settingsFile = () => ({ path: `${appHome()}/${SETTINGS_FILE}`, name: SETTINGS_FILE });
 
+/** The Settings dialog's size; its body scrolls when the lists outgrow it. */
+const SETTINGS_WIDTH = 620;
+const SETTINGS_HEIGHT = 600;
+
+/** What the Settings dialog edits: the settings, the file's text it opened on, its fields. */
+interface SettingsDraft {
+  settings: Settings;
+  /** The file's text when the dialog opened; null when there was none. */
+  readonly opened: string | null;
+  /** Why the file can't be saved over (it didn't parse); none when it can. */
+  readonly broken: Option.Option<string>;
+  /** One name field per group folder, in the folders' order. */
+  names: InputState[];
+  readonly skip: InputState;
+  /** A save or a folder pick that didn't happen, and why. */
+  note: string;
+}
+
 /** Shows the job's terminal in a floating window, under a title bar with a Stop button. */
 const openJobWindow = (title: string, addr: string) =>
   openOverlay({
@@ -371,6 +413,7 @@ type Copy =
   | { readonly _tag: "Confirm" }
   | { readonly _tag: "New"; readonly input: InputState }
   | { readonly _tag: "Titlebar" }
+  | { readonly _tag: "Settings"; readonly draft: SettingsDraft }
   /** Props naming a role this mod doesn't have: it draws nothing and does nothing. */
   | { readonly _tag: "Unknown" };
 
@@ -452,6 +495,9 @@ export default class Worktrunk extends View {
       case "titlebar":
         this.copy = { _tag: "Titlebar" };
         return;
+      case "settings":
+        this.copy = { _tag: "Settings", draft: this.initSettings() };
+        return;
       case "new": {
         const input = InputState.new({ placeholder: "branch name, pr:123, or a PR link" });
         input.on("submit", () => this.submitNew(input));
@@ -469,6 +515,90 @@ export default class Worktrunk extends View {
       if (name === "") return;
       closeSelf();
       send({ _tag: "Create", main, name, base: null });
+    });
+  }
+
+  /** The Settings dialog starts from the file's text the panel read when it opened it. */
+  initSettings(): SettingsDraft {
+    const opened = readSettingsText(ownProps());
+    const parsed = parseSettings(opened, SETTINGS_FILE);
+    const skip = InputState.new({ placeholder: "node_modules, .cache" });
+    skip.set_value(skipText(parsed.settings.skip));
+    const draft: SettingsDraft = {
+      settings: parsed.settings,
+      opened,
+      broken: parsed.error,
+      names: [],
+      skip,
+      note: "",
+    };
+    this.nameFields(draft);
+    return draft;
+  }
+
+  /** New name fields, one per folder, holding the draft's names. */
+  nameFields(draft: SettingsDraft) {
+    draft.names = draft.settings.folders.map((folder) => {
+      const field = InputState.new({ placeholder: lastSegment(folder.path) });
+      field.set_value(folder.name);
+      return field;
+    });
+  }
+
+  /** The draft's settings with what the fields hold now. */
+  drafted(draft: SettingsDraft): Settings {
+    return withFields(draft.settings, {
+      names: draft.names.map((field) => field.value()),
+      skip: draft.skip.value(),
+      depth: draft.settings.depth,
+    });
+  }
+
+  /** Applies `change` to the draft, keeping what the fields hold. */
+  editDraft(draft: SettingsDraft, change: (settings: Settings) => Settings) {
+    const before = draft.settings.folders;
+    draft.settings = change(this.drafted(draft));
+    if (draft.settings.folders !== before) this.nameFields(draft);
+  }
+
+  /** Adds a group folder picked in the system's folder picker. */
+  pickGroupFolder(cx: Context, draft: SettingsDraft) {
+    cx.spawn(async (cx) => {
+      const picked = await runEdge(pickGroupFolder(), Result.fail);
+      Result.match(picked, {
+        onSuccess: (folder) =>
+          Option.map(folder, (path) =>
+            this.editDraft(draft, (settings) => addFolder(settings, path, home())),
+          ),
+        onFailure: (reason) => {
+          draft.note = reason;
+        },
+      });
+      cx.notify();
+    });
+  }
+
+  /**
+   * Saves the draft, never over a hand edit made since the dialog opened; then the panel
+   * reads everything again and the dialog closes. A save that didn't happen says why.
+   */
+  saveSettings(cx: Context, draft: SettingsDraft) {
+    const settings = this.drafted(draft);
+    cx.spawn(async (cx) => {
+      const saved = await runEdge(
+        saveSettings(settingsFile(), draft.opened, settings),
+        Result.fail,
+      );
+      Result.match(saved, {
+        onSuccess: (done) => {
+          if (done === "Saved") send({ _tag: "Refresh" });
+          closeSelf();
+        },
+        onFailure: (reason) => {
+          draft.note = reason;
+          cx.notify();
+        },
+      });
     });
   }
 
@@ -521,6 +651,24 @@ export default class Worktrunk extends View {
         return;
       case "Create":
         return this.createWorktree(cx, action.main, action.name, action.base);
+      case "Settings":
+        cx.spawn(async () => {
+          const text = await runEdge(settingsText(settingsFile()), Result.fail);
+          Result.match(text, {
+            onSuccess: (opened) =>
+              openOverlay({
+                mod: __MOD_ID__,
+                kind: "dialog",
+                modal: true,
+                width: SETTINGS_WIDTH,
+                height: SETTINGS_HEIGHT,
+                props: settingsProps(opened),
+              }),
+            onFailure: (body) =>
+              notify({ title: "Couldn't open Settings", body, level: "warning" }),
+          });
+        });
+        return;
       default:
         Option.map(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
     }
@@ -800,6 +948,7 @@ export default class Worktrunk extends View {
       .child(icon("git", 16, t.accent))
       .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
       .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
+      .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
       .child(
         iconButton("refresh", "sync", (cx) =>
           later(cx, (cx) => this.refreshWithCi(cx, { scan: true })),
@@ -898,6 +1047,8 @@ export default class Worktrunk extends View {
         );
       case "Menu":
         return this.renderMenu(style, readMenuProps(p), copy.menu);
+      case "Settings":
+        return this.renderSettings(style, copy.draft);
     }
   }
 
@@ -1036,6 +1187,229 @@ export default class Worktrunk extends View {
             .text_size(sizes.label)
             .text_color(t.muted)
             .child("Enter creates it from the default branch, or switches to it if it exists."),
+        ),
+    );
+  }
+
+  /**
+   * The Settings dialog: group folders (name, order, remove, add), the scan's depth and
+   * skip names, hidden repos to show again, and the no-wrapper setting.
+   */
+  renderSettings({ t, sizes }: Style, draft: SettingsDraft): Element {
+    const { settings } = draft;
+    const edit = (change: (settings: Settings) => Settings) => (_e: unknown, cx: Context) => {
+      this.editDraft(draft, change);
+      cx.notify();
+    };
+    const small = (
+      id: string,
+      label: string | Element,
+      onClick: (e: unknown, cx: Context) => void,
+    ) =>
+      h_flex()
+        .id(id)
+        .size(24)
+        .flex_none()
+        .justify_center()
+        .items_center()
+        .rounded(6)
+        .cursor_pointer()
+        .text_color(t.muted)
+        .hover((s) => s.bg(t.hover))
+        .on_click(onClick)
+        .child(label);
+    const field = (state: InputState, width: Option.Option<number>) => {
+      const box = h_flex()
+        .h(28)
+        .px(8)
+        .items_center()
+        .rounded(6)
+        .border_1()
+        .border_color(t.border)
+        .bg(t.input)
+        .child(Input.new(state).flex_1().min_w(0).h_full().text_color(t.foreground));
+      return Option.match(width, {
+        onNone: () => box.flex_1().min_w(0),
+        onSome: (w) => box.w(w).flex_none(),
+      });
+    };
+    const heading = (text: string, hint: string) =>
+      v_flex()
+        .pt(6)
+        .gap(2)
+        .child(div().font_semibold().child(text))
+        .child(div().text_size(sizes.label).text_color(t.muted).child(hint));
+    const hint = (text: string) => div().text_size(sizes.small).text_color(t.muted).child(text);
+    const folders = settings.folders.map((folder, i) =>
+      h_flex()
+        .gap(6)
+        .items_center()
+        .children(
+          Option.toArray(Option.fromNullishOr(draft.names[i])).map((name) =>
+            field(name, Option.some(150)),
+          ),
+        )
+        .child(
+          div()
+            .flex_1()
+            .min_w(0)
+            .truncate()
+            .text_size(sizes.small)
+            .text_color(t.muted)
+            .child(folder.path),
+        )
+        .child(
+          small(
+            `up-${i}`,
+            "↑",
+            edit((s) => moveFolder(s, i, -1)),
+          ),
+        )
+        .child(
+          small(
+            `down-${i}`,
+            "↓",
+            edit((s) => moveFolder(s, i, 1)),
+          ),
+        )
+        .child(
+          small(
+            `remove-${i}`,
+            icon("close", 12, t.muted),
+            edit((s) => removeFolder(s, i)),
+          ),
+        ),
+    );
+    const hidden = settings.hidden.map((root, i) =>
+      h_flex()
+        .gap(8)
+        .items_center()
+        .child(div().flex_none().font_medium().child(lastSegment(root)))
+        .child(
+          div()
+            .flex_1()
+            .min_w(0)
+            .truncate()
+            .text_size(sizes.small)
+            .text_color(t.muted)
+            .child(tildePath(root, home())),
+        )
+        .child(
+          button(
+            t,
+            `unhide-${i}`,
+            "Show again",
+            "plain",
+            edit((s) => unhide(s, root)),
+          ),
+        ),
+    );
+    const check = div()
+      .size(16)
+      .flex_none()
+      .rounded(4)
+      .border_1()
+      .border_color(settings.noWrapper ? t.accent : t.border)
+      .bg(settings.noWrapper ? t.accent : t.input);
+    const body = v_flex()
+      .gap(8)
+      .pr(6)
+      .child(
+        heading("Groups", "Each folder is scanned for repos and names a group, in this order."),
+      )
+      .children(folders)
+      .when(folders.length === 0, (el) => el.child(hint("No group folders yet.")))
+      .child(
+        h_flex().child(
+          button(t, "add-folder", "Add folder…", "plain", (_e, cx) =>
+            this.pickGroupFolder(cx, draft),
+          ),
+        ),
+      )
+      .child(heading("Scan", "How deep to look for repos, and folder names never to enter."))
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().w(150).flex_none().child("Depth"))
+          .child(
+            small(
+              "depth-less",
+              "−",
+              edit((s) => ({ ...s, depth: Math.max(1, s.depth - 1) })),
+            ),
+          )
+          .child(div().w(20).flex_none().text_center().child(String(settings.depth)))
+          .child(
+            small(
+              "depth-more",
+              "+",
+              edit((s) => ({ ...s, depth: Math.min(8, s.depth + 1) })),
+            ),
+          ),
+      )
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().w(150).flex_none().child("Skip folders named"))
+          .child(field(draft.skip, Option.none())),
+      )
+      .child(heading("Hidden repos", "Repos left out of the panel."))
+      .children(hidden)
+      .when(hidden.length === 0, (el) => el.child(hint("No hidden repos.")))
+      .child(heading("Shell wrapper", "Your own wt shell function, if you have one."))
+      .child(
+        h_flex()
+          .id("no-wrapper")
+          .gap(8)
+          .items_center()
+          .cursor_pointer()
+          .on_click(edit((s) => ({ ...s, noWrapper: !s.noWrapper })))
+          .child(check)
+          .child("Run merge, remove and clean up without my wt shell function"),
+      );
+    const note = Option.match(draft.broken, {
+      onSome: (error) => `${error}. Fix the file by hand; Settings can't save over it.`,
+      onNone: () => draft.note,
+    });
+    return this.focused(
+      v_flex()
+        .id("settings")
+        .size_full()
+        .p(18)
+        .gap(10)
+        .bg(t.popover)
+        .text_color(t.foreground)
+        .text_size(sizes.body)
+        .on_key_down((e) => {
+          if (e.key === "escape") closeSelf();
+        })
+        .child(div().text_size(sizes.title).font_semibold().child("worktrunk settings"))
+        .child(div().id("settings-body").flex_1().min_h(0).overflow_y_scrollbar().child(body))
+        .when(note !== "", (el) =>
+          el.child(div().text_size(sizes.label).text_color(t.ansi1).child(note)),
+        )
+        .child(
+          h_flex()
+            .gap(8)
+            .items_center()
+            .child(
+              div()
+                .flex_1()
+                .min_w(0)
+                .text_size(sizes.label)
+                .text_color(t.dim)
+                .child(
+                  `Saved in ${tildePath(settingsFile().path, home())}. You can edit it by hand too.`,
+                ),
+            )
+            .child(button(t, "cancel", "Cancel", "plain", closeSelf))
+            .when(Option.isNone(draft.broken), (el) =>
+              el.child(
+                button(t, "save", "Save", "accent", (_e, cx) => this.saveSettings(cx, draft)),
+              ),
+            ),
         ),
     );
   }

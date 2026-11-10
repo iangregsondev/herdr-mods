@@ -116,6 +116,8 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.map(text(f.root), (root): Action => ({ _tag: "Hide", root }));
     case "Refresh":
       return Option.some({ _tag: "Refresh" });
+    case "Settings":
+      return Option.some({ _tag: "Settings" });
     default:
       return Option.none();
   }
@@ -220,3 +222,12 @@ export const newProps = (main: string): PropsOf<"new", { readonly main: string }
   role: "new",
   main,
 });
+
+/** The settings file's text the Settings dialog opens on; null when there was no file. */
+export const readSettingsText = (props: unknown): string | null =>
+  Option.getOrNull(text(fields(props).text));
+
+/** The Settings dialog's props: the file's text, null for none; read with `readSettingsText`. */
+export const settingsProps = (
+  text: string | null,
+): PropsOf<"settings", { readonly text: string | null }> => ({ role: "settings", text });
