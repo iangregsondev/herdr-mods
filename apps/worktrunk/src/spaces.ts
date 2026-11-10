@@ -93,3 +93,22 @@ export const spacesInGone = (
     .filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? ""))
     .map((space) => space.id);
 };
+
+/** The parts of `focused()` this module reads. */
+export interface FocusLike {
+  readonly space: string;
+  /** The focused terminal's live folder; null when no terminal has focus. */
+  readonly cwd: string | null;
+}
+
+/**
+ * The folder the person is working in: the focused terminal's, else (a mod pane or the
+ * panel itself has focus) where the focused space is, so focusing the panel keeps it.
+ */
+export const focusedFolder = (
+  focus: FocusLike | null,
+  places: readonly Place[],
+): Option.Option<string> =>
+  Option.orElse(Option.fromNullishOr(focus?.cwd || null), () =>
+    Option.fromNullishOr(places.find((p) => p.space.id === focus?.space)?.place),
+  );

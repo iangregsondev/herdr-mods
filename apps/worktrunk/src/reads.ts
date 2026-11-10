@@ -1,6 +1,8 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
+import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
+import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
 
 /** One repo's `wt list`: its worktrees, and the last read's error, if it failed. */
@@ -154,3 +156,94 @@ export const onRender = (
   }
   return { reads: { ...reads, wasHidden }, step: "None" };
 };
+
+/**
+ * The Current repo's lookup: none until the first answer, then the repo the focused
+ * folder is in (none outside every repo), or why the lookup failed.
+ */
+export type CurrentLookup = Option.Option<Result.Result<Option.Option<FoundRepo>, string>>;
+
+/** The repo of the folder the person is focused in, as far as the panel knows yet. */
+export type CurrentRepo =
+  | { readonly _tag: "Looking" }
+  | { readonly _tag: "NotInRepo" }
+  | { readonly _tag: "InRepo"; readonly repo: Repo }
+  | { readonly _tag: "Failed"; readonly reason: string };
+
+/**
+ * The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
+ * hidden one, say), grouped by the group folders.
+ */
+export const currentRepoOf = (
+  found: CurrentLookup,
+  repos: readonly Repo[],
+  folders: readonly GroupFolder[],
+  home: string,
+): CurrentRepo =>
+  Option.match(found, {
+    onNone: (): CurrentRepo => ({ _tag: "Looking" }),
+    onSome: Result.match({
+      onFailure: (reason): CurrentRepo => ({ _tag: "Failed", reason }),
+      onSuccess: Option.match({
+        onNone: (): CurrentRepo => ({ _tag: "NotInRepo" }),
+        onSome: (repo): CurrentRepo => ({
+          _tag: "InRepo",
+          repo: repos.find((listed) => listed.root === repo.root) ?? {
+            ...repo,
+            group: groupOf(repo.root, folders, home),
+          },
+        }),
+      }),
+    }),
+  });
+
+/** The Current view following focus. */
+export interface Follow {
+  /** The focused folder last looked up ("" for none); none while the view isn't shown. */
+  readonly folder: Option.Option<string>;
+  readonly found: CurrentLookup;
+}
+
+export const NOT_FOLLOWING: Follow = { folder: Option.none(), found: Option.none() };
+
+/**
+ * What a render looks up: while the Current view shows (`following`), the focused
+ * folder, when it isn't the one last looked up. Herdr renders on every focus change,
+ * so this never polls.
+ */
+export const followFocus = (
+  follow: Follow,
+  { following, folder }: { readonly following: boolean; readonly folder: string },
+): { readonly follow: Follow; readonly lookUp: Option.Option<string> } =>
+  !following
+    ? { follow: { ...follow, folder: Option.none() }, lookUp: Option.none() }
+    : Option.contains(follow.folder, folder)
+      ? { follow, lookUp: Option.none() }
+      : { follow: { ...follow, folder: Option.some(folder) }, lookUp: Option.some(folder) };
+
+/**
+ * A lookup's answer for `folder`: kept, unless the focus moved on since (an answer for
+ * an older focus is dropped). `refresh` when it names another repo than before, or is
+ * the first answer, so the lists read the new Current repo.
+ */
+export const takeLookup = (
+  follow: Follow,
+  folder: string,
+  answer: Result.Result<Option.Option<FoundRepo>, string>,
+): { readonly follow: Follow; readonly refresh: boolean } =>
+  Option.contains(follow.folder, folder)
+    ? {
+        follow: { ...follow, found: Option.some(answer) },
+        refresh: Option.match(follow.found, {
+          onNone: () => true,
+          onSome: (before) => rootOf(before) !== rootOf(answer),
+        }),
+      }
+    : { follow, refresh: false };
+
+/** The repo root an answer names; undefined for none or a failed lookup. */
+const rootOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>
+  Result.match(answer, {
+    onFailure: () => undefined,
+    onSuccess: (found) => Option.getOrUndefined(found)?.root,
+  });

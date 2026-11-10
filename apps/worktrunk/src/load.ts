@@ -26,6 +26,7 @@ import {
   makeTempDir,
   removeDir,
   removeTerminal,
+  repoAt,
   reposOf,
   scanRepos,
   startJob,
@@ -113,20 +114,29 @@ export interface Found {
 
 /**
  * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
- * repos the open spaces are in (`places`), less the hidden ones. A failure is its
- * one-line reason.
+ * repos the open spaces are in (`places`) and the Current repo (`current`), less the
+ * hidden ones. A failure is its one-line reason.
  */
 export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
   home: string,
   places: readonly string[],
   lastScan: Option.Option<readonly FoundRepo[]>,
+  current: Option.Option<FoundRepo> = Option.none(),
 ) {
   const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
   const owners = yield* reposOf(places);
-  const repos = reposFrom(scanned, owners, settings.folders, home);
+  const repos = reposFrom(scanned, [...owners, ...Option.toArray(current)], settings.folders, home);
   const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
   return found;
+}, asReason);
+
+/**
+ * The Current repo: the repo `folder` (the focused folder; empty for none) is in, if any,
+ * or the one-line reason the lookup failed.
+ */
+export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (folder: string) {
+  return yield* repoAt(folder);
 }, asReason);
 
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */

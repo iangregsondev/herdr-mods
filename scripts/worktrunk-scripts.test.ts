@@ -19,6 +19,7 @@ import {
   removeScript,
   shArgs,
 } from "../apps/worktrunk/src/commands.ts";
+import { currentRepo } from "../apps/worktrunk/src/repos.ts";
 import {
   fakeBin,
   fakeLoggingBin,
@@ -110,21 +111,21 @@ describe("SCAN_SCRIPT", () => {
   });
 });
 
+/** A repo with one commit and a linked worktree beside it. */
+const repoWithWorktree = () => {
+  // macOS temp folders sit behind a symlink; git reports the real path.
+  const root = realpathSync(tempDir());
+  const repo = join(root, "api");
+  mkdirSync(join(repo, "src"), { recursive: true });
+  git(repo, ["init", "-q", "-b", "main"]);
+  git(repo, ["commit", "-q", "--allow-empty", "-m", "start"]);
+  git(repo, ["worktree", "add", "-q", "-b", "feature", join(root, "api.feature")]);
+  return { root, repo };
+};
+
 describe("OWNERS_SCRIPT", () => {
   const owners = (dirs: readonly string[]) =>
     runSh(scriptFile(OWNERS_SCRIPT), { args: dirs, env: isolatedGitEnv() }).stdout;
-
-  /** A repo with one commit and a linked worktree beside it. */
-  const repoWithWorktree = () => {
-    // macOS temp folders sit behind a symlink; git reports the real path.
-    const root = realpathSync(tempDir());
-    const repo = join(root, "api");
-    mkdirSync(join(repo, "src"), { recursive: true });
-    git(repo, ["init", "-q", "-b", "main"]);
-    git(repo, ["commit", "-q", "--allow-empty", "-m", "start"]);
-    git(repo, ["worktree", "add", "-q", "-b", "feature", join(root, "api.feature")]);
-    return { root, repo };
-  };
 
   test("a folder in the main checkout names that repo and its worktree count", () => {
     const { repo } = repoWithWorktree();
@@ -144,6 +145,26 @@ describe("OWNERS_SCRIPT", () => {
   test("folders in the same repo name it once", () => {
     const { root, repo } = repoWithWorktree();
     expect(owners([join(repo, "src"), join(root, "api.feature"), repo])).toBe(`${repo}\t2\n`);
+  });
+});
+
+describe("the Current repo's lookup: currentRepo over OWNERS_SCRIPT", () => {
+  /** The Current repo of `folder`, as the panel looks it up: the script, then its reading. */
+  const lookUp = (folder: string) =>
+    currentRepo(runSh(scriptFile(OWNERS_SCRIPT), { args: [folder], env: isolatedGitEnv() }).stdout);
+
+  test("a folder in the main checkout belongs to that repo", () => {
+    const { repo } = repoWithWorktree();
+    expect(lookUp(join(repo, "src"))).toEqual(Option.some({ root: repo, count: 2 }));
+  });
+
+  test("a linked worktree belongs to its repo, through the shared git folder", () => {
+    const { root, repo } = repoWithWorktree();
+    expect(lookUp(join(root, "api.feature"))).toEqual(Option.some({ root: repo, count: 2 }));
+  });
+
+  test("a folder outside every repo has none", () => {
+    expect(lookUp(realpathSync(tempDir()))).toEqual(Option.none());
   });
 });
 

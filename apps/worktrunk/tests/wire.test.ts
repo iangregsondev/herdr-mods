@@ -83,6 +83,12 @@ describe("view state", () => {
     expect(readViewState({ group: 3, show: "nope", only: "yes" })).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState({ show: "open" })).toEqual({ ...DEFAULT_VIEW_STATE, show: "open" });
   });
+
+  test("the Current view is remembered like the others", () => {
+    const state = { group: Option.none(), show: "current", only: true } as const;
+    const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
+    expect(readViewState(stored)).toEqual(state);
+  });
 });
 
 describe("readAction", () => {

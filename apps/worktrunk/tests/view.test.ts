@@ -7,6 +7,7 @@ import type { SpaceLike } from "../src/spaces.ts";
 import {
   buildView,
   DEFAULT_VIEW_STATE,
+  reposToRead,
   type RepoView,
   type RowView,
   type Snapshot,
@@ -88,6 +89,7 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   // "All repos", so single-checkout repos show unless a test turns the toggle on.
   view: { ...DEFAULT_VIEW_STATE, only: false },
   search: "",
+  current: { _tag: "NotInRepo" },
   now: NOW,
   ...more,
 });
@@ -180,7 +182,7 @@ describe("buildView: the Repos tree", () => {
 
   test("a folded repo shows its header only", () => {
     const api = repo(snapshot({ folded: { "/w/api": true } }), "api");
-    expect(api.folded).toBe(true);
+    expect(api).toMatchObject({ folded: true, foldable: true });
     expect(api.main).toEqual([]);
     expect(api.sections).toEqual([]);
     expect(repo(snapshot(), "api").folded).toBe(false);
@@ -488,6 +490,7 @@ describe("buildView: views", () => {
       { show: "active", label: "Active", selected: true },
       { show: "conflict", label: "Conflicts", selected: false },
       { show: "open", label: "Open", selected: false },
+      { show: "current", label: "Current", selected: false },
     ]);
   });
 
@@ -732,5 +735,126 @@ describe("buildView: CI", () => {
     expect(body._tag === "Flat" && body.rows[0]?.ci).toEqual(
       Option.some({ status: "failed", stale: false }),
     );
+  });
+});
+
+describe("buildView: the Current view", () => {
+  const current = (more: Partial<Snapshot> = {}): Snapshot =>
+    snapshot({ view: { ...DEFAULT_VIEW_STATE, only: false, show: "current" }, ...more });
+  const inRepo = (repo: Repo): Snapshot["current"] => ({ _tag: "InRepo", repo });
+
+  test("the Current repo, laid out like one expanded repo of the Repos tree", () => {
+    const s = current({ current: inRepo(API) });
+    expect(tree(s).map((r) => r.name)).toEqual(["api"]);
+    const api = repo(s, "api");
+    expect(api.main.map((r) => r.label)).toEqual(["main"]);
+    expect(api.sections.map((x) => [x.kind, x.rows.map((r) => r.label)])).toEqual([
+      ["merged", ["old"]],
+      ["active", ["new"]],
+      ["conflict", ["fight"]],
+    ]);
+  });
+
+  test("focused in a linked worktree: still the whole repo, its row open and shown", () => {
+    const s = current({
+      current: inRepo(API),
+      spaces: [space("s1", "/w/api.new", { active: true })],
+    });
+    expect(tree(s).map((r) => r.name)).toEqual(["api"]);
+    expect(row(s, "/w/api.new")).toMatchObject({ open: true, current: true });
+    expect(row(s, "/w/api")).toMatchObject({ open: false });
+  });
+
+  test("never folded, though its groups still fold", () => {
+    const s = current({
+      current: inRepo(API),
+      folded: { [API.root]: true, [`${API.root}|merged`]: true },
+    });
+    const api = repo(s, "api");
+    expect(api).toMatchObject({ folded: false, foldable: false });
+    expect(api.main.map((r) => r.label)).toEqual(["main"]);
+    expect(api.sections.find((x) => x.kind === "merged")).toMatchObject({ folded: true, rows: [] });
+  });
+
+  test("ignores the group chips and the With worktrees toggle", () => {
+    const s = current({
+      current: inRepo(WEB),
+      view: { group: Option.some("Work"), show: "current", only: true },
+    });
+    expect(tree(s).map((r) => r.name)).toEqual(["web"]);
+    expect(buildView(s).toggle).toEqual(Option.none());
+  });
+
+  test("the search box narrows it", () => {
+    const s = current({ current: inRepo(API), search: "NEW" });
+    expect(allRows(repo(s, "api")).map((r) => r.label)).toEqual(["new"]);
+  });
+
+  test("a search that matches nothing in it says so", () => {
+    expect(buildView(current({ current: inRepo(API), search: "zzz" })).body).toEqual({
+      _tag: "Message",
+      text: 'Nothing matches "zzz".',
+    });
+  });
+
+  test("a Current repo not read yet shows as Reading, searched or not", () => {
+    const s = current({ current: inRepo(API), lists: new Map() });
+    expect(repo(s, "api").status).toEqual({ _tag: "Reading" });
+    expect(repo({ ...s, search: "new" }, "api").status).toEqual({ _tag: "Reading" });
+  });
+
+  test("not in a repo: says so, with every open worktree below, whatever the chip", () => {
+    const s = current({
+      current: { _tag: "NotInRepo" },
+      view: { ...DEFAULT_VIEW_STATE, group: Option.some("Work"), show: "current" },
+      spaces: [space("s1", "/w/api.new"), space("s2", "/p/web")],
+    });
+    const body = buildView(s).body;
+    if (body._tag !== "NotInRepo") expect.fail(`expected NotInRepo, got ${body._tag}`);
+    expect(body.text).toBe("Not in a repo");
+    if (body.open._tag !== "Flat") expect.fail(`expected a flat list, got ${body.open._tag}`);
+    expect(body.open.rows.map((r) => r.key)).toEqual(["/w/api.new", "/p/web"]);
+  });
+
+  test("not in a repo and no repos at all: says both", () => {
+    expect(buildView(current({ repos: [] })).body).toEqual({
+      _tag: "NotInRepo",
+      text: "Not in a repo",
+      open: { _tag: "Message", text: "No worktree has a space open." },
+    });
+  });
+
+  test("while the Current repo is being looked up, says so", () => {
+    expect(buildView(current({ current: { _tag: "Looking" } })).body).toEqual({
+      _tag: "Message",
+      text: "Finding the current repo…",
+    });
+  });
+
+  test("a lookup that failed says why", () => {
+    expect(buildView(current({ current: { _tag: "Failed", reason: "git: boom" } })).body).toEqual({
+      _tag: "Message",
+      text: "Couldn't find the current repo: git: boom",
+    });
+  });
+});
+
+describe("reposToRead", () => {
+  const scope = (view: Partial<Snapshot["view"]>, current: Snapshot["current"]) =>
+    snapshot({ view: { ...DEFAULT_VIEW_STATE, ...view }, current });
+
+  test("the Current view reads the Current repo alone", () => {
+    const s = scope({ show: "current" }, { _tag: "InRepo", repo: WEB });
+    expect(reposToRead(s)).toEqual([WEB]);
+  });
+
+  test("the Current view outside every repo reads every repo, whatever the chip", () => {
+    const s = scope({ show: "current", group: Option.some("Work") }, { _tag: "NotInRepo" });
+    expect(reposToRead(s)).toEqual([API, WEB]);
+  });
+
+  test("every other view reads the selected chip's repos", () => {
+    const s = scope({ show: "repos", group: Option.some("Work") }, { _tag: "InRepo", repo: WEB });
+    expect(reposToRead(s)).toEqual([API]);
   });
 });

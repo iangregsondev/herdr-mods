@@ -16,7 +16,7 @@ import {
   scanArgs,
   shArgs,
 } from "./commands.ts";
-import { parseOwners, parseScan } from "./repos.ts";
+import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
 
@@ -145,6 +145,16 @@ export const reposOf = Effect.fn("reposOf")(function* (folders: readonly string[
   if (folders.length === 0) return [];
   const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
   return parseOwners(run.stdout);
+});
+
+/**
+ * The repo the folder `folder` is in (the Current repo of the focused folder), through
+ * its shared git folder, so a linked worktree names its repo; none outside every repo.
+ */
+export const repoAt = Effect.fn("repoAt")(function* (folder: string) {
+  if (folder === "") return Option.none<FoundRepo>();
+  const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
+  return currentRepo(run.stdout);
 });
 
 /** What the panel says about a failed run: one line. */

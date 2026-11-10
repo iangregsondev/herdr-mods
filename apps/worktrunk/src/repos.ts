@@ -58,6 +58,10 @@ export const parseOwners = (stdout: string): readonly FoundRepo[] =>
     return root && line.includes("\t") ? [{ root, count: count(n) }] : [];
   });
 
+/** The Current repo: the repo the owners script names for the focused folder, if any. */
+export const currentRepo = (stdout: string): Option.Option<FoundRepo> =>
+  Option.fromNullishOr(parseOwners(stdout)[0]);
+
 export interface Repo extends FoundRepo {
   readonly group: string;
 }

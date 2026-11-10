@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { Input, InputState, h_flex, v_flex } from "gpui-base";
-import { appHome, closeOverlay, exec, hc, home, layout, notify, openOverlay, panes, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, focused, hc, home, layout, notify, openOverlay, panes, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -2941,6 +2941,37 @@ const match$5 = /*#__PURE__*/ dual(2, (self, { onNone, onSome }) => isNone(self)
 */
 const getOrElse = /*#__PURE__*/ dual(2, (self, onNone) => isNone(self) ? onNone() : self.value);
 /**
+* Returns the fallback `Option` if `self` is `None`; otherwise returns `self`.
+*
+* **When to use**
+*
+* Use when you need a lazy fallback `Option`, such as when building priority
+* chains of optional values.
+*
+* **Details**
+*
+* - `Some` → returns `self` unchanged
+* - `None` → evaluates and returns `that()`
+* - `that` is lazily evaluated
+*
+* **Example** (Providing a fallback Option)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.none().pipe(Option.orElse(() => Option.some("b"))) // => Option.some("b")
+* Option.some("a").pipe(Option.orElse(() => Option.some("b"))) // => Option.some("a")
+* ```
+*
+* @see {@link orElseSome} to wrap the fallback value in `Some` automatically
+* @see {@link firstSomeOf} to pick the first `Some` from a collection
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const orElse = /*#__PURE__*/ dual(2, (self, that) => isNone(self) ? that() : self);
+/**
 * Converts a nullable value (`null` or `undefined`) into an `Option`.
 *
 * **When to use**
@@ -3106,6 +3137,35 @@ const map$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(
 * @since 2.0.0
 */
 const flatMap$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
+/**
+* Flattens a nested `Option<Option<A>>` into `Option<A>`.
+*
+* **When to use**
+*
+* Use when you need to remove one layer of nested `Option`.
+*
+* **Details**
+*
+* - `Some(Some(value))` → `Some(value)`
+* - `Some(None)` → `None`
+* - `None` → `None`
+*
+* **Example** (Flattening nested Options)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.flatten(Option.some(Option.some("value"))) // => Option.some("value")
+* Option.flatten(Option.some(Option.none())) // => Option.none()
+* ```
+*
+* @see {@link flatMap} which is `map` + `flatten`
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const flatten$1 = /*#__PURE__*/ flatMap$3(identity);
 /**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
@@ -9520,6 +9580,8 @@ const parseOwners = (stdout) => stdout.split("\n").flatMap((line) => {
 		count: count$1(n)
 	}] : [];
 });
+/** The Current repo: the repo the owners script names for the focused folder, if any. */
+const currentRepo = (stdout) => fromNullishOr(parseOwners(stdout)[0]);
 /**
 * Every repo once, scanned or from an open space, with its group, by folder name.
 * An open space's count is fresher than the scan's, so it wins.
@@ -9947,6 +10009,15 @@ const reposOf = fn("reposOf")(function* (folders) {
 	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
 	return parseOwners(run.stdout);
 });
+/**
+* The repo the folder `folder` is in (the Current repo of the focused folder), through
+* its shared git folder, so a linked worktree names its repo; none outside every repo.
+*/
+const repoAt = fn("repoAt")(function* (folder) {
+	if (folder === "") return none();
+	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
+	return currentRepo(run.stdout);
+});
 /** What the panel says about a failed run: one line. */
 const failureText = (error) => {
 	switch (error._tag) {
@@ -10057,17 +10128,24 @@ const defaultsBecause = (what, failed, settled) => ({
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
-* repos the open spaces are in (`places`), less the hidden ones. A failure is its
-* one-line reason.
+* repos the open spaces are in (`places`) and the Current repo (`current`), less the
+* hidden ones. A failure is its one-line reason.
 */
-const findRepos = fn("findRepos")(function* (settings, home, places, lastScan) {
+const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none()) {
 	const scanned = isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
 	const owners = yield* reposOf(places);
-	const repos = reposFrom(scanned, owners, settings.folders, home);
+	const repos = reposFrom(scanned, [...owners, ...toArray(current)], settings.folders, home);
 	return {
 		scanned,
 		repos: withoutHidden(repos, settings.hidden)
 	};
+}, asReason);
+/**
+* The Current repo: the repo `folder` (the focused folder; empty for none) is in, if any,
+* or the one-line reason the lookup failed.
+*/
+const lookUpCurrent = fn("lookUpCurrent")(function* (folder) {
+	return yield* repoAt(folder);
 }, asReason);
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
 const readList = fn("readList")(function* (root) {
@@ -10475,6 +10553,77 @@ const onRender = (reads, now) => {
 		step: "None"
 	};
 };
+/**
+* The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
+* hidden one, say), grouped by the group folders.
+*/
+const currentRepoOf = (found, repos, folders, home) => match$5(found, {
+	onNone: () => ({ _tag: "Looking" }),
+	onSome: match$4({
+		onFailure: (reason) => ({
+			_tag: "Failed",
+			reason
+		}),
+		onSuccess: match$5({
+			onNone: () => ({ _tag: "NotInRepo" }),
+			onSome: (repo) => ({
+				_tag: "InRepo",
+				repo: repos.find((listed) => listed.root === repo.root) ?? {
+					...repo,
+					group: groupOf(repo.root, folders, home)
+				}
+			})
+		})
+	})
+});
+const NOT_FOLLOWING = {
+	folder: none(),
+	found: none()
+};
+/**
+* What a render looks up: while the Current view shows (`following`), the focused
+* folder, when it isn't the one last looked up. Herdr renders on every focus change,
+* so this never polls.
+*/
+const followFocus = (follow, { following, folder }) => !following ? {
+	follow: {
+		...follow,
+		folder: none()
+	},
+	lookUp: none()
+} : contains(follow.folder, folder) ? {
+	follow,
+	lookUp: none()
+} : {
+	follow: {
+		...follow,
+		folder: some(folder)
+	},
+	lookUp: some(folder)
+};
+/**
+* A lookup's answer for `folder`: kept, unless the focus moved on since (an answer for
+* an older focus is dropped). `refresh` when it names another repo than before, or is
+* the first answer, so the lists read the new Current repo.
+*/
+const takeLookup = (follow, folder, answer) => contains(follow.folder, folder) ? {
+	follow: {
+		...follow,
+		found: some(answer)
+	},
+	refresh: match$5(follow.found, {
+		onNone: () => true,
+		onSome: (before) => rootOf(before) !== rootOf(answer)
+	})
+} : {
+	follow,
+	refresh: false
+};
+/** The repo root an answer names; undefined for none or a failed lookup. */
+const rootOf = (answer) => match$4(answer, {
+	onFailure: () => void 0,
+	onSuccess: (found) => getOrUndefined$1(found)?.root
+});
 
 // src/spaces.ts
 /**
@@ -10523,6 +10672,11 @@ const spacesInGone = (spaces, panes, gone) => {
 	const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
 	return spaces.filter((space) => space.machine === null).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
 };
+/**
+* The folder the person is working in: the focused terminal's, else (a mod pane or the
+* panel itself has focus) where the focused space is, so focusing the panel keeps it.
+*/
+const focusedFolder = (focus, places) => orElse(fromNullishOr(focus?.cwd || null), () => fromNullishOr(places.find((p) => p.space.id === focus?.space)?.place));
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -10531,7 +10685,8 @@ const SHOWS = [
 	["merged", "Clean up"],
 	["active", "Active"],
 	["conflict", "Conflicts"],
-	["open", "Open"]
+	["open", "Open"],
+	["current", "Current"]
 ];
 const DEFAULT_VIEW_STATE = {
 	group: none(),
@@ -10667,7 +10822,7 @@ const nameMatches = (query, repo) => match$5(query, {
 	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q)
 });
 const noMatch = (query) => `Nothing matches "${query}".`;
-const repoView = (repo, snapshot, places) => {
+const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => {
 	const list = listOf(snapshot, repo);
 	const all = match$5(list, {
 		onNone: () => [],
@@ -10676,7 +10831,7 @@ const repoView = (repo, snapshot, places) => {
 	const query = queryOf(snapshot);
 	const worktrees = all.filter((w) => matches(query, repo, w));
 	const searching = isSome(query);
-	const folded = !searching && snapshot.folded[repo.root] === true;
+	const folded = foldable && !searching && snapshot.folded[repo.root] === true;
 	const on = spacesOnWorktrees(places, all.map((w) => w.path));
 	const toRow = (worktree) => rowView(snapshot, repo, worktree, fromNullishOr(on.get(worktree.path)));
 	const inSection = (kind) => worktrees.filter((w) => contains(kindOf(w), kind)).sort(newestFirst);
@@ -10688,6 +10843,7 @@ const repoView = (repo, snapshot, places) => {
 		status: statusOf(list),
 		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
 		folded,
+		foldable,
 		main: folded ? [] : worktrees.filter((w) => isNone(kindOf(w))).map(toRow),
 		sections: folded ? [] : SECTIONS.flatMap(([kind, label]) => {
 			const rows = inSection(kind);
@@ -10730,6 +10886,14 @@ const reposInGroup = (scope) => match$5(selectedGroup(scope), {
 	onNone: () => scope.repos,
 	onSome: (group) => scope.repos.filter((repo) => repo.group === group)
 });
+/**
+* The repos worth reading: the selected chip's; in the Current view the Current repo
+* alone, or every repo (for the Open list) when the focused folder is in none.
+*/
+const reposToRead = (scope) => {
+	if (scope.view.show !== "current") return reposInGroup(scope);
+	return scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos;
+};
 const chipsOf = (snapshot) => {
 	const selected = selectedGroup(snapshot);
 	const groups = snapshot.discovered ? orderGroups(snapshot.repos.map((repo) => repo.group), snapshot.settings) : Array.from(new Set(snapshot.settings.folders.map((folder) => folder.name)));
@@ -10765,8 +10929,7 @@ const treeBody = (snapshot, places) => {
 		repos: repos.map((repo) => repoView(repo, snapshot, places))
 	};
 };
-const flatBody = (snapshot, places, show) => {
-	const repos = reposInGroup(snapshot);
+const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 	const query = queryOf(snapshot);
 	const found = repos.flatMap((repo) => {
 		const worktrees = match$5(listOf(snapshot, repo), {
@@ -10804,8 +10967,44 @@ const flatBody = (snapshot, places, show) => {
 		})
 	};
 };
+/**
+* The Current repo as one expanded repo of the tree, whatever the group chip. Outside
+* every repo: a line saying so, over the Open view's list across all repos.
+*/
+const currentBody = (snapshot, places) => {
+	const { current } = snapshot;
+	switch (current._tag) {
+		case "NotInRepo": return {
+			_tag: "NotInRepo",
+			text: "Not in a repo",
+			open: flatBody(snapshot, places, "open", snapshot.repos)
+		};
+		case "InRepo": {
+			const query = queryOf(snapshot);
+			const view = repoView(current.repo, snapshot, places, { foldable: false });
+			const empty = view.main.length === 0 && view.sections.length === 0;
+			if (isSome(query) && empty && view.status._tag !== "Reading") return {
+				_tag: "Message",
+				text: noMatch(query.value)
+			};
+			return {
+				_tag: "Tree",
+				repos: [view]
+			};
+		}
+		case "Looking": return {
+			_tag: "Message",
+			text: "Finding the current repo…"
+		};
+		case "Failed": return {
+			_tag: "Message",
+			text: `Couldn't find the current repo: ${current.reason}`
+		};
+	}
+};
 const bodyOf = (snapshot, places) => {
 	const { show } = snapshot.view;
+	if (show === "current") return currentBody(snapshot, places);
 	if (snapshot.repos.length === 0) return {
 		_tag: "Message",
 		text: emptyText(snapshot)
@@ -11215,6 +11414,8 @@ var Worktrunk = class extends View {
 	job = none();
 	/** An overlay's keyboard. */
 	handle = none();
+	/** The Current view following focus: the folder last looked up, and its repo. */
+	follow = NOT_FOLLOWING;
 	init(_props, cx) {
 		const role = roleOf(ownProps());
 		if (isNone(role)) {
@@ -11412,14 +11613,43 @@ var Worktrunk = class extends View {
 			this.jobEnded(cx, title, made.outcome);
 		});
 	}
-	/** The repos the selected group chip shows: the only ones worth reading. */
+	/** The repos the view shows: the only ones worth reading. */
 	reposToRead() {
-		return reposInGroup({
+		return reposToRead({
 			repos: this.repos,
 			discovered: this.discovered,
 			settings: this.settings,
-			view: viewState()
+			view: viewState(),
+			current: this.currentRepo()
 		}).map((repo) => repo.root);
+	}
+	/** The Current repo, with its group; Looking while it is first being looked up. */
+	currentRepo() {
+		return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+	}
+	/**
+	* While the Current view shows, looks up the focused folder's repo whenever the folder
+	* changes. Herdr renders on every focus change, so this never polls.
+	*/
+	followFocus(cx, following) {
+		const places = localPlaces(spaces(), panes());
+		const folder = getOrElse(focusedFolder(focused(), places), () => "");
+		const step = followFocus(this.follow, {
+			following,
+			folder
+		});
+		this.follow = step.follow;
+		map$3(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
+	}
+	/** Looks up the repo of `folder`; a new Current repo is read at once. */
+	lookUpCurrent(cx, folder) {
+		cx.spawn(async (cx) => {
+			const answer = await runEdge(lookUpCurrent(folder), fail$2);
+			const taken = takeLookup(this.follow, folder, answer);
+			this.follow = taken.follow;
+			cx.notify();
+			if (taken.refresh) this.refresh(cx, { scan: false });
+		});
 	}
 	/** CI for the repos shown, from `wt list --full`. A failed read keeps the CI from before. */
 	checkCi(cx) {
@@ -11479,7 +11709,7 @@ var Worktrunk = class extends View {
 			every: SCAN_EVERY
 		});
 		const places = localPlaces(spaces(), panes()).map((p) => p.place);
-		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned), fail$2);
+		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess))), fail$2);
 		if (isSuccess(found)) {
 			this.repos = found.success.repos;
 			this.scanned = some(found.success.scanned);
@@ -11526,6 +11756,7 @@ var Worktrunk = class extends View {
 		this.reads = rendered.reads;
 		if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
 		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
+		this.followFocus(cx, shown() && state.show === "current");
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,
@@ -11541,6 +11772,7 @@ var Worktrunk = class extends View {
 			ci: this.ci,
 			view: state,
 			search: this.search,
+			current: this.currentRepo(),
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
@@ -11647,6 +11879,7 @@ var Worktrunk = class extends View {
 		const { t, sizes } = style;
 		switch (body._tag) {
 			case "Message": return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
+			case "NotInRepo": return v_flex().child(div().px(14).pt(12).text_size(sizes.small).font_semibold().text_color(t.muted).child(body.text)).child(this.renderBody(style, body.open));
 			case "Tree": return v_flex().pb(16).children(body.repos.map((repo) => this.renderRepo(style, repo)));
 			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${action.paths.length}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
 		}
@@ -11658,7 +11891,7 @@ var Worktrunk = class extends View {
 		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("worktrunk"));
 	}
 	renderRepo({ t, sizes }, repo) {
-		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key)).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
+		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
 			root: repo.key,
 			worktrees: this.worktreesOf(repo.key)
 		}])).map((action) => div().id(`cleanup-${repo.key}`).flex_none().px(6).rounded(4).text_size(sizes.label).text_color(t.done).hover((s) => s.bg(t.raised)).on_click((_event, cx) => {

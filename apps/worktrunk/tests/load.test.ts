@@ -5,6 +5,7 @@ import {
   findRepos,
   hideInSettings,
   loadSettings,
+  lookUpCurrent,
   newWorktree,
   readCi,
   readEach,
@@ -251,6 +252,38 @@ describe("findRepos", () => {
     }),
   );
 
+  it.effect("lists the Current repo, though no open space is in it", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ scan: "/w\t/w/zed\t1\n", owners: "" });
+      const current = Option.some({ root: "/tmp/tool", count: 2 });
+      const found = yield* findRepos(settings, "/h", [], Option.none(), current).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Result.map(found, (f) => f.repos),
+        Result.succeed([
+          { root: "/tmp/tool", count: 2, group: "Other" },
+          { root: "/w/zed", count: 1, group: "Work" },
+        ]),
+      );
+    }),
+  );
+
+  it.effect("a hidden Current repo is left out of the list too", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ scan: "", owners: "" });
+      const hiding = { ...settings, hidden: ["/tmp/tool"] };
+      const current = Option.some({ root: "/tmp/tool", count: 2 });
+      const found = yield* findRepos(hiding, "/h", [], Option.none(), current).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Result.map(found, (f) => f.repos),
+        Result.succeed([]),
+      );
+    }),
+  );
+
   it.effect("a search that fails is its one-line reason", () =>
     Effect.gen(function* () {
       const { api } = scripts({ owners: "" });
@@ -258,6 +291,24 @@ describe("findRepos", () => {
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(found, Result.fail("no scan"));
+    }),
+  );
+});
+
+describe("lookUpCurrent", () => {
+  it.effect("the repo the focused folder is in", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ owners: "/r/api\t2\n" });
+      const found = yield* lookUpCurrent("/r/api.feat").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(found, Result.succeed(Option.some({ root: "/r/api", count: 2 })));
+    }),
+  );
+
+  it.effect("a lookup that fails is its one-line reason", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({});
+      const found = yield* lookUpCurrent("/r/api").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(found, Result.fail("no owners"));
     }),
   );
 });

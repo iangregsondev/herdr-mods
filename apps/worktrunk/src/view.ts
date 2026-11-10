@@ -1,7 +1,7 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import type { CiRead, RepoList } from "./reads.ts";
+import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
 import {
@@ -14,8 +14,11 @@ import {
 } from "./spaces.ts";
 import type { Ci, CiStatus, Worktree } from "./worktrees.ts";
 
-/** The panel's views: the Repos tree, or one flat list of worktrees by what to do next. */
-export type Show = "repos" | "merged" | "active" | "conflict" | "open";
+/**
+ * The panel's views: the Repos tree, one flat list of worktrees by what to do next, or
+ * the Current repo alone.
+ */
+export type Show = "repos" | "merged" | "active" | "conflict" | "open" | "current";
 
 /** Every view, in the picker's order, with its label. */
 export const SHOWS: readonly (readonly [Show, string])[] = [
@@ -24,6 +27,7 @@ export const SHOWS: readonly (readonly [Show, string])[] = [
   ["active", "Active"],
   ["conflict", "Conflicts"],
   ["open", "Open"],
+  ["current", "Current"],
 ];
 
 /** How the list is sliced; remembered across restarts. */
@@ -60,6 +64,8 @@ export interface Snapshot {
   readonly view: ViewState;
   /** The search box's text. */
   readonly search: string;
+  /** The focused folder's repo, for the Current view. */
+  readonly current: CurrentRepo;
   /** ms since the epoch, for commit ages. */
   readonly now: number;
 }
@@ -129,6 +135,8 @@ export interface RepoView {
   /** The latest CI read failed, so the CI shown is older. */
   readonly ciNote: Option.Option<string>;
   readonly folded: boolean;
+  /** Its header folds it; the Current view's one repo always stays open. */
+  readonly foldable: boolean;
   /** Empty while folded. */
   readonly main: readonly RowView[];
   readonly sections: readonly SectionView[];
@@ -136,6 +144,8 @@ export interface RepoView {
 
 export type Body =
   | { readonly _tag: "Message"; readonly text: string }
+  /** The Current view outside every repo: `text`, then the Open view's list. */
+  | { readonly _tag: "NotInRepo"; readonly text: string; readonly open: Body }
   | { readonly _tag: "Tree"; readonly repos: readonly RepoView[] }
   /** One list across repos, newest first; `summary` heads the Clean up view. */
   | {
@@ -349,14 +359,19 @@ const nameMatches = (query: Option.Option<string>, repo: Repo): boolean =>
 
 const noMatch = (query: string): string => `Nothing matches "${query}".`;
 
-const repoView = (repo: Repo, snapshot: Snapshot, places: readonly Place[]): RepoView => {
+const repoView = (
+  repo: Repo,
+  snapshot: Snapshot,
+  places: readonly Place[],
+  { foldable }: { readonly foldable: boolean } = { foldable: true },
+): RepoView => {
   const list = listOf(snapshot, repo);
   const all = Option.match(list, { onNone: () => [], onSome: (l) => l.worktrees });
   const query = queryOf(snapshot);
   const worktrees = all.filter((w) => matches(query, repo, w));
   // A search shows every match, so it opens whatever is folded.
   const searching = Option.isSome(query);
-  const folded = !searching && snapshot.folded[repo.root] === true;
+  const folded = foldable && !searching && snapshot.folded[repo.root] === true;
   // Every worktree, matching or not, so a space never moves to a shorter path.
   const on = spacesOnWorktrees(
     places,
@@ -377,6 +392,7 @@ const repoView = (repo: Repo, snapshot: Snapshot, places: readonly Place[]): Rep
       (error) => `CI status not updated: ${error}`,
     ),
     folded,
+    foldable,
     main: folded ? [] : worktrees.filter((w) => Option.isNone(kindOf(w))).map(toRow),
     sections: folded
       ? []
@@ -441,6 +457,15 @@ export const reposInGroup = (scope: Scope): readonly Repo[] =>
     onSome: (group) => scope.repos.filter((repo) => repo.group === group),
   });
 
+/**
+ * The repos worth reading: the selected chip's; in the Current view the Current repo
+ * alone, or every repo (for the Open list) when the focused folder is in none.
+ */
+export const reposToRead = (scope: Scope & Pick<Snapshot, "current">): readonly Repo[] => {
+  if (scope.view.show !== "current") return reposInGroup(scope);
+  return scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos;
+};
+
 const chipsOf = (snapshot: Snapshot): readonly Chip[] => {
   const selected = selectedGroup(snapshot);
   const groups = snapshot.discovered
@@ -462,7 +487,7 @@ const chipsOf = (snapshot: Snapshot): readonly Chip[] => {
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** The views that list worktrees flat, across repos. */
-type FlatShow = Exclude<Show, "repos">;
+type FlatShow = Exclude<Show, "repos" | "current">;
 
 const FLAT_EMPTY: Readonly<Record<FlatShow, string>> = {
   merged: "Nothing to clean up.",
@@ -495,8 +520,12 @@ const treeBody = (snapshot: Snapshot, places: readonly Place[]): Body => {
   return { _tag: "Tree", repos: repos.map((repo) => repoView(repo, snapshot, places)) };
 };
 
-const flatBody = (snapshot: Snapshot, places: readonly Place[], show: FlatShow): Body => {
-  const repos = reposInGroup(snapshot);
+const flatBody = (
+  snapshot: Snapshot,
+  places: readonly Place[],
+  show: FlatShow,
+  repos: readonly Repo[] = reposInGroup(snapshot),
+): Body => {
   const query = queryOf(snapshot);
   const found = repos.flatMap((repo) => {
     const worktrees = Option.match(listOf(snapshot, repo), {
@@ -533,8 +562,39 @@ const flatBody = (snapshot: Snapshot, places: readonly Place[], show: FlatShow):
   };
 };
 
+/**
+ * The Current repo as one expanded repo of the tree, whatever the group chip. Outside
+ * every repo: a line saying so, over the Open view's list across all repos.
+ */
+const currentBody = (snapshot: Snapshot, places: readonly Place[]): Body => {
+  const { current } = snapshot;
+  switch (current._tag) {
+    case "NotInRepo":
+      return {
+        _tag: "NotInRepo",
+        text: "Not in a repo",
+        open: flatBody(snapshot, places, "open", snapshot.repos),
+      };
+    case "InRepo": {
+      const query = queryOf(snapshot);
+      const view = repoView(current.repo, snapshot, places, { foldable: false });
+      const empty = view.main.length === 0 && view.sections.length === 0;
+      // An unread repo has no rows to search yet, so it stays to show it is Reading.
+      if (Option.isSome(query) && empty && view.status._tag !== "Reading") {
+        return { _tag: "Message", text: noMatch(query.value) };
+      }
+      return { _tag: "Tree", repos: [view] };
+    }
+    case "Looking":
+      return { _tag: "Message", text: "Finding the current repo…" };
+    case "Failed":
+      return { _tag: "Message", text: `Couldn't find the current repo: ${current.reason}` };
+  }
+};
+
 const bodyOf = (snapshot: Snapshot, places: readonly Place[]): Body => {
   const { show } = snapshot.view;
+  if (show === "current") return currentBody(snapshot, places);
   if (snapshot.repos.length === 0) return { _tag: "Message", text: emptyText(snapshot) };
   return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
 };

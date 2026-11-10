@@ -17,6 +17,7 @@ import {
   appHome,
   closeOverlay,
   exec,
+  focused,
   hc,
   home,
   layout,
@@ -42,6 +43,7 @@ import {
   findRepos,
   hideInSettings,
   loadSettings,
+  lookUpCurrent,
   newWorktree,
   readCi,
   readEach,
@@ -70,14 +72,20 @@ import {
 import {
   askRefresh,
   ciDue,
+  currentRepoOf,
   foldCi,
   foldList,
+  followFocus,
   IDLE,
   NO_READS,
+  NOT_FOLLOWING,
   onRender,
   refreshDone,
   scanDue,
+  takeLookup,
   type CiRead,
+  type CurrentRepo,
+  type Follow,
   type LastScan,
   type Loader,
   type RefreshAsk,
@@ -86,10 +94,10 @@ import {
 import type { FoundRepo, Repo } from "./repos.ts";
 import { DEFAULT_SETTINGS, lastSegment, type Settings } from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
-import { localPlaces, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
+import { focusedFolder, localPlaces, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
 import {
   buildView,
-  reposInGroup,
+  reposToRead,
   type CiBadge,
   type Click,
   type PanelView,
@@ -400,6 +408,8 @@ export default class Worktrunk extends View {
   job: Option.Option<string> = Option.none();
   /** An overlay's keyboard. */
   handle: Option.Option<FocusHandle> = Option.none();
+  /** The Current view following focus: the folder last looked up, and its repo. */
+  follow: Follow = NOT_FOLLOWING;
 
   init(_props: unknown, cx: AsyncContext) {
     // From props(), not init's argument: an overlay's props reach only props().
@@ -589,14 +599,43 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** The repos the selected group chip shows: the only ones worth reading. */
+  /** The repos the view shows: the only ones worth reading. */
   reposToRead(): readonly string[] {
-    return reposInGroup({
+    return reposToRead({
       repos: this.repos,
       discovered: this.discovered,
       settings: this.settings,
       view: viewState(),
+      current: this.currentRepo(),
     }).map((repo) => repo.root);
+  }
+
+  /** The Current repo, with its group; Looking while it is first being looked up. */
+  currentRepo(): CurrentRepo {
+    return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+  }
+
+  /**
+   * While the Current view shows, looks up the focused folder's repo whenever the folder
+   * changes. Herdr renders on every focus change, so this never polls.
+   */
+  followFocus(cx: Context, following: boolean) {
+    const places = localPlaces(spaces(), panes());
+    const folder = Option.getOrElse(focusedFolder(focused(), places), () => "");
+    const step = followFocus(this.follow, { following, folder });
+    this.follow = step.follow;
+    Option.map(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
+  }
+
+  /** Looks up the repo of `folder`; a new Current repo is read at once. */
+  lookUpCurrent(cx: AsyncContext, folder: string) {
+    cx.spawn(async (cx) => {
+      const answer = await runEdge(lookUpCurrent(folder), Result.fail);
+      const taken = takeLookup(this.follow, folder, answer);
+      this.follow = taken.follow;
+      cx.notify();
+      if (taken.refresh) this.refresh(cx, { scan: false });
+    });
   }
 
   /** CI for the repos shown, from `wt list --full`. A failed read keeps the CI from before. */
@@ -656,7 +695,14 @@ export default class Worktrunk extends View {
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
     const places = localPlaces(spaces(), panes()).map((p) => p.place);
     const found = await runEdge(
-      findRepos(this.settings, home(), places, due ? Option.none() : this.scanned),
+      findRepos(
+        this.settings,
+        home(),
+        places,
+        due ? Option.none() : this.scanned,
+        // The Current repo is listed even when no open space is in it.
+        Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess)),
+      ),
       Result.fail,
     );
     if (Result.isSuccess(found)) {
@@ -709,6 +755,7 @@ export default class Worktrunk extends View {
     if (rendered.step === "NewGroup") {
       later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
     }
+    this.followFocus(cx, shown() && state.show === "current");
 
     const view = buildView({
       repos: this.repos,
@@ -725,6 +772,7 @@ export default class Worktrunk extends View {
       ci: this.ci,
       view: state,
       search: this.search,
+      current: this.currentRepo(),
       now: Date.now(),
     });
 
@@ -1166,6 +1214,18 @@ export default class Worktrunk extends View {
     switch (body._tag) {
       case "Message":
         return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
+      case "NotInRepo":
+        return v_flex()
+          .child(
+            div()
+              .px(14)
+              .pt(12)
+              .text_size(sizes.small)
+              .font_semibold()
+              .text_color(t.muted)
+              .child(body.text),
+          )
+          .child(this.renderBody(style, body.open));
       case "Tree":
         return v_flex()
           .pb(16)
@@ -1252,9 +1312,12 @@ export default class Worktrunk extends View {
       .mt(6)
       .gap(8)
       .items_center()
-      .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
-      .on_click(() => toggleFold(repo.key))
+      .when(repo.foldable, (el) =>
+        el
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => toggleFold(repo.key)),
+      )
       .on_mouse_down("right", () => this.openRepoMenu(repo.key))
       .child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted))
       .child(div().min_w(0).truncate().font_semibold().child(repo.name))

@@ -19,6 +19,7 @@ import {
   loginShell,
   makeTempDir,
   removeDir,
+  repoAt,
   reposOf,
   reveal,
   runScript,
@@ -285,6 +286,44 @@ describe("reposOf", () => {
       const repos = yield* reposOf([]).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual([repos, calls], [[], []]);
     }),
+  );
+});
+
+describe("repoAt", () => {
+  it.effect("the repo the folder is in, from the owners script", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/r/api\t3\n", stderr: "" });
+      const found = yield* repoAt("/r/api.feat/src").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(found, Option.some({ root: "/r/api", count: 3 }));
+      assert.deepStrictEqual(calls, [
+        ["sh", shArgs(OWNERS_SCRIPT, ["/r/api.feat/src"]), { timeout: 60_000 }],
+      ]);
+    }),
+  );
+
+  it.effect("no folder (nothing focused): none, and nothing is run", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/r/api\t3\n", stderr: "" });
+      const found = yield* repoAt("").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([found, calls], [Option.none(), []]);
+    }),
+  );
+
+  it.effect("a folder in no repo: none", () =>
+    Effect.gen(function* () {
+      const found = yield* repoAt("/tmp/x");
+      assert.deepStrictEqual(found, Option.none());
+    }).pipe(Effect.provide(Shell.layer(answering({ code: 0, stdout: "", stderr: "" })))),
+  );
+
+  it.effect("a lookup that fails is CommandFailed, naming it", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(repoAt("/r/api"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "the Current repo's lookup", 2, "sh: boom"]),
+      );
+    }).pipe(Effect.provide(Shell.layer(answering({ code: 2, stdout: "", stderr: "sh: boom" })))),
   );
 });
 

@@ -3,14 +3,19 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   askRefresh,
   ciDue,
+  currentRepoOf,
   foldCi,
   foldList,
+  followFocus,
   IDLE,
   NO_READS,
+  NOT_FOLLOWING,
   onRender,
   refreshDone,
   scanDue,
+  takeLookup,
 } from "../src/reads.ts";
+import type { Repo } from "../src/repos.ts";
 import type { Worktree } from "../src/worktrees.ts";
 
 const wt = (path: string): Worktree => ({
@@ -202,5 +207,115 @@ describe("onRender", () => {
       reads: started,
       step: "None",
     });
+  });
+});
+
+describe("currentRepoOf", () => {
+  const LISTED: Repo = { root: "/w/api", count: 3, group: "Work" };
+  const folders = [{ name: "Work", path: "~/w" }];
+  const answer = (found: Option.Option<{ root: string; count: number }>) =>
+    Option.some(Result.succeed(found));
+
+  test("NotInRepo when the focused folder is in none", () => {
+    expect(currentRepoOf(answer(Option.none()), [LISTED], folders, "/home")).toEqual({
+      _tag: "NotInRepo",
+    });
+  });
+
+  test("Looking until the first answer", () => {
+    expect(currentRepoOf(Option.none(), [LISTED], folders, "/home")).toEqual({ _tag: "Looking" });
+  });
+
+  test("InRepo with the listed repo, group included", () => {
+    const found = answer(Option.some({ root: "/w/api", count: 1 }));
+    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+      _tag: "InRepo",
+      repo: LISTED,
+    });
+  });
+
+  test("InRepo with a repo the panel doesn't list, grouped by the group folders", () => {
+    const found = answer(Option.some({ root: "/home/w/tool", count: 2 }));
+    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+      _tag: "InRepo",
+      repo: { root: "/home/w/tool", count: 2, group: "Work" },
+    });
+  });
+
+  test("Failed when the lookup failed, with its reason", () => {
+    expect(
+      currentRepoOf(Option.some(Result.fail("git: boom")), [LISTED], folders, "/home"),
+    ).toEqual({
+      _tag: "Failed",
+      reason: "git: boom",
+    });
+  });
+});
+
+describe("followFocus", () => {
+  test("showing the Current view, a focused folder not looked up yet is looked up", () => {
+    expect(followFocus(NOT_FOLLOWING, { following: true, folder: "/w/api/src" })).toEqual({
+      follow: { folder: Option.some("/w/api/src"), found: Option.none() },
+      lookUp: Option.some("/w/api/src"),
+    });
+  });
+
+  test("the folder last looked up looks nothing up again", () => {
+    const follow = { folder: Option.some("/w/api"), found: Option.none() };
+    expect(followFocus(follow, { following: true, folder: "/w/api" })).toEqual({
+      follow,
+      lookUp: Option.none(),
+    });
+  });
+
+  test("with the view not shown, nothing is looked up, and showing it looks up again", () => {
+    const follow = { folder: Option.some("/w/api"), found: Option.none() };
+    const hidden = followFocus(follow, { following: false, folder: "/w/api" });
+    expect(hidden).toEqual({ follow: { ...follow, folder: Option.none() }, lookUp: Option.none() });
+    expect(followFocus(hidden.follow, { following: true, folder: "/w/api" }).lookUp).toEqual(
+      Option.some("/w/api"),
+    );
+  });
+});
+
+describe("takeLookup", () => {
+  const API = { root: "/w/api", count: 2 };
+  const following = (
+    folder: string,
+    found: Option.Option<Result.Result<Option.Option<typeof API>, string>> = Option.none(),
+  ) => ({
+    folder: Option.some(folder),
+    found,
+  });
+
+  test("the first answer for the focused folder is kept, and refreshes", () => {
+    const answer = Result.succeed(Option.some(API));
+    expect(takeLookup(following("/w/api/src"), "/w/api/src", answer)).toEqual({
+      follow: following("/w/api/src", Option.some(answer)),
+      refresh: true,
+    });
+  });
+
+  test("an answer for an older focus is dropped", () => {
+    const follow = following("/p/web");
+    expect(takeLookup(follow, "/w/api", Result.succeed(Option.some(API)))).toEqual({
+      follow,
+      refresh: false,
+    });
+  });
+
+  test("an answer naming the same repo as before is kept, and refreshes nothing", () => {
+    const before = Option.some(Result.succeed(Option.some(API)));
+    const answer = Result.succeed(Option.some({ ...API, count: 3 }));
+    expect(takeLookup(following("/w/api.feat", before), "/w/api.feat", answer)).toEqual({
+      follow: following("/w/api.feat", Option.some(answer)),
+      refresh: false,
+    });
+  });
+
+  test("an answer naming another repo than before refreshes", () => {
+    const before = Option.some(Result.succeed(Option.some(API)));
+    const answer = Result.succeed(Option.none());
+    expect(takeLookup(following("/tmp", before), "/tmp", answer).refresh).toBe(true);
   });
 });

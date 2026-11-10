@@ -1,6 +1,7 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  focusedFolder,
   localPlaces,
   spacesInGone,
   spacesOnWorktrees,
@@ -112,5 +113,27 @@ describe("spacesInGone", () => {
 
   test("nothing gone, nothing to close", () => {
     expect(spacesInGone([space("s1", "/r/app", ["t1"])], [], [])).toEqual([]);
+  });
+});
+
+describe("focusedFolder", () => {
+  const places = [
+    { space: { id: "s1", active: true }, place: "/w/api.feature" },
+    { space: { id: "s2", active: false }, place: "/p/web" },
+  ];
+
+  test("the focused terminal's live folder", () => {
+    expect(focusedFolder({ space: "s1", cwd: "/w/api/src" }, places)).toEqual(
+      Option.some("/w/api/src"),
+    );
+  });
+
+  test("with no terminal focused (a mod pane or the panel), where the focused space is", () => {
+    expect(focusedFolder({ space: "s2", cwd: null }, places)).toEqual(Option.some("/p/web"));
+  });
+
+  test("nothing focused, or a focused space with no place: none", () => {
+    expect(focusedFolder(null, places)).toEqual(Option.none());
+    expect(focusedFolder({ space: "remote/s9", cwd: null }, places)).toEqual(Option.none());
   });
 });
