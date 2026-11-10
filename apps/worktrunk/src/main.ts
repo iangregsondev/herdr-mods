@@ -8,6 +8,7 @@ import {
   exec,
   home,
   layout,
+  notify,
   panes,
   readTextFile,
   run,
@@ -16,13 +17,14 @@ import {
   shared,
   spaces,
   theme,
+  updates,
   writeTextFile,
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { scanArgs } from "./commands.ts";
 import { Files } from "./files.ts";
-import { findModBlock } from "./layout.ts";
-import { findRepos, loadSettings, readList, type LoadedSettings } from "./load.ts";
+import { findModBlock, roleOf, TOGGLE_ROLE } from "./layout.ts";
+import { findRepos, loadSettings, readList, syncToast, type LoadedSettings } from "./load.ts";
 import {
   askRefresh,
   foldList,
@@ -60,6 +62,10 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `${__MOD_ID__}.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `${__MOD_ID__}.folded.v1`;
+/** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
+const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
+/** The installed Herdr version the "run herdr:sync" toast was last shown for. */
+const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 
 const LIST_EVERY = 20_000;
 const SCAN_EVERY = 10 * 60_000;
@@ -125,6 +131,32 @@ const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
     fn(cx);
   });
 
+/** Shows one toast when Herdr has moved past the version the sync record names. */
+const checkSync = async () => {
+  const installed = updates().app.version;
+  // A defect here is a bug in the check, not something to tell you about: no toast.
+  const toast = await runEdge(
+    syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)),
+    () => Option.none(),
+  );
+  Option.map(toast, (notice) => {
+    setShared(SYNC_TOLD_KEY, installed);
+    notify({ ...notice, level: "warning" });
+  });
+};
+
+/**
+ * Which copy of the mod this is, from its layout block's props: the side panel, the
+ * tab-bar toggle, or props naming a role this mod doesn't have (it draws nothing).
+ */
+type Copy = "Panel" | "Toggle" | "Unknown";
+
+const copyOf = (props: unknown): Copy =>
+  Option.match(roleOf(props), {
+    onNone: () => "Unknown",
+    onSome: (role) => (role === TOGGLE_ROLE ? "Toggle" : "Panel"),
+  });
+
 /** The panel's block is shown; a copy with no block of its own (an overlay) counts as shown. */
 const shown = (): boolean =>
   Option.match(findModBlock(layout(), __MOD_ID__), {
@@ -133,6 +165,7 @@ const shown = (): boolean =>
   });
 
 export default class Worktrunk extends View {
+  copy: Copy = "Panel";
   settings: Settings = DEFAULT_SETTINGS;
   settingsError: Option.Option<string> = Option.none();
   /** The last folder scan's repos, and what and when it scanned. */
@@ -145,7 +178,10 @@ export default class Worktrunk extends View {
   loader: Loader = IDLE;
   reads = NO_READS;
 
-  init(_props: unknown, cx: AsyncContext) {
+  init(props: unknown, cx: AsyncContext) {
+    this.copy = copyOf(props);
+    if (this.copy !== "Panel") return;
+    cx.spawn(checkSync);
     cx.timer.every(LIST_EVERY, (cx) => {
       if (shown()) this.refresh(cx, { scan: false });
     });
@@ -220,6 +256,8 @@ export default class Worktrunk extends View {
   render(cx: Context) {
     // theme() is typed as plain strings, but the style methods want hex colours.
     const style: Style = { t: theme() as Colors, sizes: fontSizes() };
+    if (this.copy === "Toggle") return this.renderToggle(style);
+    if (this.copy === "Unknown") return div();
     const { t, sizes } = style;
     const block = findModBlock(layout(), __MOD_ID__);
     const rendered = onRender(this.reads, { shown: shown() });
@@ -304,6 +342,40 @@ export default class Worktrunk extends View {
         ),
       )
       .child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(body));
+  }
+
+  /** The tab-bar button: shows and hides the panel's block. */
+  renderToggle({ t, sizes }: Style): Element {
+    const block = findModBlock(layout(), __MOD_ID__);
+    const on = Option.exists(block, (b) => !b.hidden);
+    return h_flex()
+      .size_full()
+      .pr(10)
+      .items_center()
+      .justify_end()
+      .bg(t.chrome)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .id("toggle")
+          .h(26)
+          .px(8)
+          .gap(5)
+          .flex_none()
+          .items_center()
+          .rounded(6)
+          .text_size(sizes.label)
+          .bg(on ? t.selected : t.chrome)
+          .text_color(on ? t.foreground : t.muted)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          // The block drags the window; a press on the button must not.
+          .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
+          .on_click(() => Option.map(block, (b) => run("layout.toggle", { id: b.id })))
+          .child(icon("git", 14, on ? t.foreground : t.muted))
+          .child("worktrunk"),
+      );
   }
 
   renderRepo({ t, sizes }: Style, repo: RepoView): Element {

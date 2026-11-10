@@ -13,7 +13,8 @@ import { HerdrHost, type HostUnreachable, type TransportError } from "./herdr-ho
 export interface LayoutNode {
   id?: string;
   type?: string;
-  content?: { mod?: string };
+  /** `{ mod, props? }`, `{ tab, pane? }`, `{ terminal }` or `{ agent }`. */
+  content?: { mod?: string; [key: string]: unknown };
   size?: { px?: number; weight?: number };
   children?: LayoutNode[];
   [key: string]: unknown;
@@ -105,7 +106,7 @@ function shippedFrom(text: string): Set<string> {
  * Layouts that ship with Herdr: their structure can't be edited, only cloned.
  * None when installed.json is missing or isn't a JSON object.
  */
-const shippedLayouts: Effect.Effect<
+const shippedOnHost: Effect.Effect<
   Set<string>,
   TransportError | HostUnreachable,
   HerdrHost
@@ -116,6 +117,16 @@ const shippedLayouts: Effect.Effect<
     Effect.catchTag("FileMissing", () => Effect.succeed(new Set<string>())),
   );
 });
+
+/** `shippedOnHost` against the Herdr app on this machine, at `home`; none when it can't be read. */
+export function shippedLayouts(home: string): Set<string> {
+  return Effect.runSync(
+    shippedOnHost.pipe(
+      Effect.orElseSucceed(() => new Set<string>()),
+      Effect.provide(HerdrHost.local(home)),
+    ),
+  );
+}
 
 /**
  * The shown layout's name from `herdr-app status` JSON. Null unless the text is
@@ -205,26 +216,32 @@ const cleanLayout = (
 
 /**
  * What removing `mod`'s slots from the person's own layouts (not the shipped ones)
- * will write: each layout that has a slot, without it. `skipped` names the layouts
- * whose file couldn't be read or parsed; they are left as they are. Only reads, so
- * nothing on the host changes. Both lists are sorted by name.
+ * will write: each layout that has a slot, without it, except the layouts to keep.
+ * `kept` names the layouts to keep that hold a slot; they are never written.
+ * `skipped` names the layouts whose file couldn't be read or parsed; they are left
+ * as they are. Only reads, so nothing on the host changes. Every list is sorted by name.
  */
 export interface SlotRemoval {
   readonly toWrite: ReadonlyArray<{ readonly name: string; readonly node: LayoutNode }>;
+  readonly kept: ReadonlyArray<string>;
   readonly skipped: ReadonlyArray<string>;
 }
 
 /**
- * Reads every layout and works out what removing `mod`'s slots will write.
- * Fails only when the host can't be reached; a layout it can't read is skipped.
+ * Reads every layout and works out what removing `mod`'s slots will write, never
+ * writing a layout named in `keep`. Fails only when the host can't be reached; a
+ * layout it can't read is skipped.
  */
-export const planSlotRemoval = Effect.fn("planSlotRemoval")(function* (mod: string) {
+export const planSlotRemoval = Effect.fn("planSlotRemoval")(function* (
+  mod: string,
+  keep: ReadonlyArray<string> = [],
+) {
   const host = yield* HerdrHost;
   const files = yield* host
     .listDir("layouts")
     .pipe(Effect.catchTag("FileMissing", () => Effect.succeed<ReadonlyArray<string>>([])));
-  if (files.length === 0) return { toWrite: [], skipped: [] } satisfies SlotRemoval;
-  const shipped = yield* shippedLayouts;
+  if (files.length === 0) return { toWrite: [], kept: [], skipped: [] } satisfies SlotRemoval;
+  const shipped = yield* shippedOnHost;
   const names = files
     .filter((file) => file.endsWith(".json"))
     .map((file) => file.slice(0, -".json".length))
@@ -233,15 +250,17 @@ export const planSlotRemoval = Effect.fn("planSlotRemoval")(function* (mod: stri
   const cleaned: ReadonlyArray<Cleaned> = yield* Effect.forEach(names, (name) =>
     Effect.map(cleanLayout(name, mod), (result) => ({ name, result })),
   );
+  const withSlots = cleaned.flatMap(({ name, result }) =>
+    result !== null && result.removed > 0 ? [{ name, node: result.node }] : [],
+  );
   return {
-    toWrite: cleaned.flatMap(({ name, result }) =>
-      result !== null && result.removed > 0 ? [{ name, node: result.node }] : [],
-    ),
+    toWrite: withSlots.filter(({ name }) => !keep.includes(name)),
+    kept: withSlots.filter(({ name }) => keep.includes(name)).map(({ name }) => name),
     skipped: cleaned.filter(({ result }) => result === null).map(({ name }) => name),
   } satisfies SlotRemoval;
 });
 
-/** Writes the layouts a `planSlotRemoval` gave. `changed` names them; `skipped` is the plan's. */
+/** Writes the layouts a `planSlotRemoval` gave. `changed` names them; `kept` and `skipped` are the plan's. */
 export const applySlotRemoval = Effect.fn("applySlotRemoval")(function* (removal: SlotRemoval) {
   const host = yield* HerdrHost;
   yield* Effect.forEach(removal.toWrite, ({ name, node }) =>
@@ -249,26 +268,29 @@ export const applySlotRemoval = Effect.fn("applySlotRemoval")(function* (removal
   );
   return {
     changed: removal.toWrite.map(({ name }) => name),
+    kept: [...removal.kept],
     skipped: [...removal.skipped],
   };
 });
 
 /**
  * Removes every slot for `mod` from the person's own layouts (not the shipped
- * ones). `changed` names the layouts rewritten; `skipped` names those whose file
- * couldn't be read or parsed, which are left as they are. Every layout is read
- * before any is written, and a skipped one never stops the rest being cleaned.
- * Both lists are sorted by name.
+ * ones), except the layouts named in `keep`, which are never written. `changed`
+ * names the layouts rewritten; `kept` names those in `keep` that hold a slot for
+ * `mod`; `skipped` names those whose file couldn't be read or parsed, which are
+ * left as they are. Every layout is read before any is written, and a skipped one
+ * never stops the rest being cleaned. Every list is sorted by name.
  */
-export const removeSlotsOnHost = (mod: string) =>
-  Effect.flatMap(planSlotRemoval(mod), applySlotRemoval);
+export const removeSlotsOnHost = (mod: string, keep: ReadonlyArray<string> = []) =>
+  Effect.flatMap(planSlotRemoval(mod, keep), applySlotRemoval);
 
 /** `removeSlotsOnHost` against the Herdr app on this machine, at `home`. */
 export function removeSlots(
   mod: string,
   home = herdrHome(),
-): { changed: string[]; skipped: string[] } {
-  return Effect.runSync(removeSlotsOnHost(mod).pipe(Effect.provide(HerdrHost.local(home))));
+  keep: readonly string[] = [],
+): { changed: string[]; kept: string[]; skipped: string[] } {
+  return Effect.runSync(removeSlotsOnHost(mod, keep).pipe(Effect.provide(HerdrHost.local(home))));
 }
 
 /**
@@ -288,7 +310,7 @@ export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
   }
   const layout = shown._tag === "Running" ? layoutFromStatus(shown.text) : null;
   if (!layout) return `herdr-slots: Herdr isn't running; open it to see ${mod}.`;
-  if ((yield* shippedLayouts).has(layout)) {
+  if ((yield* shippedOnHost).has(layout)) {
     return `herdr-slots: "${layout}" ships with Herdr and can't take new slots; clone it, or add ${mod} by hand.`;
   }
   const text = yield* host.readFile(layoutFile(layout)).pipe(

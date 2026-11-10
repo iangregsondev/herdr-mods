@@ -16,7 +16,7 @@ packages/<name>/          shared TS libs, bundled into each mod that imports the
 mods/iangregsondev-<name>/  BUILD OUTPUT, committed: the folder Herdr users install
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod: the namespace, the out folder (watch mode builds into Herdr, or stages in node_modules/.herdr-dev/ and syncs to a remote Herdr host)
-mod-env.d.ts              declares __MOD_ID__, the constant the build gives each mod
+mod-env.d.ts              declares __MOD_ID__ and __NAMESPACE__, the constants the build gives each mod
 herdr-dev.example.json    template for herdr-dev.json (git-ignored): the dev target, local or a remote Herdr host
 .config/wt.toml           worktrunk hooks: a new worktree gets the main checkout's herdr-dev.json
 scripts/check-mods.ts     vp run check:mods: herdr-app check on every built mod, on the dev target's Herdr host
@@ -27,6 +27,7 @@ scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO an
 scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host; `shot <file> [--crop x,y,w,h]` copies a (cropped) screenshot back
 scripts/herdr-types.ts    vp run types: puts Herdr's type files into .herdr-types/ from the dev target's Herdr host (docs/types.md)
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
+scripts/herdr-sync.ts     builds my layout from Herdr's default (vp run herdr:sync; docs/develop.md)
 scripts/require-vp.sh     preinstall guard: installs must go through vp
 scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, a fake Herdr host, run sh
 scripts/*.test.ts         tests of the root scripts, mod-pack.ts and .claude/hooks/

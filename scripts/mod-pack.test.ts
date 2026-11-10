@@ -186,10 +186,13 @@ describe("modPack, either mode", () => {
   test.each([
     ["build", false],
     ["watch", true],
-  ])("gives the mod its full mod id as the constant __MOD_ID__ in %s mode", (_mode, watch) => {
+  ])("gives the mod its full mod id and the namespace as constants in %s mode", (_mode, watch) => {
     localHerdrHome();
     const config = modPack("hello", { watch });
-    expect(config.define).toEqual({ __MOD_ID__: '"iangregsondev-hello"' });
+    expect(config.define).toEqual({
+      __MOD_ID__: '"iangregsondev-hello"',
+      __NAMESPACE__: '"iangregsondev"',
+    });
   });
 });
 

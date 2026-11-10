@@ -13,6 +13,7 @@ import {
   type Settings,
 } from "./settings.ts";
 import { reposFrom, type FoundRepo, type Repo } from "./repos.ts";
+import { syncNotice } from "./sync.ts";
 import {
   causeText,
   failureText,
@@ -118,3 +119,18 @@ export const findRepos = Effect.fn("findRepos")(function* (
 export const readList = Effect.fn("readList")(function* (root: string) {
   return yield* wtList(root);
 }, asReason);
+
+/**
+ * The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr
+ * version and the version the toast was last shown for (see `syncNotice`).
+ */
+export const syncToast = Effect.fn("syncToast")(function* (
+  path: string,
+  installed: string,
+  told: unknown,
+) {
+  const disk = yield* Files;
+  // No record, or one that can't be read, means no toast: the sync is optional.
+  const record = yield* Effect.option(disk.read(path));
+  return syncNotice(record, installed, told);
+});

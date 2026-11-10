@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Option, Result } from "effect";
 import { Files, type FilesApi } from "../src/files.ts";
-import { findRepos, loadSettings, readList } from "../src/load.ts";
+import { findRepos, loadSettings, readList, syncToast } from "../src/load.ts";
 import { parseList } from "../src/worktrees.ts";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
@@ -243,6 +243,46 @@ describe("readList", () => {
       };
       const list = yield* readList("/gone").pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(list, Result.fail("fatal: not a git repository"));
+    }),
+  );
+});
+
+describe("syncToast", () => {
+  const RECORD = "/app/iangregsondev-sync.json";
+  const built = (version: string) =>
+    JSON.stringify({ layout: "iangregsondev", from: "main", version });
+
+  it.effect("the toast for a record of an older Herdr, read through Files", () =>
+    Effect.gen(function* () {
+      const { api, reads } = disk({ [RECORD]: built("0.1.12") });
+      const toast = yield* syncToast(RECORD, "0.1.14", undefined).pipe(
+        Effect.provide(Files.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Option.map(toast, (notice) => notice.title),
+        Option.some("Herdr updated: run herdr:sync"),
+      );
+      assert.deepStrictEqual(reads, [RECORD]);
+    }),
+  );
+
+  it.effect("no record file, no toast", () =>
+    Effect.gen(function* () {
+      const { api } = disk({});
+      const toast = yield* syncToast(RECORD, "0.1.14", undefined).pipe(
+        Effect.provide(Files.layer(api)),
+      );
+      assert.deepStrictEqual(toast, Option.none());
+    }),
+  );
+
+  it.effect("a record that can't be read, no toast", () =>
+    Effect.gen(function* () {
+      const api: FilesApi = { ...disk({}).api, readTextFile: () => Promise.reject("denied") };
+      const toast = yield* syncToast(RECORD, "0.1.14", undefined).pipe(
+        Effect.provide(Files.layer(api)),
+      );
+      assert.deepStrictEqual(toast, Option.none());
     }),
   );
 });

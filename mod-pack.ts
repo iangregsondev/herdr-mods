@@ -405,8 +405,12 @@ function packConfig(
   return {
     entry: { main: "src/main.ts" },
     // The mod reads its own id as `__MOD_ID__` (declared in mod-env.d.ts), for its
-    // shared-state keys, settings file and layout references.
-    define: { __MOD_ID__: JSON.stringify(modId(name)) },
+    // shared-state keys, settings file and layout references, and the namespace as
+    // `__NAMESPACE__`, for files shared by every mod from this repo.
+    define: {
+      __MOD_ID__: JSON.stringify(modId(name)),
+      __NAMESPACE__: JSON.stringify(NAMESPACE),
+    },
     outDir,
     format: "esm",
     platform: "neutral",

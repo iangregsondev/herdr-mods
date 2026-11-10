@@ -138,6 +138,52 @@ describe("devRemove", () => {
     expect(readFileSync(other, "utf8")).toBe(otherBefore);
   });
 
+  test("leaves the layout herdr:sync built alone, naming it", () => {
+    const home = tempDir();
+    const dir = writeDevBuild(home, id);
+    const synced = writeLayout(home, "iangregsondev", ["tabs", id]);
+    const syncedBefore = readFileSync(synced, "utf8");
+    const work = writeLayout(home, "work", [id]);
+    writeFile(
+      home,
+      "iangregsondev-sync.json",
+      JSON.stringify({ layout: "iangregsondev", from: "main", version: "0.1.14" }),
+    );
+
+    expect(devRemove(["hello"], home)).toEqual({
+      code: 0,
+      out: [
+        `dev-remove: removed ${dir}`,
+        'dev-remove: removed the iangregsondev-hello panel from "work"',
+        'dev-remove: left "iangregsondev" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)',
+      ],
+      err: [],
+    });
+    expect(readFileSync(synced, "utf8")).toBe(syncedBefore);
+    expect(hasSlot(readLayout(work), id)).toBe(false);
+  });
+
+  test("cleans every layout when the sync record is missing or unreadable", () => {
+    const home = tempDir();
+    writeDevBuild(home, id);
+    const synced = writeLayout(home, "iangregsondev", [id]);
+    writeFile(home, "iangregsondev-sync.json", "{");
+
+    expect(devRemove(["hello"], home).out[1]).toBe(
+      'dev-remove: removed the iangregsondev-hello panel from "iangregsondev"',
+    );
+    expect(hasSlot(readLayout(synced), id)).toBe(false);
+  });
+
+  test("names no kept layout when the synced one has no slot for the mod", () => {
+    const home = tempDir();
+    writeDevBuild(home, id);
+    writeLayout(home, "iangregsondev", ["tabs"]);
+    writeFile(home, "iangregsondev-sync.json", JSON.stringify({ layout: "iangregsondev" }));
+
+    expect(devRemove(["hello"], home).out).toHaveLength(2);
+  });
+
   test("says there is no panel when no layout has a slot for the mod", () => {
     const home = tempDir();
     writeDevBuild(home, id);
@@ -312,6 +358,24 @@ describe("runDevRemove, remote target", () => {
       assert.isTrue(hasSlot(readLayout(work), "tabs"));
       assert.isFalse(hasSlot(readLayout(play), id));
       assert.strictEqual(readFileSync(other, "utf8"), otherBefore);
+    });
+  });
+
+  it.effect("leaves the layout herdr:sync built on the host alone, naming it", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, id);
+    const synced = writeLayout(fake.home, "iangregsondev", ["tabs", id]);
+    const syncedBefore = readFileSync(synced, "utf8");
+    const work = writeLayout(fake.home, "work", [id]);
+    writeFile(fake.home, "iangregsondev-sync.json", JSON.stringify({ layout: "iangregsondev" }));
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result.out.slice(1), [
+        'dev-remove: removed the iangregsondev-hello panel from "work"',
+        'dev-remove: left "iangregsondev" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)',
+      ]);
+      assert.strictEqual(readFileSync(synced, "utf8"), syncedBefore);
+      assert.isFalse(hasSlot(readLayout(work), id));
     });
   });
 

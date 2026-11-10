@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { appHome, exec, home, layout, panes, readTextFile, run, setShared, settings, shared, spaces, theme, writeTextFile } from "herdr";
+import { appHome, exec, home, layout, notify, panes, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -2511,6 +2511,8 @@ const SuccessImpl = function(success) {
 SuccessImpl.prototype = SuccessProto;
 /** @internal */
 const succeed$4 = (success) => new SuccessImpl(success);
+/** @internal */
+const getSuccess$1 = (self) => isFailure$1(self) ? none$1 : some$1(self.success);
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Order.js
 /**
@@ -2985,6 +2987,63 @@ const map$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(
 * @since 2.0.0
 */
 const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
+/**
+* Combines a structure of `Option`s (tuple, struct, or iterable) into a single
+* `Option` containing the unwrapped structure.
+*
+* **When to use**
+*
+* Use when you need to combine multiple `Option` values into one while
+* preserving the input shape, with any `None` making the result `None`.
+*
+* **Details**
+*
+* - Tuple input → `Option` of a tuple with the same length
+* - Struct input → `Option` of a struct with the same keys
+* - Iterable input → `Option` of an `Array`
+* - Any `None` in the input → entire result is `None`
+*
+* **Example** (Combining a tuple and a struct)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* const maybeName: Option.Option<string> = Option.some("John")
+* const maybeAge: Option.Option<number> = Option.some(25)
+*
+* //      ┌─── Option<[string, number]>
+* //      ▼
+* const tuple = Option.all([maybeName, maybeAge]) // => Option.some(["John", 25])
+*
+* //      ┌─── Option<{ name: string; age: number; }>
+* //      ▼
+* const struct = Option.all({ name: maybeName, age: maybeAge }) // => Option.some({ name: "John", age: 25 })
+* ```
+*
+* @see {@link product} for combining exactly two
+* @see {@link productMany} for a homogeneous collection
+*
+* @stability stable
+* @category combining
+* @since 2.0.0
+*/
+const all = (input) => {
+	if (Symbol.iterator in input) {
+		const out = [];
+		for (const o of input) {
+			if (isNone(o)) return none();
+			out.push(o.value);
+		}
+		return some(out);
+	}
+	const out = {};
+	for (const key of Object.keys(input)) {
+		const o = input[key];
+		if (isNone(o)) return none();
+		assignProperty(out, key, o.value);
+	}
+	return some(out);
+};
 /**
 * Converts an `Option` into an `Array`.
 *
@@ -3910,6 +3969,37 @@ const isFailure = isFailure$1;
 * @since 4.0.0
 */
 const isSuccess = isSuccess$1;
+/**
+* Extracts the success value as an `Option`, discarding the failure.
+*
+* **When to use**
+*
+* Use when you need to extract the success value from a `Result` as an
+* `Option` and discard failure information.
+*
+* **Details**
+*
+* - `Success<A>` becomes `Some<A>`
+* - `Failure<E>` becomes `None`
+*
+* **Example** (Extracting the success as an Option)
+*
+* ```ts import.meta.vitest
+* import { Option, Result } from "effect"
+*
+* Result.getSuccess(Result.succeed("ok")) // => Option.some("ok")
+*
+* Result.getSuccess(Result.fail("err")) // => Option.none()
+* ```
+*
+* @see {@link getFailure} to extract the error instead
+* @see {@link fromOption} for the reverse conversion
+*
+* @stability stable
+* @category getters
+* @since 4.0.0
+*/
+const getSuccess = getSuccess$1;
 /**
 * Transforms the failure channel of a `Result`, leaving the success channel unchanged.
 *
@@ -6102,6 +6192,11 @@ const catchTag$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, k, f, 
 /** @internal */
 const mapError$1 = /*#__PURE__*/ dual(2, (self, f) => catchCause(self, (cause) => failCause(causeMap(cause, f))));
 /** @internal */
+const option$1 = (self) => match$1(self, {
+	onFailure: none,
+	onSuccess: some
+});
+/** @internal */
 const result$1 = (self) => matchEager(self, {
 	onFailure: fail$2,
 	onSuccess: succeed$3
@@ -7741,6 +7836,52 @@ const fromResult = fromResult$1;
 */
 const result = result$1;
 /**
+* Converts success to `Option.some` and failure to `Option.none`.
+*
+* **When to use**
+*
+* Use when you only care whether an effect succeeds and want recoverable
+* failures represented as `Option.none`.
+*
+* **Details**
+*
+* Success values become `Option.some`, recoverable failures become
+* `Option.none`, and defects still fail the effect.
+*
+* **Gotchas**
+*
+* `option` only captures typed, recoverable failures as `Option.none`. If the
+* cause contains a defect, nothing is captured and every typed error is
+* converted to a defect, preserving reason order and interrupts. A cause with
+* only interruptions still fails the effect, but an interruption alongside a
+* typed error does not prevent capture. The effect succeeds with
+* `Option.none()` and the interruption is discarded.
+*
+* `option` also discards typed failure values. Use `result` if the failure
+* value matters.
+*
+* **Example** (Capturing success or failure as Option)
+*
+* ```ts import.meta.vitest
+* import { Effect, Option } from "effect"
+*
+* const program = Effect.all([
+*   Effect.option(Effect.succeed(1)),
+*   Effect.option(Effect.fail("missing"))
+* ])
+*
+* Effect.runSync(program) // => [Option.some(1), Option.none()]
+* ```
+*
+* @see {@link result} for a version that uses `Result` instead.
+* @see {@link exit} for a version that encapsulates both recoverable errors and defects in an `Exit`.
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const option = option$1;
+/**
 * Transforms the value inside an effect by applying a function to it.
 *
 * **When to use**
@@ -8448,17 +8589,54 @@ var Files = class Files extends Service()("iangregsondev-worktrunk/Files") {
 };
 
 // src/layout.ts
+/**
+* Every role a copy of the worktrunk mod plays, as its props' `role` names it. One mod
+* folder serves them all: a layout block with no role shows the side `panel`, and one
+* with `{ role: "toggle" }` the tab-bar button that shows and hides it.
+*/
+const ROLES = ["panel", "toggle"];
+/** The role a copy plays when its props give none: the side panel. */
+const PANEL_ROLE = "panel";
+/** The tab-bar button that shows and hides the panel. */
+const TOGGLE_ROLE = "toggle";
+/**
+* The role a copy of the mod plays, from the props its layout block gave
+* (`{ role: "toggle" }`): no role means the panel.
+*/
+const roleOf = (props) => match$4(text(at(props, "role")), {
+	onNone: () => some(PANEL_ROLE),
+	onSome: (role) => fromNullishOr(ROLES.find((known) => known === role))
+});
 const findIn = (node, mod, hiddenAbove) => {
 	const hidden = hiddenAbove || at(node, "hidden") === true;
-	if (at(node, "content", "mod") === mod) return map$3(text(at(node, "id")), (id) => ({
+	if (at(node, "content", "mod") === mod && contains(roleOf(at(node, "content", "props")), "panel")) return map$3(text(at(node, "id")), (id) => ({
 		id,
 		hidden
 	}));
 	const children = fields(node).children;
 	return (Array.isArray(children) ? children : []).reduce((found, child) => isSome(found) ? found : findIn(child, mod, hidden), none());
 };
-/** The first block in `layout` that shows `mod`, with whether it is hidden. */
+/**
+* The first block in `layout` that shows `mod` as the panel, with whether it is hidden.
+* Blocks showing the mod in another role (the tab-bar toggle) are skipped.
+*/
 const findModBlock = (layout, mod) => findIn(layout, mod, false);
+
+// src/sync.ts
+const parseRecord = (raw) => flatMap$2(getSuccess(parseJson(raw)), (json) => all({
+	layout: text(at(json, "layout")),
+	version: text(at(json, "version"))
+}));
+/**
+* The toast to show when the installed Herdr (`installed`) differs from the version the
+* sync record (`record`, the file's text) was built from. `told` is the installed version
+* the panel last showed this toast for, so it shows once per version. None when there is
+* no readable record, the versions match, or the installed version is unknown.
+*/
+const syncNotice = (record, installed, told) => record.pipe(flatMap$2(parseRecord), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
+	title: "Herdr updated: run herdr:sync",
+	body: `Your "${built.layout}" layout was built from Herdr ${built.version}; Herdr is now ${installed}. Run \`vp run herdr:sync\` in herdr-mods.`
+})));
 
 // src/worktrees.ts
 const CHANGE_KINDS = [
@@ -8623,6 +8801,15 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan) {
 const readList = fn("readList")(function* (root) {
 	return yield* wtList(root);
 }, asReason);
+/**
+* The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr
+* version and the version the toast was last shown for (see `syncNotice`).
+*/
+const syncToast = fn("syncToast")(function* (path, installed, told) {
+	const disk = yield* Files;
+	const record = yield* option(disk.read(path));
+	return syncNotice(record, installed, told);
+});
 
 // src/reads.ts
 /** A repo's list after a read: the new worktrees, or the old ones with the read's error. */
@@ -8891,6 +9078,10 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `iangregsondev-worktrunk.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `iangregsondev-worktrunk.folded.v1`;
+/** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
+const SYNC_RECORD = `iangregsondev-sync.json`;
+/** The installed Herdr version the "run herdr:sync" toast was last shown for. */
+const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 const LIST_EVERY = 2e4;
 const SCAN_EVERY = 6e5;
 /** Herdr's API, as the services call it. */
@@ -8943,12 +9134,29 @@ const later = (cx, fn) => cx.spawn(async (cx) => {
 	await cx.sleep(0);
 	fn(cx);
 });
+/** Shows one toast when Herdr has moved past the version the sync record names. */
+const checkSync = async () => {
+	const installed = updates().app.version;
+	const toast = await runEdge(syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)), () => none());
+	map$3(toast, (notice) => {
+		setShared(SYNC_TOLD_KEY, installed);
+		notify({
+			...notice,
+			level: "warning"
+		});
+	});
+};
+const copyOf = (props) => match$4(roleOf(props), {
+	onNone: () => "Unknown",
+	onSome: (role) => role === "toggle" ? "Toggle" : "Panel"
+});
 /** The panel's block is shown; a copy with no block of its own (an overlay) counts as shown. */
 const shown = () => match$4(findModBlock(layout(), "iangregsondev-worktrunk"), {
 	onNone: () => true,
 	onSome: (block) => !block.hidden
 });
 var Worktrunk = class extends View {
+	copy = "Panel";
 	settings = DEFAULT_SETTINGS;
 	settingsError = none();
 	/** The last folder scan's repos, and what and when it scanned. */
@@ -8960,7 +9168,10 @@ var Worktrunk = class extends View {
 	lists = /* @__PURE__ */ new Map();
 	loader = IDLE;
 	reads = NO_READS;
-	init(_props, cx) {
+	init(props, cx) {
+		this.copy = copyOf(props);
+		if (this.copy !== "Panel") return;
+		cx.spawn(checkSync);
 		cx.timer.every(LIST_EVERY, (cx) => {
 			if (shown()) this.refresh(cx, { scan: false });
 		});
@@ -9029,6 +9240,8 @@ var Worktrunk = class extends View {
 			t: theme(),
 			sizes: fontSizes()
 		};
+		if (this.copy === "Toggle") return this.renderToggle(style);
+		if (this.copy === "Unknown") return div();
 		const { t, sizes } = style;
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
 		const rendered = onRender(this.reads, { shown: shown() });
@@ -9052,6 +9265,12 @@ var Worktrunk = class extends View {
 		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refresh(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
 		const body = view.body._tag === "Message" ? div().p(16).text_size(sizes.small).text_color(t.muted).child(view.body.text) : v_flex().pb(16).children(view.body.repos.map((repo) => this.renderRepo(style, repo)));
 		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(body));
+	}
+	/** The tab-bar button: shows and hides the panel's block. */
+	renderToggle({ t, sizes }) {
+		const block = findModBlock(layout(), "iangregsondev-worktrunk");
+		const on = exists(block, (b) => !b.hidden);
+		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("worktrunk"));
 	}
 	renderRepo({ t, sizes }, repo) {
 		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).child(div().flex_none().text_size(sizes.label).text_color(t.muted).child(match$4(repo.count, {

@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { findModBlock } from "../src/layout.ts";
+import { findModBlock, ROLES, roleOf } from "../src/layout.ts";
 
 const MOD = "iangregsondev-worktrunk";
 
@@ -27,11 +27,49 @@ describe("findModBlock", () => {
     expect(findModBlock(parent, MOD)).toEqual(Option.some({ id: "b1", hidden: true }));
   });
 
+  test("finds the panel, not a block that shows the mod in another role", () => {
+    const tree = {
+      type: "column",
+      children: [
+        { id: "toggle", content: { mod: MOD, props: { role: "toggle" } } },
+        { id: "panel", content: { mod: MOD } },
+      ],
+    };
+    expect(findModBlock(tree, MOD)).toEqual(Option.some({ id: "panel", hidden: false }));
+  });
+
+  test("a block whose props name the panel role is the panel", () => {
+    const tree = { children: [{ id: "p", content: { mod: MOD, props: { role: "panel" } } }] };
+    expect(findModBlock(tree, MOD)).toEqual(Option.some({ id: "p", hidden: false }));
+  });
+
+  test("a block naming a role it doesn't know is not the panel", () => {
+    const tree = { children: [{ id: "x", content: { mod: MOD, props: { role: "sidebar" } } }] };
+    expect(findModBlock(tree, MOD)).toEqual(Option.none());
+  });
+
   test("none when the layout has no block for it, or isn't a tree", () => {
     expect(findModBlock({ children: [{ id: "x", content: { mod: "other" } }] }, MOD)).toEqual(
       Option.none(),
     );
     expect(findModBlock(null, MOD)).toEqual(Option.none());
     expect(findModBlock("nope", MOD)).toEqual(Option.none());
+  });
+});
+
+describe("roleOf", () => {
+  test.each(ROLES)("reads the %s role a layout block gave", (role) => {
+    expect(roleOf({ role })).toEqual(Option.some(role));
+  });
+
+  test("is the panel when props give no role, or aren't an object", () => {
+    expect(roleOf({})).toEqual(Option.some("panel"));
+    expect(roleOf({ role: 3 })).toEqual(Option.some("panel"));
+    expect(roleOf(null)).toEqual(Option.some("panel"));
+    expect(roleOf(undefined)).toEqual(Option.some("panel"));
+  });
+
+  test("is none for a role name it doesn't know, never the panel", () => {
+    expect(roleOf({ role: "sidebar" })).toEqual(Option.none());
   });
 });

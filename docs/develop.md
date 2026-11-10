@@ -51,7 +51,7 @@ The slot is what shows the panel. Files with no slot show nothing. A slot with n
 3. After the first good build (remote: the first good copy), it checks the layout Herdr is showing. If the mod has no slot there, it adds one at the edge `mod.json`'s `"place"` names (`"right"` or `"left"`), at its `"size"`.
 4. On every save it rebuilds. Herdr notices the changed files and reloads the panel.
 
-**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back.
+**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back. The one layout it leaves alone is the one `herdr:sync` builds (see "Your layout" below), and it says so.
 
 ## See what Herdr sees: `vp run herdr`
 
@@ -100,6 +100,23 @@ To install a copy, paste this into your coding agent:
 or, once it's pushed:
 
 > Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/iangregsondev/herdr-mods/tree/main/mods/iangregsondev-<name>
+
+## Your layout: `herdr:sync`
+
+`vp run herdr:sync` builds your own layout, `iangregsondev`, from Herdr's current default layout (`main`) plus this repo's additions: the worktrunk panel on the right and its toggle button at the end of the tab bar. It writes `~/.config/herdr-app/layouts/iangregsondev.json` and a record of the Herdr version it built from, `~/.config/herdr-app/iangregsondev-sync.json`. A file that already holds what it would write is left untouched, so Herdr reloads nothing.
+
+- **It's safe to run any time.** It reads Herdr's files and never edits them, never switches your layout, and keeps none of Herdr's code in this repo. Herdr's `main` stays as it is, so Herdr's usual layout switch (`layout.switch`, default `ctrl-shift-l`) moves between the two. To switch from a shell: `herdr-app do layout.switch --name iangregsondev`.
+- **It works on this machine's Herdr only.** Unlike the dev loop, it doesn't follow the dev target yet: with a `remote` target, run it on the Herdr host itself.
+- **The worktrunk mod must be installed** (or running as a dev build) for the panel and toggle to show in the layout.
+- **`vp run dev:remove` leaves this layout alone.** Its blocks belong to the sync, so they stay when a dev build goes: after `dev:remove worktrunk` the layout still names the panel and toggle, and they come back with the next `vp run worktrunk#dev`.
+- **The layout is generated.** Every run rebuilds it from `main`, so hand edits to `iangregsondev.json` are lost. Change the additions in `scripts/herdr-sync.ts` (`LAYOUT_EDITS`) instead.
+
+**When to re-run it:**
+
+- after every Herdr update, so your layout picks up Herdr's changes to `main`. The worktrunk panel shows a toast, "Herdr updated: run herdr:sync", once per new version, when the installed Herdr differs from the recorded one;
+- after pulling changes to `scripts/herdr-sync.ts`.
+
+**When it fails**, it writes nothing and names the patch point that no longer fits, for example `tab-bar toggle: expected exactly one block showing the "tabs" mod, found 0`. That means Herdr's default layout changed shape: update that edit in `scripts/herdr-sync.ts` (test first), then run it again. Your existing layout keeps working meanwhile. It also stops, writing nothing, when it can't read `main.json`, when `herdr-app --version` gives no version, or when Herdr itself ships a layout named `iangregsondev`.
 
 ## Troubleshooting
 

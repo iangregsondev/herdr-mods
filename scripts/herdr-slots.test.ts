@@ -1,4 +1,4 @@
-import { readFileSync, statSync, utimesSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
@@ -13,7 +13,7 @@ import {
   type HerdrStatus,
   type LayoutNode,
 } from "./herdr-slots.ts";
-import { fakeBin, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import { age, fakeBin, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 /** A node's children; empty when it has none, so a missing list fails on the assertion. */
 const childrenOf = (node: LayoutNode | null): LayoutNode[] => node?.children ?? [];
@@ -108,16 +108,9 @@ describe("layoutFromStatus", () => {
 
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
-/** Sets a file's mtime well in the past, so any rewrite shows as a newer mtime. */
-const age = (path: string): number => {
-  const past = new Date("2020-01-01T00:00:00Z");
-  utimesSync(path, past, past);
-  return statSync(path).mtimeMs;
-};
-
 describe("removeSlots", () => {
   test("is empty when there is no layouts folder", () => {
-    expect(removeSlots("hello", tempDir())).toEqual({ changed: [], skipped: [] });
+    expect(removeSlots("hello", tempDir())).toEqual({ changed: [], kept: [], skipped: [] });
   });
 
   test("removes the mod's slots from the person's layouts and names them", () => {
@@ -125,7 +118,11 @@ describe("removeSlots", () => {
     const work = writeFile(home, "layouts/work.json", json(layout()));
     const play = writeFile(home, "layouts/play.json", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual({ changed: ["play", "work"], skipped: [] });
+    expect(removeSlots("hello", home)).toEqual({
+      changed: ["play", "work"],
+      kept: [],
+      skipped: [],
+    });
     expect(readLayout(work)).toEqual(withoutSlots(layout(), "hello").node);
     expect(readLayout(play)).toEqual(withoutSlots(layout(), "hello").node);
   });
@@ -136,8 +133,22 @@ describe("removeSlots", () => {
     const shipped = writeFile(home, "layouts/shipped.json", json(layout()));
     const mine = writeFile(home, "layouts/mine.json", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual({ changed: ["mine"], skipped: [] });
+    expect(removeSlots("hello", home)).toEqual({ changed: ["mine"], kept: [], skipped: [] });
     expect(readFileSync(shipped, "utf8")).toBe(json(layout()));
+    expect(hasSlot(readLayout(mine), "hello")).toBe(false);
+  });
+
+  test("never writes a layout it is told to keep, and names it when it holds a slot", () => {
+    const home = tempDir();
+    const synced = writeFile(home, "layouts/synced.json", json(layout()));
+    const mine = writeFile(home, "layouts/mine.json", json(layout()));
+
+    expect(removeSlots("hello", home, ["synced", "absent"])).toEqual({
+      changed: ["mine"],
+      kept: ["synced"],
+      skipped: [],
+    });
+    expect(readFileSync(synced, "utf8")).toBe(json(layout()));
     expect(hasSlot(readLayout(mine), "hello")).toBe(false);
   });
 
@@ -145,7 +156,7 @@ describe("removeSlots", () => {
     const home = tempDir();
     const backup = writeFile(home, "layouts/work.json.bak", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual({ changed: [], skipped: [] });
+    expect(removeSlots("hello", home)).toEqual({ changed: [], kept: [], skipped: [] });
     expect(readFileSync(backup, "utf8")).toBe(json(layout()));
   });
 
@@ -155,7 +166,7 @@ describe("removeSlots", () => {
     const work = writeFile(home, "layouts/work.json", content);
     const mtime = age(work);
 
-    expect(removeSlots("other", home)).toEqual({ changed: [], skipped: [] });
+    expect(removeSlots("other", home)).toEqual({ changed: [], kept: [], skipped: [] });
     expect(readFileSync(work, "utf8")).toBe(content);
     expect(statSync(work).mtimeMs).toBe(mtime);
   });
@@ -169,7 +180,7 @@ describe("removeSlots", () => {
     if (installed !== undefined) writeFile(home, "installed.json", installed);
     writeFile(home, "layouts/work.json", json(layout()));
 
-    expect(removeSlots("hello", home)).toEqual({ changed: ["work"], skipped: [] });
+    expect(removeSlots("hello", home)).toEqual({ changed: ["work"], kept: [], skipped: [] });
   });
 
   test("names the layouts it changed in name order, whatever order they were written", () => {
@@ -180,6 +191,7 @@ describe("removeSlots", () => {
 
     expect(removeSlots("hello", home)).toEqual({
       changed: ["apple", "mango", "zebra"],
+      kept: [],
       skipped: [],
     });
   });
@@ -195,6 +207,7 @@ describe("removeSlots", () => {
 
     expect(removeSlots("hello", home)).toEqual({
       changed: ["alpha", "zed"],
+      kept: [],
       skipped: ["broken", "odd"],
     });
     expect(readFileSync(notJson, "utf8")).toBe(broken);

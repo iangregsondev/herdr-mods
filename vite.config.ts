@@ -85,6 +85,7 @@ export default defineConfig({
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
       // herdr-app on the dev target's Herdr host: here, or over SSH (herdr-dev.json).
       herdr: { command: "vpx scripts/herdr.ts", cache: false },
+      "herdr:sync": { command: "vpx scripts/herdr-sync.ts", cache: false },
       // Reads git's file list, which the cache doesn't track.
       "audit:config": { command: "vpx scripts/audit.ts", cache: false },
     },
