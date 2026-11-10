@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { Input, InputState, h_flex, v_flex } from "gpui-base";
-import { appHome, closeOverlay, exec, focused, hc, home, layout, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, focused, hc, home, layout, nextCommand, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -9921,6 +9921,8 @@ const ROLES = [
 ];
 /** The role a copy plays when its props give none: the side panel. */
 const PANEL_ROLE = "panel";
+/** The tab-bar button that shows and hides the panel. */
+const TOGGLE_ROLE = "toggle";
 /**
 * The role a copy of the mod plays, from the props its layout block or overlay gave
 * (`{ role: "toggle" }`): no role means the panel, and a name that isn't a role is none.
@@ -9945,6 +9947,95 @@ const findIn = (node, mod, role, hiddenAbove) => {
 const findModBlock = (layout, mod) => findRoleBlock(layout, mod, PANEL_ROLE);
 /** The first block in `layout` that shows `mod` in `role`, with whether it is hidden. */
 const findRoleBlock = (layout, mod, role) => findIn(layout, mod, role, false);
+
+// src/keys.ts
+const IGNORE = { _tag: "Ignore" };
+const PANEL_COMMANDS = [
+	"refresh",
+	"new",
+	"settings",
+	"focus"
+];
+const isPanelCommand = (command) => PANEL_COMMANDS.includes(command);
+/**
+* What the copy playing `role` does with `command`. Herdr hands a command to every shown
+* copy, and a hidden one gets nothing, so exactly one copy acts:
+* - `toggle`: the toggle copy while it shows (it stays shown when the panel hides, so it
+*   can show it again); with no toggle copy shown, the panel, which can only hide itself.
+* - the panel's own commands, and unknown ones: the panel while it shows; while it is
+*   hidden, the toggle copy shows it and hands the command on.
+* - overlays never act on one.
+*/
+const routeCommand = (command, role, copies) => {
+	if (role !== "panel" && role !== "toggle") return IGNORE;
+	if (command === "toggle") {
+		if (role === "panel" && copies.toggleShown) return IGNORE;
+		return match$5(copies.panel, {
+			onNone: () => role === "toggle" ? { _tag: "NoPanel" } : IGNORE,
+			onSome: (block) => ({
+				_tag: "Toggle",
+				id: block.id
+			})
+		});
+	}
+	if (role === "panel") return isPanelCommand(command) ? {
+		_tag: "Run",
+		command
+	} : {
+		_tag: "Unknown",
+		command
+	};
+	return match$5(copies.panel, {
+		onNone: () => ({ _tag: "NoPanel" }),
+		onSome: (block) => !block.hidden ? IGNORE : isPanelCommand(command) ? {
+			_tag: "ShowThen",
+			id: block.id,
+			command
+		} : {
+			_tag: "Unknown",
+			command
+		}
+	});
+};
+const COMMAND_ACTIONS = {
+	refresh: { _tag: "Refresh" },
+	settings: { _tag: "Settings" },
+	new: { _tag: "NewHere" },
+	focus: { _tag: "Focus" }
+};
+/** The mailbox action the panel runs for a command. */
+const actionFor = (command) => COMMAND_ACTIONS[command];
+/** The copies commands care about, from Herdr's shown layout (`layout()`). */
+const copiesIn = (layout, mod) => ({
+	panel: findModBlock(layout, mod),
+	toggleShown: exists(findRoleBlock(layout, mod, TOGGLE_ROLE), (block) => !block.hidden)
+});
+/**
+* How long a mailbox request stays fresh, in ms. A panel that starts runs a fresh one (the
+* toggle copy just showed it to hand on a command) and skips an older one, left over
+* from an earlier run.
+*/
+const FRESH_FOR = 5e3;
+/** A request posted at `sent` (ms, its id's whole part) is stale at `now`. */
+const isLeftover = (sent, now) => now - sent > FRESH_FOR;
+/** The mailbox request a panel that starts counts as handled already. */
+const handledAtStart = (request, now) => filter(map$3(request, ({ id }) => id), (id) => isLeftover(id, now));
+/** The warning a step shows; none for a step that acts. */
+const noticeFor = (step) => {
+	switch (step._tag) {
+		case "NoPanel": return some({
+			title: "No worktrunk panel here",
+			body: "This layout has no worktrunk panel block to show."
+		});
+		case "Unknown": return some({
+			title: "Unknown worktrunk command",
+			body: `"${step.command}": use refresh, new, settings, focus or toggle.`
+		});
+		default: return none();
+	}
+};
+/** The repo a new worktree goes in: the focused folder's repo, else the first one listed. */
+const newRepoFor = (focusedRoot, listed) => orElse(focusedRoot, () => fromNullishOr(listed[0]));
 
 // src/sync.ts
 const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all({
@@ -10238,6 +10329,15 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, c
 */
 const lookUpCurrent = fn("lookUpCurrent")(function* (folder) {
 	return yield* repoAt(folder);
+}, asReason);
+/**
+* The repo a new worktree from the `new` key goes in: the repo `folder` (the focused
+* folder; empty for none) is in, else the first of `listed`; none when neither has one.
+* A lookup that fails is its one-line reason.
+*/
+const repoForNew = fn("repoForNew")(function* (folder, listed) {
+	const found = yield* repoAt(folder);
+	return newRepoFor(map$3(found, (repo) => repo.root), listed);
 }, asReason);
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
 const readList = fn("readList")(function* (root) {
@@ -11276,6 +11376,8 @@ const readAction = (value) => {
 		}));
 		case "Refresh": return some({ _tag: "Refresh" });
 		case "Settings": return some({ _tag: "Settings" });
+		case "Focus": return some({ _tag: "Focus" });
+		case "NewHere": return some({ _tag: "NewHere" });
 		default: return none();
 	}
 };
@@ -11575,10 +11677,11 @@ var Worktrunk = class extends View {
 		}
 		if (role.value === "toggle") {
 			this.copy = { _tag: "Toggle" };
-			return;
+			return this.listenForCommands(cx);
 		}
 		if (role.value !== "panel") return this.initOverlay(cx, role.value);
-		this.handled = map$3(mailbox(), (request) => request.id);
+		this.handled = handledAtStart(mailbox(), Date.now());
+		this.listenForCommands(cx);
 		const box = InputState.new({ placeholder: "Branch or repo" });
 		box.on("change", (_event, cx) => {
 			this.search = box.value();
@@ -11588,6 +11691,61 @@ var Worktrunk = class extends View {
 		cx.spawn(checkSync);
 		cx.timer.every(LIST_EVERY, (cx) => {
 			if (shown() && isNone(this.job)) this.refresh(cx, { scan: false });
+		});
+	}
+	/** Acts on `keys.json` commands (`iangregsondev-worktrunk.<command>`) sent to this copy. */
+	listenForCommands(cx) {
+		cx.spawn(async (cx) => {
+			for (;;) {
+				const command = await nextCommand();
+				this.onCommand(cx, command);
+				cx.notify();
+			}
+		});
+	}
+	/** Does what `routeCommand` says this copy does with `command`. */
+	onCommand(cx, command) {
+		const role = this.copy._tag === "Toggle" ? "toggle" : "panel";
+		const step = routeCommand(command, role, copiesIn(layout(), "iangregsondev-worktrunk"));
+		switch (step._tag) {
+			case "Run": return this.perform(cx, actionFor(step.command));
+			case "ShowThen":
+				run("layout.show", { id: step.id });
+				return send(actionFor(step.command));
+			case "Toggle":
+				run("layout.toggle", { id: step.id });
+				return;
+			default: map$3(noticeFor(step), (notice) => notify({
+				...notice,
+				level: "warning"
+			}));
+		}
+	}
+	/** The New worktree dialog for the focused folder's repo, else for the first repo listed. */
+	newHere(cx) {
+		const places = localPlaces(spaces(), panes());
+		const folder = getOrElse(focusedFolder(focused(), places), () => "");
+		const listed = this.reposToRead();
+		cx.spawn(async (cx) => {
+			const repo = await runEdge(repoForNew(folder, listed), fail$2);
+			match$4(repo, {
+				onSuccess: (root) => match$5(root, {
+					onNone: () => notify({
+						title: "No repo for a new worktree",
+						body: "Focus a terminal in a repo, or add your repo folders in Settings.",
+						level: "warning"
+					}),
+					onSome: (main) => this.perform(cx, {
+						_tag: "New",
+						main
+					})
+				}),
+				onFailure: (body) => notify({
+					title: "Couldn't find the repo for a new worktree",
+					body,
+					level: "warning"
+				})
+			});
 		});
 	}
 	/** An overlay takes the keyboard, and keeps the state only its role needs. */
@@ -11761,6 +11919,10 @@ var Worktrunk = class extends View {
 					height: 170,
 					props: newProps(action.main)
 				});
+				return;
+			case "NewHere": return this.newHere(cx);
+			case "Focus":
+				map$3(this.searchBox, (box) => box.focus());
 				return;
 			case "Create": return this.createWorktree(cx, action.main, action.name, action.base);
 			case "Settings":

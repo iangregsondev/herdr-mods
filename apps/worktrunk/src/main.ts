@@ -21,6 +21,7 @@ import {
   hc,
   home,
   layout,
+  nextCommand,
   notify,
   openOverlay,
   panes,
@@ -39,6 +40,7 @@ import {
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { scanArgs } from "./commands.ts";
 import { Files } from "./files.ts";
+import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
 import { findModBlock, roleOf, type Role } from "./layout.ts";
 import {
   findRepos,
@@ -50,6 +52,7 @@ import {
   readCi,
   readEach,
   readList,
+  repoForNew,
   runJob,
   saveSettings,
   settingsText,
@@ -463,11 +466,13 @@ export default class Worktrunk extends View {
     }
     if (role.value === "toggle") {
       this.copy = { _tag: "Toggle" };
-      return;
+      return this.listenForCommands(cx);
     }
     if (role.value !== "panel") return this.initOverlay(cx, role.value);
-    // A request left in shared state from an earlier run is never replayed.
-    this.handled = Option.map(mailbox(), (request) => request.id);
+    // A request left in shared state from an earlier run is never replayed; a fresh one is
+    // the toggle copy handing on a command as it shows this panel for the first time.
+    this.handled = handledAtStart(mailbox(), Date.now());
+    this.listenForCommands(cx);
     const box = InputState.new({ placeholder: "Branch or repo" });
     box.on("change", (_event, cx) => {
       this.search = box.value();
@@ -477,6 +482,59 @@ export default class Worktrunk extends View {
     cx.spawn(checkSync);
     cx.timer.every(LIST_EVERY, (cx) => {
       if (shown() && Option.isNone(this.job)) this.refresh(cx, { scan: false });
+    });
+  }
+
+  /** Acts on `keys.json` commands (`iangregsondev-worktrunk.<command>`) sent to this copy. */
+  listenForCommands(cx: AsyncContext) {
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        this.onCommand(cx, command);
+        cx.notify();
+      }
+    });
+  }
+
+  /** Does what `routeCommand` says this copy does with `command`. */
+  onCommand(cx: AsyncContext, command: string) {
+    const role = this.copy._tag === "Toggle" ? "toggle" : "panel";
+    const step = routeCommand(command, role, copiesIn(layout(), __MOD_ID__));
+    switch (step._tag) {
+      case "Run":
+        return this.perform(cx, actionFor(step.command));
+      case "ShowThen":
+        run("layout.show", { id: step.id });
+        return send(actionFor(step.command));
+      case "Toggle":
+        run("layout.toggle", { id: step.id });
+        return;
+      default:
+        Option.map(noticeFor(step), (notice) => notify({ ...notice, level: "warning" }));
+    }
+  }
+
+  /** The New worktree dialog for the focused folder's repo, else for the first repo listed. */
+  newHere(cx: AsyncContext) {
+    const places = localPlaces(spaces(), panes());
+    const folder = Option.getOrElse(focusedFolder(focused(), places), () => "");
+    const listed = this.reposToRead();
+    cx.spawn(async (cx) => {
+      const repo = await runEdge(repoForNew(folder, listed), Result.fail);
+      Result.match(repo, {
+        onSuccess: (root) =>
+          Option.match(root, {
+            onNone: () =>
+              notify({
+                title: "No repo for a new worktree",
+                body: "Focus a terminal in a repo, or add your repo folders in Settings.",
+                level: "warning",
+              }),
+            onSome: (main) => this.perform(cx, { _tag: "New", main }),
+          }),
+        onFailure: (body) =>
+          notify({ title: "Couldn't find the repo for a new worktree", body, level: "warning" }),
+      });
     });
   }
 
@@ -648,6 +706,11 @@ export default class Worktrunk extends View {
           height: 170,
           props: newProps(action.main),
         });
+        return;
+      case "NewHere":
+        return this.newHere(cx);
+      case "Focus":
+        Option.map(this.searchBox, (box) => box.focus());
         return;
       case "Create":
         return this.createWorktree(cx, action.main, action.name, action.base);

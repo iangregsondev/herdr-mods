@@ -51,7 +51,11 @@ export type Action =
   | { readonly _tag: "Refresh" }
   | { readonly _tag: "Hide"; readonly root: string }
   /** Open the Settings dialog. */
-  | { readonly _tag: "Settings" };
+  | { readonly _tag: "Settings" }
+  /** Ask for a branch name, for a new worktree in the focused folder's repo. */
+  | { readonly _tag: "NewHere" }
+  /** Give the panel the keyboard, in its search box. */
+  | { readonly _tag: "Focus" };
 
 export type CleanupAction = Extract<Action, { readonly _tag: "Cleanup" }>;
 

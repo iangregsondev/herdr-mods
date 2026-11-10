@@ -5,6 +5,7 @@
 import { Data, Effect, Option, Result } from "effect";
 import { newScript, switchedTo } from "./commands.ts";
 import { Files, type FileError } from "./files.ts";
+import { newRepoFor } from "./keys.ts";
 import type { JobSpec } from "./menus.ts";
 import {
   DEFAULT_SETTINGS,
@@ -138,6 +139,22 @@ export const findRepos = Effect.fn("findRepos")(function* (
  */
 export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (folder: string) {
   return yield* repoAt(folder);
+}, asReason);
+
+/**
+ * The repo a new worktree from the `new` key goes in: the repo `folder` (the focused
+ * folder; empty for none) is in, else the first of `listed`; none when neither has one.
+ * A lookup that fails is its one-line reason.
+ */
+export const repoForNew = Effect.fn("repoForNew")(function* (
+  folder: string,
+  listed: readonly string[],
+) {
+  const found = yield* repoAt(folder);
+  return newRepoFor(
+    Option.map(found, (repo) => repo.root),
+    listed,
+  );
 }, asReason);
 
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */

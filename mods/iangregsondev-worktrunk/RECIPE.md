@@ -74,6 +74,30 @@ A panel docked on the right of the window that lists your git repos and their [w
 - **No-wrapper setting:** the Settings checkbox, `"noWrapper": true` in the settings file, makes merge, remove and clean up call `command wt`, skipping a shell function named `wt` (such as a wrapper that asks a password manager for a token). New always uses plain `wt`, so `pr:N` keeps working through such a wrapper.
 - **Space matching:** a space sits on a worktree when its place (its first pane's live folder, else the folder it was made in) is inside that worktree's folder; the longest matching worktree path wins, so nested worktrees match correctly. When several spaces sit on one worktree, the shown one wins. Spaces on other machines are ignored.
 - **Tab-bar toggle:** a layout block `{ "mod": "iangregsondev-worktrunk", "props": { "role": "toggle" } }` draws a 112px strip on `chrome` with a `border` line under it, holding one pill button (git icon and "worktrunk", 26px high): `selected` with `foreground` text while the panel shows, else `chrome` with `muted` text. A click runs `layout.toggle` on the panel's block. The panel's block is the first block of this mod with no `role` (or `role: "panel"`), so the toggle never finds itself; a block naming a role the mod doesn't have draws nothing. The `iangregsondev` layout built by the repo's `vp run herdr:sync` places it at the end of the tab bar.
+- **Keyboard commands:** bind them in `~/.config/herdr-app/keys.json` as `"<keys>": "iangregsondev-worktrunk.<command>"` (a dot between the mod id and the command). Suggested bindings, none of them taken by Herdr's defaults:
+
+  ```json
+  {
+    "global": {
+      "cmd-shift-g": "iangregsondev-worktrunk.toggle",
+      "cmd-shift-f": "iangregsondev-worktrunk.focus",
+      "cmd-shift-n": "iangregsondev-worktrunk.new",
+      "cmd-shift-r": "iangregsondev-worktrunk.refresh",
+      "cmd-shift-,": "iangregsondev-worktrunk.settings"
+    }
+  }
+  ```
+
+  On Linux and Windows use `ctrl-shift-` in place of `cmd-shift-` (not `ctrl-shift-f`, Herdr's find, nor `ctrl-shift-n`/`ctrl-shift-r` if you use them already).
+  - `toggle`: shows or hides the panel (`layout.toggle` on its block).
+  - `focus`: puts the keyboard in the panel's search box, so typing narrows the list. Herdr also sends it when `pane.go` moves onto the panel, and again when a popup over the panel closes.
+  - `new`: the New worktree dialog for the repo of the focused folder (the focused terminal's live folder, else the focused space's place); outside every repo, for the first repo the panel lists. No repo at all: a `warning` toast, "No repo for a new worktree". A lookup that fails: a `warning` toast, "Couldn't find the repo for a new worktree", with the reason.
+  - `refresh`: reads everything again, folder scan included, as the repo menu's Refresh does.
+  - `settings`: opens the Settings dialog.
+  - Any other command name shows one `warning` toast, "Unknown worktrunk command", naming it and the commands there are.
+  - **Which copy acts:** Herdr hands a command to every shown copy of the mod and none to a hidden one, so exactly one acts. `toggle` goes to the tab-bar toggle while it shows (it stays shown when the panel hides, so the same key shows the panel again); in a layout with no shown toggle, the panel takes it and can only hide itself. The other commands go to the panel while it shows; while it is hidden, the toggle shows it (`layout.show`), then hands the command on through the mailbox. A panel that starts at that moment runs a request at most 5 seconds old, and skips older ones left from an earlier run. Overlays never act on a command.
+  - With no panel block in the layout, `toggle` and the others show one `warning` toast, "No worktrunk panel here".
+
 - **Herdr update toast:** when `~/.config/herdr-app/iangregsondev-sync.json` (written by `herdr:sync`) names a Herdr version other than the installed one (`updates().app.version`), the panel shows one `warning` toast, "Herdr updated: run herdr:sync". It remembers the version it told you about (shared key `iangregsondev-worktrunk.sync-told.v1`), so it shows once per version. No record, or one that can't be read, no toast.
 - **Agent status:** not shown; the panel is about worktrees, not agents.
 
@@ -81,7 +105,7 @@ A panel docked on the right of the window that lists your git repos and their [w
 
 - `mod.json`: `{ "place": "right", "size": 380, "title": "worktrunk", "focusable": true }`. Icons are this mod's own SVGs (`git`, `settings`, `sync`, `close`, `chevron-down`, `chevron-right`, `ring`, `search`, `check`, `alert`, `help`), drawn with `svg("mods/iangregsondev-worktrunk/<name>.svg")`.
 - `main.js` default-exports a `View` (from `gpui-kit`, with `h_flex`/`v_flex`, `Input` and `InputState` from `gpui-base`). A pure view builder turns a snapshot (repos, each repo's list and CI, settings, `spaces()`, `panes()`, the Current repo, folded state, view state, search text, now) into what the panel draws; `render` only turns that into elements. Every call to `exec`, the file functions and the folder picker goes through an Effect service (`Shell`, `Files`) with tagged errors, and each failure becomes something the panel shows: a banner, or a repo's error line.
-- `herdr` functions: `hc` (`run --json --bg --no-parent`, `wait --json --timeout 60`, `kill`, `rm`), `openOverlay`/`closeOverlay`, `pickFolder` (Settings' Add folder…), `props` (the role: no role for the panel, or `toggle`, `menu`, `confirm`, `new`, `settings`, `titlebar`; read from `props()`, since an overlay's props never reach `init`'s argument), `notify`, `exec`, `readTextFile`, `writeTextFile`, `appHome`, `home`, `spaces`, `panes`, `focused`, `layout` (to find its own block and whether it is hidden), `theme`, `settings`, `shared`/`setShared` (keys `iangregsondev-worktrunk.folded.v1`, `iangregsondev-worktrunk.view.v1`, `iangregsondev-worktrunk.imported.v1` and `iangregsondev-worktrunk.request.v1`), `run` (`space.select`, `space.new`, `space.close`, `layout.hide`), and the clipboard (`cx.write_to_clipboard`). Every call to `hc` goes through the `Shell` service too.
+- `herdr` functions: `hc` (`run --json --bg --no-parent`, `wait --json --timeout 60`, `kill`, `rm`), `openOverlay`/`closeOverlay`, `pickFolder` (Settings' Add folder…), `props` (the role: no role for the panel, or `toggle`, `menu`, `confirm`, `new`, `settings`, `titlebar`; read from `props()`, since an overlay's props never reach `init`'s argument), `notify`, `exec`, `readTextFile`, `writeTextFile`, `appHome`, `home`, `spaces`, `panes`, `focused`, `layout` (to find its own block and whether it is hidden), `theme`, `settings`, `shared`/`setShared` (keys `iangregsondev-worktrunk.folded.v1`, `iangregsondev-worktrunk.view.v1`, `iangregsondev-worktrunk.imported.v1` and `iangregsondev-worktrunk.request.v1`), `run` (`space.select`, `space.new`, `space.close`, `layout.hide`, `layout.show`, `layout.toggle`), `nextCommand` (the keyboard commands, in the panel and the tab-bar toggle), and the clipboard (`cx.write_to_clipboard`). Every call to `hc` goes through the `Shell` service too.
 - **Programs it runs**, all through `sh -c` with the inputs as arguments (`$1`...), and with `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` appended to `PATH`:
   - the folder scan: walks each group folder down to the depth, never into a repo, a symlink, a hidden folder or a skipped name; a folder with a `.git` folder is a repo, and its worktrees are counted from `.git/worktrees/`;
   - the open spaces' repos: `git rev-parse --path-format=absolute --git-common-dir` for each space's place (and the focused folder, for the Current repo), whose parent is the repo, and `git worktree list --porcelain` for the count;
@@ -102,6 +126,7 @@ A panel docked on the right of the window that lists your git repos and their [w
 - Jobs need an sh-compatible login shell (zsh, bash): the clean-up script uses `||` and `[ ]`. With fish, merge, remove and new work but clean up doesn't.
 - With your own `wt` function (for example one that fetches a token from a password manager), every job calls it; that may prompt. Set `"noWrapper": true` to skip it for merge, remove and clean up.
 - Copy path and Reveal in Finder are macOS only (`open`).
+- Keyboard commands reach only shown copies. In a layout with the panel but no tab-bar toggle (the `place: "right"` dock, whose block id is random), the `toggle` key can hide the panel but not show it again, and the other commands do nothing while it is hidden: use a layout with the toggle (such as `iangregsondev`). For a layout whose panel block has a fixed id, a binding straight to the app command works even while it is hidden: `"cmd-shift-g": {"command": "layout.toggle", "args": {"id": "worktrunk-panel"}}` in a `layout:<name>` section.
 - A squash merge may run wt's commit-message generator if your wt config sets one.
 - Every shared-state key and the settings file are named with the mod id, so it runs beside the older `worktrunk` mod without either touching the other's state.
 - Every repo of the selected group is read on each refresh; with many repos that is many `wt` processes every 20 seconds. Choose a group chip to read fewer.
@@ -124,5 +149,6 @@ A panel docked on the right of the window that lists your git repos and their [w
 - Hide this repo drops it from the list and adds it to `hidden` in the settings file; "Show again" in Settings, then Save, brings it back.
 - In Settings, renaming, reordering, removing and adding a group folder, changing depth and skip names, and the shell-wrapper checkbox all show in the settings file after Save, and in the dialog when it opens again; the chips follow the new names and order.
 - Editing the settings file by hand while the dialog is open, then pressing Save, leaves the hand edit in place and the dialog says the file changed.
+- With the suggested bindings in `keys.json`: the toggle key hides and shows the panel; refresh turns the header's ring; new opens "New worktree in <the focused repo>"; settings opens the Settings dialog; focus puts the cursor in the search box. With the panel hidden, refresh, new, settings and focus show it first.
 - On a first run with only `worktrunk.json` present, `iangregsondev-worktrunk.json` appears with the same folders, and `worktrunk.json` is unchanged.
 - Deleting `iangregsondev-worktrunk.json` after that leaves the panel on the defaults; the old settings are never copied again.

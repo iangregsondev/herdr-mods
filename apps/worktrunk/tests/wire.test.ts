@@ -113,6 +113,16 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test("reads back a Focus action, as the toggle copy hands on the focus key", () => {
+    const action = { _tag: "Focus" } as const;
+    expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test("reads back a NewHere action, as the toggle copy hands on the new key", () => {
+    const action = { _tag: "NewHere" } as const;
+    expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
   test.each([
     ["nothing", undefined],
     ["a string", "Refresh"],

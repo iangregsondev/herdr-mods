@@ -118,6 +118,10 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.some({ _tag: "Refresh" });
     case "Settings":
       return Option.some({ _tag: "Settings" });
+    case "Focus":
+      return Option.some({ _tag: "Focus" });
+    case "NewHere":
+      return Option.some({ _tag: "NewHere" });
     default:
       return Option.none();
   }

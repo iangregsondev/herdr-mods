@@ -11,6 +11,7 @@ import {
   readCi,
   readEach,
   readList,
+  repoForNew,
   runJob,
   saveSettings,
   settingsText,
@@ -317,6 +318,52 @@ describe("lookUpCurrent", () => {
       const { api } = scripts({});
       const found = yield* lookUpCurrent("/r/api").pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(found, Result.fail("no owners"));
+    }),
+  );
+});
+
+describe("repoForNew", () => {
+  it.effect("the repo the focused folder is in", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ owners: "/r/api\t2\n" });
+      const repo = yield* repoForNew("/r/api.feat", ["/r/web"]).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(repo, Result.succeed(Option.some("/r/api")));
+    }),
+  );
+
+  it.effect("outside every repo, the first repo listed", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ owners: "" });
+      const repo = yield* repoForNew("/tmp", ["/r/web", "/r/api"]).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(repo, Result.succeed(Option.some("/r/web")));
+    }),
+  );
+
+  it.effect("with no focused folder, the first repo listed, looking nothing up", () =>
+    Effect.gen(function* () {
+      const { api, ran } = scripts({});
+      const repo = yield* repoForNew("", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([repo, ran], [Result.succeed(Option.some("/r/web")), []]);
+    }),
+  );
+
+  it.effect("none when the focused folder is in no repo and none is listed", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ owners: "" });
+      const repo = yield* repoForNew("/tmp", []).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(repo, Result.succeed(Option.none()));
+    }),
+  );
+
+  it.effect("a lookup that fails is its one-line reason, not a guess", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({});
+      const repo = yield* repoForNew("/r/api", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(repo, Result.fail("no owners"));
     }),
   );
 });
