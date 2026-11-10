@@ -1,0 +1,388 @@
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main",
+    "forge": {
+      "url": "https://github.com/iangregsondev/herdr-mods",
+      "provider": "github",
+      "host": "github.com",
+      "owner": "iangregsondev",
+      "name": "herdr-mods",
+      "remote": "origin"
+    }
+  },
+  "collected": {
+    "ci": true,
+    "summary": false
+  },
+  "items": [
+    {
+      "branch": "main",
+      "head": {
+        "sha": "7c270cfde3406f4b05017d36c2cd8bd3cdc7a9f6",
+        "short_sha": "7c270cf",
+        "subject": "test: backfill tests for scripts, mod-pack and hooks (#4)",
+        "committed_at": "2026-11-09T14:48:30Z"
+      },
+      "worktree": {
+        "path": "/work3/app",
+        "main": true,
+        "current": true,
+        "previous": true,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "main",
+        "ahead": 0,
+        "behind": 0
+      },
+      "checks": {
+        "status": "passed",
+        "source": "branch",
+        "stale": false
+      },
+      "display": {
+        "state": "is_main",
+        "symbols": "^|",
+        "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m|\u001b[22m  \u001b[32m#\u001b[0m"
+      }
+    },
+    {
+      "branch": "feat/14-menu-import-adr",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work3/app.feat-14-menu-import-adr",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "\u2191",
+        "statusline": "feat/14-menu-import-adr  \u001b[2m\u2191\u001b[22m  \u001b[32m\u21911\u001b[0m  ^\u001b[32m+60\u001b[0m"
+      }
+    },
+    {
+      "branch": "feat/5-worktrunk-mod",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work3/app.feat-5-worktrunk-mod",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "feat/5-worktrunk-mod",
+        "ahead": 0,
+        "behind": 0
+      },
+      "pr": {
+        "number": 17,
+        "url": "https://github.com/iangregsondev/herdr-mods/pull/17",
+        "review": "draft",
+        "mergeable": null,
+        "repo": {
+          "url": "https://github.com/iangregsondev/herdr-mods",
+          "provider": "github",
+          "host": "github.com",
+          "owner": "iangregsondev",
+          "name": "herdr-mods"
+        }
+      },
+      "checks": {
+        "status": "passed",
+        "source": "pr",
+        "stale": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "\u2191|",
+        "statusline": "feat/5-worktrunk-mod  \u001b[2m\u2191\u001b[22m\u001b[2m|\u001b[22m  \u001b[32m\u21911\u001b[0m  ^\u001b[32m+60\u001b[0m  \u001b[2m\u001b[32m\u001b[4m\u001b]8;;https://github.com/iangregsondev/herdr-mods/pull/17\u001b\\#17\u001b]8;;\u001b\\\u001b[24m\u001b[0m"
+      }
+    },
+    {
+      "branch": "feat/6-namespace",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work3/app.feat-6-namespace",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": true,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 79,
+            "deleted": 33
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "!\u2191",
+        "statusline": "feat/6-namespace  \u001b[36m!\u001b[39m\u001b[2m\u2191\u001b[22m  @\u001b[32m+79\u001b[0m \u001b[31m-33\u001b[0m  \u001b[32m\u21911\u001b[0m  ^\u001b[32m+60\u001b[0m"
+      }
+    },
+    {
+      "branch": "prototype/menu-import",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work3/app.prototype-menu-import",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": true,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 23,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "?\u2191",
+        "statusline": "prototype/menu-import  \u001b[36m?\u001b[39m\u001b[2m\u2191\u001b[22m  @\u001b[32m+23\u001b[0m  \u001b[32m\u21911\u001b[0m  ^\u001b[32m+60\u001b[0m"
+      }
+    },
+    {
+      "branch": "chore/dev-conventions",
+      "head": {
+        "sha": "ee7a21dd742a12284484dd66f392673258714667",
+        "short_sha": "ee7a21d",
+        "subject": "chore: run root tests once in verify",
+        "committed_at": "2026-11-09T09:47:32Z"
+      },
+      "worktree": {
+        "path": "/work3/app.chore-dev-conventions",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 35,
+        "behind": 2,
+        "diff": {
+          "added": 6389,
+          "deleted": 54
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "patch_id_match"
+        },
+        "merge_conflicts": true
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "chore/dev-conventions",
+        "ahead": 0,
+        "behind": 0
+      },
+      "checks": {
+        "status": "passed",
+        "source": "branch",
+        "stale": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282|",
+        "statusline": "chore/dev-conventions  \u001b[2m\u2282\u001b[22m\u001b[2m|\u001b[22m  \u001b[32m\u219135\u001b[0m \u001b[2m\u001b[31m\u21932\u001b[0m  ^\u001b[32m+6389\u001b[0m \u001b[31m-54\u001b[0m  \u001b[32m#\u001b[0m"
+      }
+    },
+    {
+      "branch": "chore/dev-loop",
+      "head": {
+        "sha": "83beb4bf54ac17c05aabfa1cfc93dd1f007b52d8",
+        "short_sha": "83beb4b",
+        "subject": "docs: explain the dev loop for people and agents",
+        "committed_at": "2026-11-08T11:08:11Z"
+      },
+      "worktree": {
+        "path": "/work3/app.chore-dev-loop",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 3,
+        "behind": 3,
+        "diff": {
+          "added": 588,
+          "deleted": 14
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "patch_id_match"
+        },
+        "merge_conflicts": true
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "chore/dev-loop",
+        "ahead": 0,
+        "behind": 0
+      },
+      "checks": {
+        "status": "passed",
+        "source": "branch",
+        "stale": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282|",
+        "statusline": "chore/dev-loop  \u001b[2m\u2282\u001b[22m\u001b[2m|\u001b[22m  \u001b[32m\u21913\u001b[0m \u001b[2m\u001b[31m\u21933\u001b[0m  ^\u001b[32m+588\u001b[0m \u001b[31m-14\u001b[0m  \u001b[32m#\u001b[0m"
+      }
+    }
+  ]
+}

@@ -1,0 +1,725 @@
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main"
+  },
+  "collected": {
+    "ci": false,
+    "summary": false
+  },
+  "items": [
+    {
+      "branch": "main",
+      "head": {
+        "sha": "d44d4747c973a5c02de75cf3cbf48c3b3ce06640",
+        "short_sha": "d44d474",
+        "subject": "later",
+        "committed_at": "2026-11-09T15:32:31Z"
+      },
+      "worktree": {
+        "path": "/work/repo",
+        "main": true,
+        "current": true,
+        "previous": true,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "main",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "is_main",
+        "symbols": "^|",
+        "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m|\u001b[22m"
+      }
+    },
+    {
+      "branch": "emptynow",
+      "head": {
+        "sha": "d44d4747c973a5c02de75cf3cbf48c3b3ce06640",
+        "short_sha": "d44d474",
+        "subject": "later",
+        "committed_at": "2026-11-09T15:32:31Z"
+      },
+      "worktree": {
+        "path": "/work/repo.emptynow",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 0,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "same_commit"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "empty",
+        "symbols": "_",
+        "statusline": "emptynow  \u001b[2m_\u001b[22m"
+      }
+    },
+    {
+      "branch": "mergeaddsnothing",
+      "head": {
+        "sha": "9fee843a4ad6c519c58500fec07eb05ced4e7193",
+        "short_sha": "9fee843",
+        "subject": "m",
+        "committed_at": "2026-11-09T15:32:31Z"
+      },
+      "worktree": {
+        "path": "/work/repo.mergeaddsnothing",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 5,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "merge_adds_nothing"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282",
+        "statusline": "mergeaddsnothing  \u001b[2m\u2282\u001b[22m  \u001b[32m\u21911\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "samecommit",
+      "head": {
+        "sha": "d44d4747c973a5c02de75cf3cbf48c3b3ce06640",
+        "short_sha": "d44d474",
+        "subject": "later",
+        "committed_at": "2026-11-09T15:32:31Z"
+      },
+      "worktree": {
+        "path": "/work/repo.samecommit",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": true,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 1,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 0,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "same_commit"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "same_commit",
+        "symbols": "!\u2013",
+        "statusline": "samecommit  \u001b[36m!\u001b[39m\u001b[2m\u2013\u001b[22m  @\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "staged",
+      "head": {
+        "sha": "d44d4747c973a5c02de75cf3cbf48c3b3ce06640",
+        "short_sha": "d44d474",
+        "subject": "later",
+        "committed_at": "2026-11-09T15:32:31Z"
+      },
+      "worktree": {
+        "path": "/work/repo.staged",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": true,
+          "modified": false,
+          "untracked": true,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 2,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 0,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "same_commit"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "same_commit",
+        "symbols": "+?\u2013",
+        "statusline": "staged  \u001b[36m+\u001b[39m\u001b[36m?\u001b[39m\u001b[2m\u2013\u001b[22m  @\u001b[32m+2\u001b[0m"
+      }
+    },
+    {
+      "branch": "ahead",
+      "head": {
+        "sha": "05f5b78efe3c90afdf3108c6f04d3271f393e0cb",
+        "short_sha": "05f5b78",
+        "subject": "ahead",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.ahead",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 5,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "\u2195",
+        "statusline": "ahead  \u001b[2m\u2195\u001b[22m  \u001b[32m\u21911\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "aheadremote",
+      "head": {
+        "sha": "0f22b6ae5de2bfbb83b614a6ece79bf03b297461",
+        "short_sha": "0f22b6a",
+        "subject": "ar2",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.aheadremote",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 2,
+        "behind": 5,
+        "diff": {
+          "added": 2,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "aheadremote",
+        "ahead": 1,
+        "behind": 0
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "\u2195\u21e1",
+        "statusline": "aheadremote  \u001b[2m\u2195\u001b[22m\u001b[2m\u21e1\u001b[22m  \u001b[32m\u21912\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+2\u001b[0m  \u001b[32m\u21e11\u001b[0m"
+      }
+    },
+    {
+      "branch": "behindremote",
+      "head": {
+        "sha": "2337286e491ee4f52402d9b5364ccdbd0a6b903b",
+        "short_sha": "2337286",
+        "subject": "br",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.behindremote",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 5,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "behindremote",
+        "ahead": 0,
+        "behind": 1
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "\u2195\u21e3",
+        "statusline": "behindremote  \u001b[2m\u2195\u001b[22m\u001b[2m\u21e3\u001b[22m  \u001b[32m\u21911\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+1\u001b[0m  \u001b[2m\u001b[31m\u21e31\u001b[0m"
+      }
+    },
+    {
+      "branch": "conflict",
+      "head": {
+        "sha": "9acf1144638ea730db7ffea3f22a5bc88ea53941",
+        "short_sha": "9acf114",
+        "subject": "conflict",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.conflict",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 5,
+        "diff": {
+          "added": 1,
+          "deleted": 1
+        },
+        "orphan": false,
+        "merge_conflicts": true
+      },
+      "display": {
+        "state": "would_conflict",
+        "symbols": "\u2717",
+        "statusline": "conflict  \u001b[33m\u2717\u001b[39m  \u001b[32m\u21911\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+1\u001b[0m \u001b[31m-1\u001b[0m"
+      }
+    },
+    {
+      "branch": "squashed",
+      "head": {
+        "sha": "36e0172e2ece01f5c3fa3f26a83ba026185d9718",
+        "short_sha": "36e0172",
+        "subject": "s2",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.squashed",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 2,
+        "behind": 5,
+        "diff": {
+          "added": 2,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "merge_adds_nothing"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282",
+        "statusline": "squashed  \u001b[2m\u2282\u001b[22m  \u001b[32m\u21912\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+2\u001b[0m"
+      }
+    },
+    {
+      "branch": "treesmatch",
+      "head": {
+        "sha": "131a00e7d733331d21cb5019ef94a2631a5e0bdd",
+        "short_sha": "131a00e",
+        "subject": "t",
+        "committed_at": "2026-11-09T15:32:30Z"
+      },
+      "worktree": {
+        "path": "/work/repo.treesmatch",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 5,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "merge_adds_nothing"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282",
+        "statusline": "treesmatch  \u001b[2m\u2282\u001b[22m  \u001b[32m\u21911\u001b[0m \u001b[2m\u001b[31m\u21935\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "ancestor",
+      "head": {
+        "sha": "d223b3252086e83d5bc68abb8cd94388c0bd4627",
+        "short_sha": "d223b32",
+        "subject": "init",
+        "committed_at": "2026-11-09T15:32:29Z"
+      },
+      "worktree": {
+        "path": "/work/repo.ancestor",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 5,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "ancestor"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282",
+        "statusline": "ancestor  \u001b[2m\u2282\u001b[22m  \u001b[2m\u001b[31m\u21935\u001b[0m"
+      }
+    },
+    {
+      "branch": null,
+      "head": {
+        "sha": "d223b3252086e83d5bc68abb8cd94388c0bd4627",
+        "short_sha": "d223b32",
+        "subject": "init",
+        "committed_at": "2026-11-09T15:32:29Z"
+      },
+      "worktree": {
+        "path": "/work/repo.detached",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": true,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 5,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "ancestor"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282\u2298",
+        "statusline": "d223b32  \u001b[33m\u2298\u001b[39m\u001b[2m\u2282\u001b[22m  \u001b[2m\u001b[31m\u21935\u001b[0m"
+      }
+    },
+    {
+      "branch": "empty",
+      "head": {
+        "sha": "d223b3252086e83d5bc68abb8cd94388c0bd4627",
+        "short_sha": "d223b32",
+        "subject": "init",
+        "committed_at": "2026-11-09T15:32:29Z"
+      },
+      "worktree": {
+        "path": "/work/repo.empty",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 5,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "ancestor"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "\u2282",
+        "statusline": "empty  \u001b[2m\u2282\u001b[22m  \u001b[2m\u001b[31m\u21935\u001b[0m"
+      }
+    },
+    {
+      "branch": "samedirty",
+      "head": {
+        "sha": "d223b3252086e83d5bc68abb8cd94388c0bd4627",
+        "short_sha": "d223b32",
+        "subject": "init",
+        "committed_at": "2026-11-09T15:32:29Z"
+      },
+      "worktree": {
+        "path": "/work/repo.samedirty",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": true,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 1,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 5,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "ancestor"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "behind",
+        "symbols": "!\u2193",
+        "statusline": "samedirty  \u001b[36m!\u001b[39m\u001b[2m\u2193\u001b[22m  @\u001b[32m+1\u001b[0m  \u001b[2m\u001b[31m\u21935\u001b[0m"
+      }
+    }
+  ]
+}

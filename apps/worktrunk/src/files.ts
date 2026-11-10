@@ -1,0 +1,58 @@
+// Reading and writing files through Herdr, as Effects with tagged errors. Pure: `herdr`
+// is imported as a type only, and main.ts hands the real API to the layer.
+import { Context, Data, Effect, Layer, Predicate } from "effect";
+import type * as herdr from "herdr";
+
+/** The parts of Herdr's API this service calls. */
+export type FilesApi = Pick<typeof herdr, "readTextFile" | "writeTextFile">;
+
+/** There is no file at `path`. */
+export class FileMissing extends Data.TaggedError("FileMissing")<{ readonly path: string }> {}
+
+/** Reading or writing `path` failed. */
+export class FileError extends Data.TaggedError("FileError")<{
+  readonly path: string;
+  readonly cause: unknown;
+}> {}
+
+/** The write was refused because the file changed, or appeared, since it was read. */
+export class WriteConflict extends Data.TaggedError("WriteConflict")<{
+  readonly path: string;
+}> {}
+
+export class Files extends Context.Service<
+  Files,
+  {
+    /** The file's text. */
+    readonly read: (path: string) => Effect.Effect<string, FileMissing | FileError>;
+    /** Writes `text` as a new file at `path`; it never replaces a file. */
+    readonly create: (path: string, text: string) => Effect.Effect<void, WriteConflict | FileError>;
+  }
+>()("iangregsondev-worktrunk/Files") {
+  static readonly layer = (api: FilesApi) => {
+    // No `signal` parameter: Herdr's runtime has no AbortController.
+    const read = (path: string) =>
+      Effect.tryPromise({
+        try: () => api.readTextFile(path),
+        catch: (cause) => new FileError({ path, cause }),
+      }).pipe(Effect.filterOrFail(Predicate.isNotNull, () => new FileMissing({ path })));
+    // `expected: null` makes Herdr create the file, refusing when one is there. Herdr's
+    // rejection doesn't say which, so a file found there afterwards means a conflict.
+    const create = (path: string, text: string) =>
+      Effect.tryPromise({
+        try: () => api.writeTextFile(path, text, null),
+        catch: (cause) => new FileError({ path, cause }),
+      }).pipe(
+        Effect.asVoid,
+        Effect.catchTag("FileError", (failed) =>
+          read(path).pipe(
+            Effect.matchEffect({
+              onSuccess: () => Effect.fail(new WriteConflict({ path })),
+              onFailure: () => Effect.fail(failed),
+            }),
+          ),
+        ),
+      );
+    return Layer.succeed(Files, Files.of({ read, create }));
+  };
+}
