@@ -150,9 +150,9 @@ describe("cleanupAction", () => {
 describe("repoMenu", () => {
   const worktrees = [wt("/r/app", "main", MAIN), wt("/r/app.a", "a", MERGED), FEAT];
 
-  test("new worktree, clean up with the merged count, refresh, reveal, hide", () => {
+  test("new or open worktree, clean up with the merged count, refresh, reveal, hide", () => {
     expect(labels(repoMenu("/r/app", worktrees))).toEqual([
-      "New worktree…",
+      "New or open worktree…",
       "Clean up 1 merged…",
       "Refresh",
       "Reveal in Finder",
@@ -168,14 +168,14 @@ describe("repoMenu", () => {
   test("its items act on this repo; only Clean up is destructive", () => {
     const items = repoMenu("/r/app", worktrees);
     expect(items.map((i) => [i.action._tag, i.danger])).toEqual([
-      ["New", false],
+      ["NewOrOpen", false],
       ["Cleanup", true],
       ["Refresh", false],
       ["Reveal", false],
       ["Hide", false],
     ]);
     expect([items[0]?.action, items[3]?.action, items[4]?.action]).toEqual([
-      { _tag: "New", main: "/r/app" },
+      { _tag: "NewOrOpen", folder: "/r/app" },
       { _tag: "Reveal", path: "/r/app" },
       { _tag: "Hide", root: "/r/app" },
     ]);
@@ -323,7 +323,7 @@ describe("confirmFor", () => {
 
   test.each([
     { _tag: "Open", click: CLICK },
-    { _tag: "New", main: "/r/app" },
+    { _tag: "NewOrOpen", folder: "/r/app" },
     { _tag: "Create", main: "/r/app", name: "x", base: null },
     { _tag: "CopyPath", path: "/r/app" },
     { _tag: "Reveal", path: "/r/app" },
@@ -392,7 +392,7 @@ describe("jobFor", () => {
 
   test.each([
     { _tag: "Open", click: CLICK },
-    { _tag: "New", main: "/r/app" },
+    { _tag: "NewOrOpen", folder: "/r/app" },
     { _tag: "Create", main: "/r/app", name: "x", base: null },
     { _tag: "CopyPath", path: "/r/app" },
     { _tag: "Reveal", path: "/r/app" },

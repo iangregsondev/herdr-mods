@@ -4,8 +4,8 @@
 // keeps what they return. Pure: no `herdr` or `gpui` imports.
 import { Data, Effect, Option, Result } from "effect";
 import { newScript, switchedTo } from "./commands.ts";
+import type { Branch, DialogProps } from "./dialog.ts";
 import { Files, type FileError } from "./files.ts";
-import { newRepoFor } from "./keys.ts";
 import type { JobSpec } from "./menus.ts";
 import {
   DEFAULT_SETTINGS,
@@ -20,8 +20,10 @@ import {
 import { reposFrom, withoutHidden, type FoundRepo, type Repo } from "./repos.ts";
 import { syncNotice } from "./sync.ts";
 import {
+  branchAt,
   causeText,
   failureText,
+  gitBranches,
   goneFolders,
   JobNotStarted,
   loginShell,
@@ -37,8 +39,10 @@ import {
   wtList,
   type CommandFailed,
   type ListUnreadable,
+  type Shell,
   type ShellError,
 } from "./shell.ts";
+import type { Worktree } from "./worktrees.ts";
 
 export interface SettingsFiles {
   /** The mod's own settings file. */
@@ -142,19 +146,36 @@ export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (folder: strin
 }, asReason);
 
 /**
- * The repo a new worktree from the `new` key goes in: the repo `folder` (the focused
- * folder; empty for none) is in, else the first of `listed`; none when neither has one.
- * A lookup that fails is its one-line reason.
+ * What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
+ * empty for none) is in: that repo and the branch the folder is on, and the `listed`
+ * repos to pick from, by folder name. None when there is no repo at all. A lookup that
+ * fails is its one-line reason.
  */
-export const repoForNew = Effect.fn("repoForNew")(function* (
+export const dialogFor = Effect.fn("dialogFor")(function* (
   folder: string,
   listed: readonly string[],
 ) {
   const found = yield* repoAt(folder);
-  return newRepoFor(
-    Option.map(found, (repo) => repo.root),
-    listed,
-  );
+  // The branch is offered as a base only in the repo it belongs to.
+  const branch = Option.isSome(found) ? yield* branchAt(folder) : Option.none<string>();
+  const repos = [...listed].sort((a, b) => lastSegment(a).localeCompare(lastSegment(b)));
+  const props: DialogProps = { repo: Option.map(found, (repo) => repo.root), branch, repos };
+  return Option.isNone(found) && repos.length === 0 ? Option.none() : Option.some(props);
+}, asReason);
+
+/** What the New-or-open dialog lists for a repo: each read's answer, or why it failed. */
+export interface DialogRead {
+  readonly list: Result.Result<readonly Worktree[], string>;
+  readonly branches: Result.Result<readonly Branch[], string>;
+}
+
+/** The worktrees and branches of the repo at `root`, for the New-or-open dialog. */
+export const readDialogRepo = (root: string): Effect.Effect<DialogRead, never, Shell> =>
+  Effect.all({ list: readList(root), branches: readBranches(root) }, { concurrency: 2 });
+
+/** The branches of the repo at `root`, or the one-line reason the read failed. */
+const readBranches = Effect.fn("readBranches")(function* (root: string) {
+  return yield* gitBranches(root);
 }, asReason);
 
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
@@ -322,7 +343,7 @@ export const newWorktree = Effect.fn("newWorktree")(
     );
     const out = `${dir}/switch.json`;
     const spec: JobSpec = {
-      title: `New worktree ${target.name}`,
+      title: `Open or create ${target.name}`,
       cwd: target.main,
       body: newScript({ ...target, base: Option.fromNullishOr(target.base), out }),
       gone: [],

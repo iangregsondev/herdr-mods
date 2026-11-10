@@ -5,14 +5,14 @@ import { confirmFor, repoMenu, rowMenu } from "../src/menus.ts";
 import { roleOf } from "../src/layout.ts";
 import {
   confirmProps,
+  dialogProps,
   menuProps,
-  newProps,
   overlayOf,
   readAction,
   readConfirmProps,
+  readDialogProps,
   readFolded,
   readMenuProps,
-  readNewProps,
   readRequest,
   readSettingsText,
   readTitlebarProps,
@@ -118,8 +118,10 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
-  test("reads back a NewHere action, as the toggle copy hands on the new key", () => {
-    const action = { _tag: "NewHere" } as const;
+  test.each([
+    { _tag: "NewOrOpen", folder: "/r/app" },
+    { _tag: "NewOrOpen", folder: null },
+  ] as const)("reads back a NewOrOpen for the folder $folder", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
@@ -143,6 +145,9 @@ describe("readAction", () => {
     ["an open with a bad click", { _tag: "Open", click: { _tag: "Select" } }],
     ["a create whose base isn't text or null", { _tag: "Create", main: "/r", name: "f", base: 1 }],
     ["a hide with no repo", { _tag: "Hide" }],
+    ["a new-or-open with no folder", { _tag: "NewOrOpen" }],
+    ["the New dialog's old action, which New or open replaced", { _tag: "New", main: "/r" }],
+    ["the new key's old action, which New or open replaced", { _tag: "NewHere" }],
   ])("is none for %s", (_label, value) => {
     expect(readAction(value)).toEqual(Option.none());
   });
@@ -229,10 +234,19 @@ describe("readTitlebarProps", () => {
   });
 });
 
-describe("readNewProps", () => {
-  test("the repo the New worktree dialog was opened for, or none", () => {
-    expect(readNewProps({ role: "new", main: "/r/app" })).toEqual(Option.some("/r/app"));
-    expect(readNewProps({ role: "new" })).toEqual(Option.none());
+describe("readDialogProps", () => {
+  test("the repo, the branch I'm on and the repos to pick from; a repo that isn't text is left out", () => {
+    expect(
+      readDialogProps({ role: "new", repo: "/r/app", branch: "feat/a", repos: ["/r/app", 3] }),
+    ).toEqual({ repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: ["/r/app"] });
+  });
+
+  test("anything missing or of the wrong type reads as none", () => {
+    expect(readDialogProps({ repo: null, branch: 7, repos: "/r/app" })).toEqual({
+      repo: Option.none(),
+      branch: Option.none(),
+      repos: [],
+    });
   });
 });
 
@@ -266,11 +280,9 @@ describe("overlay props writers", () => {
       Option.some("titlebar"),
       { title: "Merge feat", addr: Option.some("t1") },
     ]);
-    const dialog = overTheWire(newProps("/r/app"));
-    expect([roleOf(dialog), readNewProps(dialog)]).toEqual([
-      Option.some("new"),
-      Option.some("/r/app"),
-    ]);
+    const opened = { repo: Option.some("/r/app"), branch: Option.none(), repos: ["/r/app"] };
+    const dialog = overTheWire(dialogProps(opened));
+    expect([roleOf(dialog), readDialogProps(dialog)]).toEqual([Option.some("new"), opened]);
     const settings = overTheWire(settingsProps('{ "depth": 3 }'));
     expect([roleOf(settings), readSettingsText(settings)]).toEqual([
       Option.some("settings"),

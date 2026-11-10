@@ -77,6 +77,13 @@ export const LIST_SCRIPT = 'cd "$1" && wt list --format=json';
 /** Lists the worktrees of the repo at $1 with their CI. */
 export const CI_SCRIPT = `${LIST_SCRIPT} --full`;
 
+/** The local and origin branches of the repo at $1, one full ref name per line. */
+export const BRANCHES_SCRIPT =
+  "git -C \"$1\" for-each-ref '--format=%(refname)' refs/heads refs/remotes/origin";
+
+/** The branch the folder at $1 is on; nothing when its HEAD is detached. */
+export const BRANCH_SCRIPT = 'git -C "$1" branch --show-current';
+
 /** `word` as one literal shell word: single-quoted, with each `'` closed, escaped and reopened. */
 export const quote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
 

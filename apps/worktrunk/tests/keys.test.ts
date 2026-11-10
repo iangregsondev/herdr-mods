@@ -5,7 +5,6 @@ import {
   copiesIn,
   handledAtStart,
   isLeftover,
-  newRepoFor,
   noticeFor,
   routeCommand,
 } from "../src/keys.ts";
@@ -97,7 +96,7 @@ describe("actionFor", () => {
   test.each([
     ["refresh", { _tag: "Refresh" }],
     ["settings", { _tag: "Settings" }],
-    ["new", { _tag: "NewHere" }],
+    ["new", { _tag: "NewOrOpen", folder: null }],
     ["focus", { _tag: "Focus" }],
   ] as const)("%s runs the panel's %o", (command, action) => {
     expect(actionFor(command)).toEqual(action);
@@ -184,21 +183,5 @@ describe("noticeFor", () => {
     { _tag: "Ignore" },
   ] as const)("no notice for a $_tag step", (step) => {
     expect(noticeFor(step)).toEqual(Option.none());
-  });
-});
-
-describe("newRepoFor", () => {
-  test("the focused folder's repo when there is one", () => {
-    expect(newRepoFor(Option.some("/code/b"), ["/code/a", "/code/b"])).toEqual(
-      Option.some("/code/b"),
-    );
-  });
-
-  test("outside every repo, the first repo listed", () => {
-    expect(newRepoFor(Option.none(), ["/code/a", "/code/b"])).toEqual(Option.some("/code/a"));
-  });
-
-  test("none outside every repo when no repo is listed", () => {
-    expect(newRepoFor(Option.none(), [])).toEqual(Option.none());
   });
 });

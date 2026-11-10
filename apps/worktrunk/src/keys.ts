@@ -79,7 +79,7 @@ export const routeCommand = (command: string, role: Role, copies: Copies): Step 
 const COMMAND_ACTIONS: Readonly<Record<PanelCommand, Action>> = {
   refresh: { _tag: "Refresh" },
   settings: { _tag: "Settings" },
-  new: { _tag: "NewHere" },
+  new: { _tag: "NewOrOpen", folder: null },
   focus: { _tag: "Focus" },
 };
 
@@ -135,9 +135,3 @@ export const noticeFor = (step: Step): Option.Option<Notice> => {
       return Option.none();
   }
 };
-
-/** The repo a new worktree goes in: the focused folder's repo, else the first one listed. */
-export const newRepoFor = (
-  focusedRoot: Option.Option<string>,
-  listed: readonly string[],
-): Option.Option<string> => Option.orElse(focusedRoot, () => Option.fromNullishOr(listed[0]));

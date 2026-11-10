@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "../src/files.ts";
 import {
+  dialogFor,
   findRepos,
   hideInSettings,
   loadSettings,
@@ -9,9 +10,9 @@ import {
   newWorktree,
   pickGroupFolder,
   readCi,
+  readDialogRepo,
   readEach,
   readList,
-  repoForNew,
   runJob,
   saveSettings,
   settingsText,
@@ -322,48 +323,147 @@ describe("lookUpCurrent", () => {
   );
 });
 
-describe("repoForNew", () => {
-  it.effect("the repo the focused folder is in", () =>
+/**
+ * A Herdr API whose `exec` answers the dialog's lookups by a word in each script (absent
+ * answers fail), recording which ran and with what.
+ */
+const lookups = (answers: {
+  readonly owners?: string;
+  readonly branch?: string;
+  readonly branches?: string;
+  readonly list?: string;
+}) => {
+  const ran: (readonly string[])[] = [];
+  const which = (body: string) =>
+    body.includes("git-common-dir")
+      ? "owners"
+      : body.includes("--show-current")
+        ? "branch"
+        : body.includes("for-each-ref")
+          ? "branches"
+          : body.includes("wt list")
+            ? "list"
+            : "?";
+  const api: ExecApi = {
+    hc: noHc,
+    exec: (_command, args = []) => {
+      const name = which(args[1] ?? "");
+      ran.push([name, ...args.slice(3)]);
+      const stdout = name === "?" ? undefined : answers[name];
+      return Promise.resolve(
+        stdout === undefined
+          ? { code: 1, stdout: "", stderr: `no ${name}` }
+          : { code: 0, stdout, stderr: "" },
+      );
+    },
+  };
+  return { api, ran };
+};
+
+describe("dialogFor", () => {
+  it.effect("the focused folder's repo, the branch it is on, and the repos by folder name", () =>
     Effect.gen(function* () {
-      const { api } = scripts({ owners: "/r/api\t2\n" });
-      const repo = yield* repoForNew("/r/api.feat", ["/r/web"]).pipe(
+      const { api, ran } = lookups({ owners: "/r/api\t2\n", branch: "feat/a\n" });
+      const opened = yield* dialogFor("/r/api.feat", ["/w/web", "/r/api", "/p/app"]).pipe(
         Effect.provide(Shell.layer(api)),
       );
-      assert.deepStrictEqual(repo, Result.succeed(Option.some("/r/api")));
-    }),
-  );
-
-  it.effect("outside every repo, the first repo listed", () =>
-    Effect.gen(function* () {
-      const { api } = scripts({ owners: "" });
-      const repo = yield* repoForNew("/tmp", ["/r/web", "/r/api"]).pipe(
-        Effect.provide(Shell.layer(api)),
+      assert.deepStrictEqual(
+        opened,
+        Result.succeed(
+          Option.some({
+            repo: Option.some("/r/api"),
+            branch: Option.some("feat/a"),
+            repos: ["/r/api", "/p/app", "/w/web"],
+          }),
+        ),
       );
-      assert.deepStrictEqual(repo, Result.succeed(Option.some("/r/web")));
+      assert.deepStrictEqual(ran, [
+        ["owners", "/r/api.feat"],
+        ["branch", "/r/api.feat"],
+      ]);
     }),
   );
 
-  it.effect("with no focused folder, the first repo listed, looking nothing up", () =>
+  it.effect("outside every repo: no repo, no branch looked up, and the repos to pick from", () =>
     Effect.gen(function* () {
-      const { api, ran } = scripts({});
-      const repo = yield* repoForNew("", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual([repo, ran], [Result.succeed(Option.some("/r/web")), []]);
+      const { api, ran } = lookups({ owners: "" });
+      const opened = yield* dialogFor("/tmp", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [opened, ran],
+        [
+          Result.succeed(
+            Option.some({ repo: Option.none(), branch: Option.none(), repos: ["/r/web"] }),
+          ),
+          [["owners", "/tmp"]],
+        ],
+      );
     }),
   );
 
-  it.effect("none when the focused folder is in no repo and none is listed", () =>
+  it.effect("no repo there and none listed: no dialog", () =>
     Effect.gen(function* () {
-      const { api } = scripts({ owners: "" });
-      const repo = yield* repoForNew("/tmp", []).pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(repo, Result.succeed(Option.none()));
+      const { api } = lookups({ owners: "" });
+      const opened = yield* dialogFor("/tmp", []).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(opened, Result.succeed(Option.none()));
     }),
   );
 
-  it.effect("a lookup that fails is its one-line reason, not a guess", () =>
+  it.effect("no focused folder: looks nothing up, and asks for a repo", () =>
     Effect.gen(function* () {
-      const { api } = scripts({});
-      const repo = yield* repoForNew("/r/api", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(repo, Result.fail("no owners"));
+      const { api, ran } = lookups({});
+      const opened = yield* dialogFor("", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [opened, ran],
+        [
+          Result.succeed(
+            Option.some({ repo: Option.none(), branch: Option.none(), repos: ["/r/web"] }),
+          ),
+          [],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a repo lookup that fails is its one-line reason, not a guess", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({});
+      const opened = yield* dialogFor("/r/api", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(opened, Result.fail("no owners"));
+    }),
+  );
+
+  it.effect("a branch lookup that fails is its one-line reason", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({ owners: "/r/api\t2\n" });
+      const opened = yield* dialogFor("/r/api", []).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(opened, Result.fail("no branch"));
+    }),
+  );
+});
+
+describe("readDialogRepo", () => {
+  it.effect("the repo's worktrees, from wt list, and its branches", () =>
+    Effect.gen(function* () {
+      const { api, ran } = lookups({ list: states, branches: "refs/heads/main\n" });
+      const read = yield* readDialogRepo("/r/app").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(read, {
+        list: parseList(states),
+        branches: Result.succeed([{ name: "main", remote: false }]),
+      });
+      // Both reads run at once, so either may start first.
+      const calls = ran.map((call) => call.join(" ")).sort((a, b) => a.localeCompare(b));
+      assert.deepStrictEqual(calls, ["branches /r/app", "list /r/app"]);
+    }),
+  );
+
+  it.effect("each read that fails is its one-line reason, and the other still lands", () =>
+    Effect.gen(function* () {
+      const { api } = lookups({ list: states });
+      const read = yield* readDialogRepo("/r/app").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(read, {
+        list: parseList(states),
+        branches: Result.fail("no branches"),
+      });
     }),
   );
 });

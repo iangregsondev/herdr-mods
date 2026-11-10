@@ -7,6 +7,7 @@ import { Option, Predicate } from "effect";
 import type { Batch, Linked, MergeMode } from "./commands.ts";
 import { bool, fields, finite, listOf, text, textOrNull } from "./json.ts";
 import type { Role } from "./layout.ts";
+import type { DialogProps } from "./dialog.ts";
 import { confirmFor, type Action, type Confirm, type MenuItem } from "./menus.ts";
 import { DEFAULT_VIEW_STATE, SHOWS, type Click, type Show, type ViewState } from "./view.ts";
 
@@ -101,8 +102,8 @@ export const readAction = (value: unknown): Option.Option<Action> => {
         }),
         (cleanup): Action => ({ _tag: "Cleanup", ...cleanup }),
       );
-    case "New":
-      return Option.map(text(f.main), (main): Action => ({ _tag: "New", main }));
+    case "NewOrOpen":
+      return Option.map(textOrNull(f.folder), (folder): Action => ({ _tag: "NewOrOpen", folder }));
     case "Create":
       return Option.map(
         Option.all({ main: text(f.main), name: text(f.name), base: textOrNull(f.base) }),
@@ -120,8 +121,7 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.some({ _tag: "Settings" });
     case "Focus":
       return Option.some({ _tag: "Focus" });
-    case "NewHere":
-      return Option.some({ _tag: "NewHere" });
+
     default:
       return Option.none();
   }
@@ -193,8 +193,15 @@ export const readTitlebarProps = (props: unknown): TitlebarProps => {
   return { title: Option.getOrElse(text(f.title), () => "worktrunk"), addr: text(f.addr) };
 };
 
-/** The repo the New worktree dialog makes a worktree in: its main checkout. */
-export const readNewProps = (props: unknown): Option.Option<string> => text(fields(props).main);
+/** The New-or-open dialog's props read back; anything missing or mistyped is none. */
+export const readDialogProps = (props: unknown): DialogProps => {
+  const f = fields(props);
+  return {
+    repo: text(f.repo),
+    branch: text(f.branch),
+    repos: Array.isArray(f.repos) ? f.repos.filter(Predicate.isString) : [],
+  };
+};
 
 /** An overlay's props: its role, and what that role reads. */
 type PropsOf<R extends Role, P> = { readonly role: R } & P;
@@ -221,11 +228,19 @@ export const titlebarProps = (
   addr,
 });
 
-/** The New worktree dialog's props: the repo's main checkout; read back with `readNewProps`. */
-export const newProps = (main: string): PropsOf<"new", { readonly main: string }> => ({
-  role: "new",
-  main,
-});
+/** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
+export const dialogProps = ({
+  repo,
+  branch,
+  repos,
+}: DialogProps): PropsOf<
+  "new",
+  {
+    readonly repo: string | null;
+    readonly branch: string | null;
+    readonly repos: readonly string[];
+  }
+> => ({ role: "new", repo: Option.getOrNull(repo), branch: Option.getOrNull(branch), repos });
 
 /** The settings file's text the Settings dialog opens on; null when there was no file. */
 export const readSettingsText = (props: unknown): string | null =>

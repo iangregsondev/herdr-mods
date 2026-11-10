@@ -1,5 +1,5 @@
 // The worktrunk panel: your repos and their worktrees, from `wt list`, in a side panel,
-// with the row and repo menus, the confirm, New worktree and Settings dialogs and the job
+// with the row and repo menus, the confirm, New-or-open and Settings dialogs and the job
 // window's title bar as overlays of the same mod. This file is the thin Herdr layer: it runs the
 // Effect programs in load.ts at the edge, keeps what they return and draws what the pure
 // builders (view.ts, menus.ts) return.
@@ -39,10 +39,24 @@ import {
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { scanArgs } from "./commands.ts";
+import {
+  flippedBase,
+  highlight,
+  linesFor,
+  moved,
+  openDialog,
+  pick,
+  retyped,
+  withRead,
+  type Base,
+  type DialogState,
+  type Line,
+} from "./dialog.ts";
 import { Files } from "./files.ts";
 import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
 import { findModBlock, roleOf, type Role } from "./layout.ts";
 import {
+  dialogFor,
   findRepos,
   hideInSettings,
   loadSettings,
@@ -50,9 +64,9 @@ import {
   newWorktree,
   pickGroupFolder,
   readCi,
+  readDialogRepo,
   readEach,
   readList,
-  repoForNew,
   runJob,
   saveSettings,
   settingsText,
@@ -129,13 +143,13 @@ import {
 import type { Worktree } from "./worktrees.ts";
 import {
   confirmProps,
+  dialogProps,
   menuProps,
-  newProps,
   overlayOf,
   readConfirmProps,
+  readDialogProps,
   readFolded,
   readMenuProps,
-  readNewProps,
   readRequest,
   readSettingsText,
   readTitlebarProps,
@@ -370,6 +384,16 @@ const closeSelf = () => Option.map(overlayOf(ownProps()), closeOverlay);
 
 const settingsFile = () => ({ path: `${appHome()}/${SETTINGS_FILE}`, name: SETTINGS_FILE });
 
+/** The New-or-open dialog's size; its list scrolls. */
+const NEW_WIDTH = 540;
+const NEW_HEIGHT = 440;
+
+/** The New-or-open dialog: its state, and the box I type in (a repo name while I pick one). */
+interface NewDialog {
+  state: DialogState;
+  input: InputState;
+}
+
 /** The Settings dialog's size; its body scrolls when the lists outgrow it. */
 const SETTINGS_WIDTH = 620;
 const SETTINGS_HEIGHT = 600;
@@ -414,7 +438,7 @@ type Copy =
   | { readonly _tag: "Toggle" }
   | { readonly _tag: "Menu"; readonly menu: { selected: number } }
   | { readonly _tag: "Confirm" }
-  | { readonly _tag: "New"; readonly input: InputState }
+  | { readonly _tag: "New"; readonly dialog: NewDialog }
   | { readonly _tag: "Titlebar" }
   | { readonly _tag: "Settings"; readonly draft: SettingsDraft }
   /** Props naming a role this mod doesn't have: it draws nothing and does nothing. */
@@ -514,26 +538,37 @@ export default class Worktrunk extends View {
     }
   }
 
-  /** The New worktree dialog for the focused folder's repo, else for the first repo listed. */
-  newHere(cx: AsyncContext) {
+  /**
+   * Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
+   * offering the branch that folder is on as a base. Outside every repo, the dialog asks
+   * for one of the repos the panel lists.
+   */
+  openNewOrOpen(cx: AsyncContext, folder: string | null) {
     const places = localPlaces(spaces(), panes());
-    const folder = Option.getOrElse(focusedFolder(focused(), places), () => "");
-    const listed = this.reposToRead();
-    cx.spawn(async (cx) => {
-      const repo = await runEdge(repoForNew(folder, listed), Result.fail);
-      Result.match(repo, {
-        onSuccess: (root) =>
-          Option.match(root, {
+    const at = folder ?? Option.getOrElse(focusedFolder(focused(), places), () => "");
+    const listed = this.repos.map((repo) => repo.root);
+    cx.spawn(async () => {
+      const opened = await runEdge(dialogFor(at, listed), Result.fail);
+      Result.match(opened, {
+        onSuccess: (props) =>
+          Option.match(props, {
             onNone: () =>
               notify({
-                title: "No repo for a new worktree",
+                title: "No repo for a worktree",
                 body: "Focus a terminal in a repo, or add your repo folders in Settings.",
                 level: "warning",
               }),
-            onSome: (main) => this.perform(cx, { _tag: "New", main }),
+            onSome: (props) =>
+              openOverlay({
+                mod: __MOD_ID__,
+                kind: "dialog",
+                width: NEW_WIDTH,
+                height: NEW_HEIGHT,
+                props: dialogProps(props),
+              }),
           }),
         onFailure: (body) =>
-          notify({ title: "Couldn't find the repo for a new worktree", body, level: "warning" }),
+          notify({ title: "Couldn't find the repo for a worktree", body, level: "warning" }),
       });
     });
   }
@@ -557,23 +592,62 @@ export default class Worktrunk extends View {
         this.copy = { _tag: "Settings", draft: this.initSettings() };
         return;
       case "new": {
-        const input = InputState.new({ placeholder: "branch name, pr:123, or a PR link" });
-        input.on("submit", () => this.submitNew(input));
-        input.focus();
-        this.copy = { _tag: "New", input };
+        const state = openDialog(readDialogProps(ownProps()));
+        const dialog: NewDialog = { state, input: this.newInput(() => dialog, state) };
+        this.copy = { _tag: "New", dialog };
+        Option.map(state.repo, (repo) => this.readDialogRepo(cx, dialog, repo));
         return;
       }
     }
   }
 
-  /** The New worktree dialog's Enter: asks the panel to switch to or create the branch. */
-  submitNew(input: InputState) {
-    const name = input.value().trim();
-    Option.map(readNewProps(ownProps()), (main) => {
-      if (name === "") return;
-      closeSelf();
-      send({ _tag: "Create", main, name, base: null });
+  /** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
+  newInput(dialog: () => NewDialog, state: DialogState): InputState {
+    const input = InputState.new({
+      placeholder: Option.isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link",
     });
+    input.on("change", (_event, cx) => {
+      dialog().state = retyped(dialog().state);
+      cx.notify();
+    });
+    input.on("submit", (_event, cx) => {
+      const { state, input } = dialog();
+      const lines = linesFor(state, input.value());
+      this.pickNew(cx, dialog(), Option.fromNullishOr(lines[highlight(state, lines)]));
+    });
+    input.focus();
+    return input;
+  }
+
+  /** Reads the worktrees and branches of `repo` into the dialog's list. */
+  readDialogRepo(cx: AsyncContext | Context, dialog: NewDialog, repo: string) {
+    cx.spawn(async (cx) => {
+      const read = await runEdge(readDialogRepo(repo), (defect) => ({
+        list: Result.fail(defect),
+        branches: Result.succeed([]),
+      }));
+      dialog.state = withRead(dialog.state, read.list, read.branches);
+      cx.notify();
+    });
+  }
+
+  /** Enter or a click on a line: picks the repo, or hands the choice to the panel. */
+  pickNew(cx: Context, dialog: NewDialog, line: Option.Option<Line>) {
+    const picked = pick(dialog.state, line);
+    switch (picked._tag) {
+      case "ReadRepo":
+        dialog.state = picked.state;
+        dialog.input = this.newInput(() => dialog, picked.state);
+        this.readDialogRepo(cx, dialog, picked.root);
+        cx.notify();
+        return;
+      case "Send":
+        closeSelf();
+        send(picked.action);
+        return;
+      case "Nothing":
+        return;
+    }
   }
 
   /** The Settings dialog starts from the file's text the panel read when it opened it. */
@@ -698,17 +772,8 @@ export default class Worktrunk extends View {
           this.refresh(cx, { scan: false });
         });
         return;
-      case "New":
-        openOverlay({
-          mod: __MOD_ID__,
-          kind: "dialog",
-          width: 460,
-          height: 170,
-          props: newProps(action.main),
-        });
-        return;
-      case "NewHere":
-        return this.newHere(cx);
+      case "NewOrOpen":
+        return this.openNewOrOpen(cx, action.folder);
       case "Focus":
         Option.map(this.searchBox, (box) => box.focus());
         return;
@@ -786,7 +851,7 @@ export default class Worktrunk extends View {
    */
   createWorktree(cx: AsyncContext, main: string, name: string, base: string | null) {
     if (this.busy()) return;
-    const title = `New worktree ${name}`;
+    const title = `Open or create ${name}`;
     this.job = Option.some(title);
     cx.notify();
     cx.spawn(async (cx) => {
@@ -1011,6 +1076,7 @@ export default class Worktrunk extends View {
       .child(icon("git", 16, t.accent))
       .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
       .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
+      .child(iconButton("new", "plus", () => send({ _tag: "NewOrOpen", folder: null })))
       .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
       .child(
         iconButton("refresh", "sync", (cx) =>
@@ -1103,11 +1169,7 @@ export default class Worktrunk extends View {
           onSome: (asked) => this.renderConfirm(style, asked),
         });
       case "New":
-        return this.renderNew(
-          style,
-          copy.input,
-          Option.getOrElse(readNewProps(p), () => ""),
-        );
+        return this.renderNew(style, copy.dialog);
       case "Menu":
         return this.renderMenu(style, readMenuProps(p), copy.menu);
       case "Settings":
@@ -1214,8 +1276,90 @@ export default class Worktrunk extends View {
     );
   }
 
-  /** The New worktree dialog: a branch name or a wt shortcut, Enter to go. */
-  renderNew({ t, sizes }: Style, input: InputState, main: string): Element {
+  /**
+   * The New-or-open dialog: an input, the matching worktrees and branches (or repos, while
+   * it asks for one), and the base a new branch starts from.
+   */
+  renderNew(style: Style, dialog: NewDialog): Element {
+    const { t, sizes } = style;
+    const { state } = dialog;
+    const lines = linesFor(state, dialog.input.value());
+    const at = highlight(state, lines);
+    const picking = Option.isNone(state.repo);
+    const title = Option.match(state.repo, {
+      onNone: () => "New or open worktree: pick a repo",
+      onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`,
+    });
+    const describe = (line: Line): readonly [string, string] => {
+      switch (line._tag) {
+        case "Repo":
+          return [lastSegment(line.root), tildePath(line.root, home())];
+        case "Worktree":
+          return [line.branch, "open worktree"];
+        case "Branch":
+          return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
+        case "Typed":
+          return [line.name, line.shortcut ? "ask wt" : "new branch"];
+      }
+    };
+    const row = (line: Line, i: number) => {
+      const [label, hint] = describe(line);
+      return (
+        h_flex()
+          .id(`line-${i}`)
+          .h(30)
+          .flex_none()
+          .px(8)
+          .gap(8)
+          .items_center()
+          .rounded(6)
+          .cursor_pointer()
+          .when(i === at, (el) => el.bg(t.hover))
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.pickNew(cx, dialog, Option.some(line)))
+          .child(
+            line._tag === "Typed" && !line.shortcut
+              ? icon("plus", 12, t.accent)
+              : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree"),
+          )
+          // The name keeps its room; the hint gives way first.
+          .child(div().flex_none().max_w(300).truncate().child(label))
+          .child(div().flex_1())
+          .child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint))
+      );
+    };
+    const empty = picking
+      ? "No repo matches."
+      : state.reading
+        ? "Reading worktrees and branches…"
+        : "Type a branch name to create it.";
+    const baseOption = (key: Base, label: string) =>
+      h_flex()
+        .id(`base-${key}`)
+        .h(24)
+        .px(9)
+        // A long branch name shortens; "Default branch" never does.
+        .when(key === "default", (el) => el.flex_none())
+        .min_w(0)
+        .items_center()
+        .rounded(12)
+        .cursor_pointer()
+        .border_1()
+        .border_color(state.base === key ? t.accent : t.border)
+        .bg(state.base === key ? t.selected : t.popover)
+        .text_size(sizes.label)
+        .text_color(state.base === key ? t.foreground : t.muted)
+        .on_click((_e, cx) => {
+          if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
+          cx.notify();
+        })
+        .child(div().min_w(0).truncate().child(label));
+    const bases = [
+      baseOption("default", "Default branch"),
+      ...Option.toArray(state.current).map((branch) =>
+        baseOption("current", `${branch} (the branch I'm on)`),
+      ),
+    ];
     return this.focused(
       v_flex()
         .id("new")
@@ -1225,31 +1369,70 @@ export default class Worktrunk extends View {
         .bg(t.popover)
         .text_color(t.foreground)
         .text_size(sizes.body)
-        .on_key_down((e) => {
-          if (e.key === "escape") closeSelf();
+        .on_key_down((e, cx) => {
+          if (e.key === "escape") return closeSelf();
+          if (e.key === "down" || e.key === "up") {
+            dialog.state = moved(dialog.state, lines, e.key === "down" ? 1 : -1);
+          } else if (e.key === "tab" && !picking) {
+            dialog.state = flippedBase(dialog.state);
+          } else return;
+          cx.stop_propagation();
+          cx.notify();
         })
+        .child(div().text_size(sizes.title).font_semibold().child(title))
         .child(
-          div()
-            .text_size(sizes.title)
-            .font_semibold()
-            .child(`New worktree in ${lastSegment(main)}`),
-        )
-        .child(
-          div()
+          h_flex()
             .h(32)
+            .flex_none()
             .px(10)
-            .flex()
             .items_center()
             .rounded(8)
             .border_1()
             .border_color(t.accent)
-            .child(Input.new(input).h_full().text_color(t.foreground)),
+            .child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground)),
+        )
+        .child(
+          v_flex()
+            .id("lines")
+            .flex_1()
+            .min_h(0)
+            .overflow_y_scrollbar()
+            .children(lines.map(row))
+            .when(lines.length === 0, (el) =>
+              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)),
+            ),
+        )
+        .children(
+          Option.toArray(state.error).map((error) =>
+            div().text_size(sizes.label).text_color(t.ansi1).child(error),
+          ),
+        )
+        .when(!picking, (el) =>
+          el.child(
+            h_flex()
+              .w_full()
+              .min_w(0)
+              .gap(6)
+              .items_center()
+              .child(
+                div()
+                  .flex_none()
+                  .text_size(sizes.label)
+                  .text_color(t.muted)
+                  .child("New branch from"),
+              )
+              .children(bases),
+          ),
         )
         .child(
           div()
             .text_size(sizes.label)
-            .text_color(t.muted)
-            .child("Enter creates it from the default branch, or switches to it if it exists."),
+            .text_color(t.dim)
+            .child(
+              picking
+                ? "↑↓ choose · Enter picks the repo · Esc closes"
+                : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+            ),
         ),
     );
   }

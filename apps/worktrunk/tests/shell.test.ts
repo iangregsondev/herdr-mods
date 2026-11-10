@@ -1,6 +1,8 @@
 import { assert, describe, expect, it, test } from "@effect/vitest";
 import { Effect, Option, Result } from "effect";
 import {
+  BRANCHES_SCRIPT,
+  BRANCH_SCRIPT,
   CI_SCRIPT,
   GONE_SCRIPT,
   jobArgs,
@@ -12,8 +14,10 @@ import {
 } from "../src/commands.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import {
+  branchAt,
   CommandFailed,
   failureText,
+  gitBranches,
   goneFolders,
   ListUnreadable,
   loginShell,
@@ -325,6 +329,75 @@ describe("repoAt", () => {
         Result.fail(["CommandFailed", "the Current repo's lookup", 2, "sh: boom"]),
       );
     }).pipe(Effect.provide(Shell.layer(answering({ code: 2, stdout: "", stderr: "sh: boom" })))),
+  );
+});
+
+describe("gitBranches", () => {
+  it.effect("the repo's local and origin branches, from the branches script", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({
+        code: 0,
+        stdout: "refs/heads/main\nrefs/remotes/origin/fix\n",
+        stderr: "",
+      });
+      const branches = yield* gitBranches("/r/api").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(branches, [
+        { name: "main", remote: false },
+        { name: "fix", remote: true },
+      ]);
+      assert.deepStrictEqual(calls, [
+        ["sh", shArgs(BRANCHES_SCRIPT, ["/r/api"]), { timeout: 60_000 }],
+      ]);
+    }),
+  );
+
+  it.effect("a branch list that fails is CommandFailed, naming it", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(gitBranches("/gone"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "the branch list", 128, "fatal: cannot change to '/gone'"]),
+      );
+    }).pipe(
+      Effect.provide(
+        Shell.layer(
+          answering({ code: 128, stdout: "", stderr: "fatal: cannot change to '/gone'" }),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("branchAt", () => {
+  it.effect("the branch the folder is on, from the branch script", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "feat/a\n", stderr: "" });
+      const branch = yield* branchAt("/r/api.feat").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(branch, Option.some("feat/a"));
+      assert.deepStrictEqual(calls, [
+        ["sh", shArgs(BRANCH_SCRIPT, ["/r/api.feat"]), { timeout: 60_000 }],
+      ]);
+    }),
+  );
+
+  it.effect("a detached HEAD, which prints no branch: none", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* branchAt("/r/api.x"), Option.none());
+    }).pipe(Effect.provide(Shell.layer(answering({ code: 0, stdout: "\n", stderr: "" })))),
+  );
+
+  it.effect("a lookup that fails is CommandFailed, naming it", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(branchAt("/tmp"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "the branch lookup", 128, "fatal: not a git repository"]),
+      );
+    }).pipe(
+      Effect.provide(
+        Shell.layer(answering({ code: 128, stdout: "", stderr: "fatal: not a git repository" })),
+      ),
+    ),
   );
 });
 

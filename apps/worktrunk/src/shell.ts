@@ -4,6 +4,8 @@
 import { Context, Data, Effect, Layer, Option } from "effect";
 import type * as herdr from "herdr";
 import {
+  BRANCHES_SCRIPT,
+  BRANCH_SCRIPT,
   CI_SCRIPT,
   GONE_SCRIPT,
   jobArgs,
@@ -16,6 +18,7 @@ import {
   scanArgs,
   shArgs,
 } from "./commands.ts";
+import { parseBranches } from "./dialog.ts";
 import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
@@ -155,6 +158,18 @@ export const repoAt = Effect.fn("repoAt")(function* (folder: string) {
   if (folder === "") return Option.none<FoundRepo>();
   const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
   return currentRepo(run.stdout);
+});
+
+/** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
+export const gitBranches = Effect.fn("gitBranches")(function* (root: string) {
+  const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [root]);
+  return parseBranches(run.stdout);
+});
+
+/** The branch the folder `folder` is on; none when its HEAD is detached. */
+export const branchAt = Effect.fn("branchAt")(function* (folder: string) {
+  const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+  return Option.liftPredicate(run.stdout.trim(), (branch) => branch !== "");
 });
 
 /** What the panel says about a failed run: one line. */

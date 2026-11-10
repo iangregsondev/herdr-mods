@@ -37,8 +37,12 @@ export type Action =
       /** How many of them have uncommitted changes. */
       readonly dirty: number;
     }
-  /** Ask for a branch name, for a new worktree in the repo at `main`. */
-  | { readonly _tag: "New"; readonly main: string }
+  /**
+   * Open the New-or-open worktree dialog for the repo `folder` is in: its main checkout, a
+   * linked worktree or any folder inside one, whose branch is offered as a base. Null for
+   * the focused folder. Outside every repo the dialog asks for one.
+   */
+  | { readonly _tag: "NewOrOpen"; readonly folder: string | null }
   /** Switch to or create the worktree for `name`; `base` null for wt's default branch. */
   | {
       readonly _tag: "Create";
@@ -52,8 +56,7 @@ export type Action =
   | { readonly _tag: "Hide"; readonly root: string }
   /** Open the Settings dialog. */
   | { readonly _tag: "Settings" }
-  /** Ask for a branch name, for a new worktree in the focused folder's repo. */
-  | { readonly _tag: "NewHere" }
+
   /** Give the panel the keyboard, in its search box. */
   | { readonly _tag: "Focus" };
 
@@ -147,7 +150,7 @@ export const cleanupAction = (repos: readonly RepoWorktrees[]): Option.Option<Cl
 
 /** The right-click menu of the repo whose main checkout is `root`. */
 export const repoMenu = (root: string, worktrees: readonly Worktree[]): readonly MenuItem[] => [
-  item("New worktree…", { _tag: "New", main: root }),
+  item("New or open worktree…", { _tag: "NewOrOpen", folder: root }),
   ...Option.toArray(cleanupAction([{ root, worktrees }])).map((action) =>
     item(`Clean up ${action.paths.length} merged…`, action, true),
   ),

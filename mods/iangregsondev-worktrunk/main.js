@@ -692,6 +692,36 @@ const hasProperty = /*#__PURE__*/ dual(2, (self, property) => isObjectKeyword(se
 * @since 2.0.0
 */
 const isTagged = /*#__PURE__*/ dual(2, (self, tag) => hasProperty(self, "_tag") && self["_tag"] === tag);
+/**
+* Checks whether a value is iterable.
+*
+* **When to use**
+*
+* Use when you need a `Predicate` guard before iterating an unknown value.
+*
+* **Details**
+*
+* Accepts strings as iterable and uses `hasProperty` for `Symbol.iterator`.
+*
+* **Example** (Guarding iterables)
+*
+* ```ts import.meta.vitest
+* import { Predicate } from "effect"
+*
+* const data: unknown = [1, 2, 3]
+*
+* Predicate.isIterable(data) // => true
+* ```
+*
+* @see {@link isSet}
+* @see {@link isMap}
+* @stability stable
+* @category guards
+* @since 2.0.0
+*/
+function isIterable(input) {
+	return hasProperty(input, Symbol.iterator) || isString(input);
+}
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Hash.js
 /**
@@ -2571,6 +2601,8 @@ SuccessImpl.prototype = SuccessProto;
 /** @internal */
 const succeed$4 = (success) => new SuccessImpl(success);
 /** @internal */
+const getFailure$1 = (self) => isSuccess$1(self) ? none$1 : some$1(self.failure);
+/** @internal */
 const getSuccess$1 = (self) => isFailure$1(self) ? none$1 : some$1(self.success);
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Order.js
@@ -2939,7 +2971,7 @@ const match$5 = /*#__PURE__*/ dual(2, (self, { onNone, onSome }) => isNone(self)
 * @category getters
 * @since 2.0.0
 */
-const getOrElse = /*#__PURE__*/ dual(2, (self, onNone) => isNone(self) ? onNone() : self.value);
+const getOrElse$1 = /*#__PURE__*/ dual(2, (self, onNone) => isNone(self) ? onNone() : self.value);
 /**
 * Returns the fallback `Option` if `self` is `None`; otherwise returns `self`.
 *
@@ -3031,7 +3063,7 @@ const fromNullishOr = (a) => a == null ? none() : some(a);
 * @category getters
 * @since 2.0.0
 */
-const getOrNull = /*#__PURE__*/ getOrElse(constNull);
+const getOrNull = /*#__PURE__*/ getOrElse$1(constNull);
 /**
 * Extracts the value from a `Some`, or returns `undefined` for `None`.
 *
@@ -3061,7 +3093,7 @@ const getOrNull = /*#__PURE__*/ getOrElse(constNull);
 * @category getters
 * @since 2.0.0
 */
-const getOrUndefined$1 = /*#__PURE__*/ getOrElse(constUndefined);
+const getOrUndefined$1 = /*#__PURE__*/ getOrElse$1(constUndefined);
 /**
 * Transforms the value inside a `Some` using the provided function, leaving
 * `None` unchanged.
@@ -3206,7 +3238,7 @@ const flatten$1 = /*#__PURE__*/ flatMap$3(identity);
 * @category combining
 * @since 2.0.0
 */
-const all = (input) => {
+const all$2 = (input) => {
 	if (Symbol.iterator in input) {
 		const out = [];
 		for (const o of input) {
@@ -4214,6 +4246,37 @@ const isSuccess = isSuccess$1;
 */
 const getSuccess = getSuccess$1;
 /**
+* Extracts the failure value as an `Option`, discarding the success.
+*
+* **When to use**
+*
+* Use when you need to extract the failure value from a `Result` as an
+* `Option` and discard successful values.
+*
+* **Details**
+*
+* - `Failure<E>` becomes `Some<E>`
+* - `Success<A>` becomes `None`
+*
+* **Example** (Extracting the failure as an Option)
+*
+* ```ts import.meta.vitest
+* import { Option, Result } from "effect"
+*
+* Result.getFailure(Result.succeed("ok")) // => Option.none()
+*
+* Result.getFailure(Result.fail("err")) // => Option.some("err")
+* ```
+*
+* @see {@link getSuccess} to extract the success instead
+* @see {@link fromOption} for the reverse conversion
+*
+* @stability stable
+* @category getters
+* @since 4.0.0
+*/
+const getFailure = getFailure$1;
+/**
 * Transforms the failure channel of a `Result`, leaving the success channel unchanged.
 *
 * **When to use**
@@ -4315,6 +4378,40 @@ const map$2 = /*#__PURE__*/ dual(2, (self, f) => isSuccess(self) ? succeed$3(f(s
 * @since 2.0.0
 */
 const match$4 = /*#__PURE__*/ dual(2, (self, { onFailure, onSuccess }) => isFailure(self) ? onFailure(self.failure) : onSuccess(self.success));
+/**
+* Extracts the success value, or computes a fallback from the error.
+*
+* **When to use**
+*
+* Use when you need the success value from a `Result`, with a fallback computed
+* from the failure value.
+*
+* **Details**
+*
+* - `Success<A>` returns the inner value
+* - `Failure<E>` applies `onFailure` to the error and returns the result
+* - The return type is `A | A2` (union of both branches)
+*
+* **Example** (Providing a fallback)
+*
+* ```ts import.meta.vitest
+* import { Result } from "effect"
+*
+* Result.getOrElse(Result.succeed(1), () => 0) // => 1
+*
+* Result.getOrElse(Result.fail("err"), () => 0) // => 0
+* ```
+*
+* @see {@link getOrNull} / {@link getOrUndefined} for simpler fallbacks
+* @see {@link getOrThrow} to throw on failure
+* @see {@link match} to map both branches
+* @see {@link orElse} to recover with another Result instead of unwrapping
+*
+* @stability stable
+* @category getters
+* @since 2.0.0
+*/
+const getOrElse = /*#__PURE__*/ dual(2, (self, onFailure) => isFailure(self) ? onFailure(self.failure) : self.success);
 /**
 * Chains a function that returns a `Result` onto a successful value.
 *
@@ -6740,6 +6837,12 @@ const fiberEnterUninterruptibleUnsafe = (fiber) => {
 	impl._stack.push(setInterruptibleTrue);
 };
 /** @internal */
+const all$1 = (arg, options) => {
+	if (isIterable(arg)) return options?.mode === "result" ? forEach$1(arg, result$1, options) : forEach$1(arg, identity, options);
+	else if (options?.discard) return options.mode === "result" ? forEach$1(Object.values(arg), result$1, options) : forEach$1(Object.values(arg), identity, options);
+	return suspend(() => map$1(forEach$1(Object.entries(arg), ([key, effect]) => map$1(options?.mode === "result" ? result$1(effect) : effect, (value) => [key, value]), { concurrency: options?.concurrency }), Object.fromEntries));
+};
+/** @internal */
 const whileLoop = /*#__PURE__*/ makePrimitive({
 	op: "While",
 	[contA](value, fiber) {
@@ -7999,6 +8102,120 @@ const provideLayer = (self, layer, options) => scopedWith((scope) => flatMap$1(o
 const provide$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, source, options) => isContext(source) ? provideContext(self, source) : provideLayer(self, Array.isArray(source) ? mergeAll(...source) : source, options));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Effect.js
+/**
+* Combines an iterable or record of effects into one effect whose success shape
+* follows the input.
+*
+* **When to use**
+*
+* Use to run a known collection of effects and collect results in the same
+* tuple, iterable, or record shape.
+*
+* **Details**
+*
+* Tuple and iterable inputs collect results in order. Record inputs collect
+* results under the same keys. By default, the combined effect fails on the
+* first failure; with concurrent execution, effects that have already started
+* may be interrupted, while effects not yet started are skipped.
+*
+* Options:
+*
+* Use `concurrency` to control sequential or concurrent execution. Use
+* `mode: "result"` to run every effect and collect each success or failure as a
+* `Result` in the same output shape. Use `discard: true` to ignore successful
+* values and return `void`.
+*
+* **Example** (Collecting tuple results in order)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const tupleOfEffects = [
+*   Effect.succeed(42),
+*   Effect.succeed("Hello")
+* ] as const
+*
+* //      ┌─── Effect<[number, string], never, never>
+* //      ▼
+* const resultsAsTuple = Effect.all(tupleOfEffects)
+*
+* await Effect.runPromise(resultsAsTuple) // => [42, "Hello"]
+* ```
+*
+* **Example** (Collecting iterable results in order)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const iterableOfEffects: Iterable<Effect.Effect<number>> = [1, 2, 3].map(
+*   Effect.succeed
+* )
+*
+* //      ┌─── Effect<number[], never, never>
+* //      ▼
+* const resultsAsArray = Effect.all(iterableOfEffects)
+*
+* await Effect.runPromise(resultsAsArray) // => [1, 2, 3]
+* ```
+*
+* **Example** (Collecting struct results by key)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const structOfEffects = {
+*   a: Effect.succeed(42),
+*   b: Effect.succeed("Hello")
+* }
+*
+* //      ┌─── Effect<{ a: number; b: string; }, never, never>
+* //      ▼
+* const resultsAsStruct = Effect.all(structOfEffects)
+*
+* await Effect.runPromise(resultsAsStruct) // => { a: 42, b: "Hello" }
+* ```
+*
+* **Example** (Collecting record results by key)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const recordOfEffects: Record<string, Effect.Effect<number>> = {
+*   key1: Effect.succeed(1),
+*   key2: Effect.succeed(2)
+* }
+*
+* //      ┌─── Effect<{ [x: string]: number; }, never, never>
+* //      ▼
+* const resultsAsRecord = Effect.all(recordOfEffects)
+*
+* await Effect.runPromise(resultsAsRecord) // => { key1: 1, key2: 2 }
+* ```
+*
+* **Example** (Stopping on the first failure)
+*
+* ```ts import.meta.vitest
+* import { Effect, Exit } from "effect"
+* const output: Array<unknown> = []
+* const record = (value: unknown) => Effect.sync(() => { output.push(value) })
+*
+* const program = Effect.all([
+*   Effect.succeed("Task1").pipe(Effect.tap(record)),
+*   Effect.fail("Task2: Oh no!").pipe(Effect.tap(record)),
+*   // Won't execute due to earlier failure
+*   Effect.succeed("Task3").pipe(Effect.tap(record))
+* ])
+*
+* const outcome = await Effect.runPromiseExit(program)
+* const observation = [output, outcome] // => [["Task1"], Exit.fail("Task2: Oh no!")]
+* ```
+*
+* @see {@link forEach} for iterating over elements and applying an effect.
+* @stability stable
+* @category collecting
+* @since 2.0.0
+*/
+const all = all$1;
 /**
 * Executes an effectful operation for each element in an `Iterable`.
 *
@@ -9428,7 +9645,7 @@ const text = (value) => isString(value) ? some(value) : none();
 /** A boolean, else none. */
 const bool = (value) => isBoolean(value) ? some(value) : none();
 /** A list whose every item `read` accepts, else none. */
-const listOf$2 = (value, read) => Array.isArray(value) ? all(value.map(read)) : none();
+const listOf$2 = (value, read) => Array.isArray(value) ? all$2(value.map(read)) : none();
 /** A string or null, else none. */
 const textOrNull = (value) => value === null ? some(null) : text(value);
 
@@ -9643,7 +9860,7 @@ const OTHER = "Other";
 const groupOf = (root, folders, home) => folders.map((folder) => ({
 	name: folder.name,
 	path: expandHome(folder.path, home)
-})).filter((folder) => isUnder(root, folder.path)).reduce((best, folder) => isSome(best) && best.value.path.length >= folder.path.length ? best : some(folder), none()).pipe(map$3((folder) => folder.name), getOrElse(() => OTHER));
+})).filter((folder) => isUnder(root, folder.path)).reduce((best, folder) => isSome(best) && best.value.path.length >= folder.path.length ? best : some(folder), none()).pipe(map$3((folder) => folder.name), getOrElse$1(() => OTHER));
 const count$1 = (text) => {
 	const n = Number(text);
 	return Number.isInteger(n) && n > 0 ? n : 1;
@@ -9740,6 +9957,10 @@ done | sort -u`;
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
 /** Lists the worktrees of the repo at $1 with their CI. */
 const CI_SCRIPT = `${LIST_SCRIPT} --full`;
+/** The local and origin branches of the repo at $1, one full ref name per line. */
+const BRANCHES_SCRIPT = "git -C \"$1\" for-each-ref '--format=%(refname)' refs/heads refs/remotes/origin";
+/** The branch the folder at $1 is on; nothing when its HEAD is detached. */
+const BRANCH_SCRIPT = "git -C \"$1\" branch --show-current";
 /** `word` as one literal shell word: single-quoted, with each `'` closed, escaped and reopened. */
 const quote = (word) => `'${word.replaceAll("'", "'\\''")}'`;
 const wt = ({ noWrapper }) => noWrapper ? "command wt" : "wt";
@@ -9846,14 +10067,177 @@ const waitResult = (output) => match$5(filter(json(output), isObject), {
 	onNone: () => ({ _tag: "Lost" }),
 	onSome: (value) => value.ended === true ? {
 		_tag: "Ended",
-		code: getOrElse(finite(value.exit_code), () => 1)
+		code: getOrElse$1(finite(value.exit_code), () => 1)
 	} : { _tag: "Running" }
 });
 /** The worktree `wt switch --format=json` switched to or made. */
-const switchedTo = (output) => flatMap$3(json(output), (value) => all({
+const switchedTo = (output) => flatMap$3(json(output), (value) => all$2({
 	branch: text(at(value, "branch")),
 	path: text(at(value, "path"))
 }));
+
+// src/dialog.ts
+const LOCAL = "refs/heads/";
+const ORIGIN = "refs/remotes/origin/";
+/** `git for-each-ref --format=%(refname) refs/heads refs/remotes/origin` output read. */
+const parseBranches = (output) => output.split("\n").flatMap((line) => {
+	const ref = line.trim();
+	if (ref.startsWith(LOCAL)) return [{
+		name: ref.slice(11),
+		remote: false
+	}];
+	if (ref.startsWith(ORIGIN) && ref !== `${ORIGIN}HEAD`) return [{
+		name: ref.slice(20),
+		remote: true
+	}];
+	return [];
+});
+/** Every worktree with a branch, then local branches without one, then origin-only ones. */
+const candidates = (worktrees, branches) => {
+	const open = worktrees.flatMap((w) => match$5(w.branch, {
+		onNone: () => [],
+		onSome: (branch) => [{
+			_tag: "Worktree",
+			branch,
+			path: w.path
+		}]
+	}));
+	const taken = new Set(open.map(choiceName));
+	const local = branches.filter((b) => !b.remote && !taken.has(b.name));
+	const localNames = new Set(branches.filter((b) => !b.remote).map((b) => b.name));
+	const remote = branches.filter((b) => b.remote && !localNames.has(b.name) && !taken.has(b.name));
+	return [...open, ...[...local, ...remote].map((b) => ({
+		_tag: "Branch",
+		name: b.name,
+		remote: b.remote
+	}))];
+};
+/** The dialog's list for the typed text, at most `limit` lines. */
+const choicesFor = (typed, worktrees, branches, limit) => {
+	const name = typed.trim();
+	if (isShortcut(name)) return [{
+		_tag: "Typed",
+		name,
+		shortcut: true
+	}];
+	const query = name.toLowerCase();
+	const matches = ranked(candidates(worktrees, branches), choiceName, query);
+	const exact = matches.some((choice) => choiceName(choice).toLowerCase() === query);
+	return [...name === "" || exact ? [] : [{
+		_tag: "Typed",
+		name,
+		shortcut: false
+	}], ...matches].slice(0, Math.max(0, limit));
+};
+/**
+* The items whose name holds `query` (lower case), best first (see `rank`), keeping their
+* order within a rank.
+*/
+const ranked = (items, nameOf, query) => items.flatMap((item, order) => match$5(rank(nameOf(item), query), {
+	onNone: () => [],
+	onSome: (score) => [{
+		item,
+		score,
+		order
+	}]
+})).sort((a, b) => a.score - b.score || a.order - b.order).map(({ item }) => item);
+/** 0 for an exact match, 1 for a prefix, 2 anywhere in the name; none when it doesn't match. */
+const rank = (name, query) => {
+	const lower = name.toLowerCase();
+	if (lower === query) return some(0);
+	if (lower.startsWith(query)) return some(1);
+	return lower.includes(query) ? some(2) : none();
+};
+/** The branch name a choice hands to `wt switch`. */
+const choiceName = (choice) => choice._tag === "Worktree" ? choice.branch : choice.name;
+/**
+* What Enter asks the panel to run: switch to or create the choice's branch in the repo
+* at `main`. `current` is the branch I'm on; with none, the default branch is the base.
+*/
+const enterAction = (main, choice, base, current) => ({
+	_tag: "Create",
+	main,
+	name: choiceName(choice),
+	base: base === "current" ? getOrNull(current) : null
+});
+/** The repos (main checkouts) whose folder name matches the typed text, best first. */
+const reposFor = (typed, repos) => ranked(repos, lastSegment, typed.trim().toLowerCase());
+/** The dialog as it opens with `props`: reading its repo, unless it must ask for one. */
+const openDialog = (props) => ({
+	repo: props.repo,
+	current: props.branch,
+	repos: props.repos,
+	worktrees: [],
+	branches: [],
+	reading: isSome(props.repo),
+	error: none(),
+	base: "default",
+	at: 0
+});
+/** The most lines the dialog lists. */
+const LINE_LIMIT = 50;
+/** The dialog's lines for the typed text: repos while it asks for one, else choices. */
+const linesFor = (state, typed) => match$5(state.repo, {
+	onNone: () => reposFor(typed, state.repos).map((root) => ({
+		_tag: "Repo",
+		root
+	})),
+	onSome: () => choicesFor(typed, state.worktrees, state.branches, 50)
+});
+/**
+* The dialog once its repo is read: the worktrees and branches, each read's failure
+* shown, the other still offered.
+*/
+const withRead = (state, list, branches) => ({
+	...state,
+	worktrees: getOrElse(list, () => []),
+	branches: getOrElse(branches, () => []),
+	reading: false,
+	error: liftPredicate([getFailure(list), getFailure(branches)].flatMap(toArray).join(" · "), (reasons) => reasons !== "")
+});
+/** The highlighted line's place among `lines`: never past the last one. */
+const highlight = (state, lines) => Math.min(state.at, Math.max(0, lines.length - 1));
+/** The highlight moved one line down (`1`) or up (`-1`), wrapping round the list. */
+const moved = (state, lines, step) => {
+	const count = Math.max(1, lines.length);
+	return {
+		...state,
+		at: (highlight(state, lines) + step + count) % count
+	};
+};
+/** What was typed changed: the highlight goes back to the first line. */
+const retyped = (state) => ({
+	...state,
+	at: 0
+});
+/** Tab: the other base, when there is a branch I'm on to offer. */
+const flippedBase = (state) => ({
+	...state,
+	base: state.base === "default" && isSome(state.current) ? "current" : "default"
+});
+/** Enter or a click on `line`: picks the repo, or asks the panel to switch or create. */
+const pick = (state, line) => {
+	if (isNone(line)) return { _tag: "Nothing" };
+	const taken = line.value;
+	if (taken._tag === "Repo") return {
+		_tag: "ReadRepo",
+		root: taken.root,
+		state: {
+			...state,
+			repo: some(taken.root),
+			current: none(),
+			reading: true,
+			at: 0
+		}
+	};
+	return match$5(state.repo, {
+		onNone: () => ({ _tag: "Nothing" }),
+		onSome: (main) => ({
+			_tag: "Send",
+			action: enterAction(main, taken, state.base, state.current)
+		})
+	});
+};
 
 // src/files.ts
 /** There is no file at `path`. */
@@ -10000,7 +10384,10 @@ const routeCommand = (command, role, copies) => {
 const COMMAND_ACTIONS = {
 	refresh: { _tag: "Refresh" },
 	settings: { _tag: "Settings" },
-	new: { _tag: "NewHere" },
+	new: {
+		_tag: "NewOrOpen",
+		folder: null
+	},
 	focus: { _tag: "Focus" }
 };
 /** The mailbox action the panel runs for a command. */
@@ -10034,11 +10421,9 @@ const noticeFor = (step) => {
 		default: return none();
 	}
 };
-/** The repo a new worktree goes in: the focused folder's repo, else the first one listed. */
-const newRepoFor = (focusedRoot, listed) => orElse(focusedRoot, () => fromNullishOr(listed[0]));
 
 // src/sync.ts
-const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all({
+const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
 	layout: text(at(json, "layout")),
 	version: text(at(json, "version"))
 }));
@@ -10062,7 +10447,7 @@ const CHANGE_KINDS = [
 	"deleted",
 	"conflicted"
 ];
-const count = (item, ...path) => getOrElse(finite(at(item, ...path)), () => 0);
+const count = (item, ...path) => getOrElse$1(finite(at(item, ...path)), () => 0);
 const stateOf = (item) => {
 	if (at(item, "worktree", "main") === true) return { _tag: "Main" };
 	const state = at(item, "display", "state");
@@ -10201,6 +10586,16 @@ const repoAt = fn("repoAt")(function* (folder) {
 	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
 	return currentRepo(run.stdout);
 });
+/** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
+const gitBranches = fn("gitBranches")(function* (root) {
+	const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [root]);
+	return parseBranches(run.stdout);
+});
+/** The branch the folder `folder` is on; none when its HEAD is detached. */
+const branchAt = fn("branchAt")(function* (folder) {
+	const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+	return liftPredicate(run.stdout.trim(), (branch) => branch !== "");
+});
 /** What the panel says about a failed run: one line. */
 const failureText = (error) => {
 	switch (error._tag) {
@@ -10331,13 +10726,30 @@ const lookUpCurrent = fn("lookUpCurrent")(function* (folder) {
 	return yield* repoAt(folder);
 }, asReason);
 /**
-* The repo a new worktree from the `new` key goes in: the repo `folder` (the focused
-* folder; empty for none) is in, else the first of `listed`; none when neither has one.
-* A lookup that fails is its one-line reason.
+* What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
+* empty for none) is in: that repo and the branch the folder is on, and the `listed`
+* repos to pick from, by folder name. None when there is no repo at all. A lookup that
+* fails is its one-line reason.
 */
-const repoForNew = fn("repoForNew")(function* (folder, listed) {
+const dialogFor = fn("dialogFor")(function* (folder, listed) {
 	const found = yield* repoAt(folder);
-	return newRepoFor(map$3(found, (repo) => repo.root), listed);
+	const branch = isSome(found) ? yield* branchAt(folder) : none();
+	const repos = [...listed].sort((a, b) => lastSegment(a).localeCompare(lastSegment(b)));
+	const props = {
+		repo: map$3(found, (repo) => repo.root),
+		branch,
+		repos
+	};
+	return isNone(found) && repos.length === 0 ? none() : some(props);
+}, asReason);
+/** The worktrees and branches of the repo at `root`, for the New-or-open dialog. */
+const readDialogRepo = (root) => all({
+	list: readList(root),
+	branches: readBranches(root)
+}, { concurrency: 2 });
+/** The branches of the repo at `root`, or the one-line reason the read failed. */
+const readBranches = fn("readBranches")(function* (root) {
+	return yield* gitBranches(root);
 }, asReason);
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
 const readList = fn("readList")(function* (root) {
@@ -10433,7 +10845,7 @@ const newWorktree = fn("newWorktree")(function* (target, shown) {
 	const dir = yield* makeTempDir().pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
 	const out = `${dir}/switch.json`;
 	const spec = {
-		title: `New worktree ${target.name}`,
+		title: `Open or create ${target.name}`,
 		cwd: target.main,
 		body: newScript({
 			...target,
@@ -10515,7 +10927,7 @@ const removeOf = (root, worktree) => ({
 	target: {
 		main: root,
 		path: worktree.path,
-		branch: getOrElse(worktree.branch, () => worktree.path)
+		branch: getOrElse$1(worktree.branch, () => worktree.path)
 	},
 	dirty: worktree.dirty
 });
@@ -10567,7 +10979,7 @@ const cleanupAction = (repos) => {
 		_tag: "Cleanup",
 		batches: found.map(({ root, merged }) => ({
 			main: root,
-			branches: merged.map((w) => getOrElse(w.branch, () => w.path))
+			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path))
 		})),
 		paths: all.map((w) => w.path),
 		dirty: all.filter((w) => w.dirty).length
@@ -10575,9 +10987,9 @@ const cleanupAction = (repos) => {
 };
 /** The right-click menu of the repo whose main checkout is `root`. */
 const repoMenu = (root, worktrees) => [
-	item("New worktree…", {
-		_tag: "New",
-		main: root
+	item("New or open worktree…", {
+		_tag: "NewOrOpen",
+		folder: root
 	}),
 	...toArray(cleanupAction([{
 		root,
@@ -10963,7 +11375,7 @@ const mainParts = (worktree) => {
 };
 const workParts = (worktree) => {
 	const { ahead, behind, added, deleted, upstream } = worktree;
-	const remoteBehind = getOrElse(map$3(upstream, (up) => up.behind), () => 0);
+	const remoteBehind = getOrElse$1(map$3(upstream, (up) => up.behind), () => 0);
 	return [
 		`↑${ahead} ↓${behind} vs main`,
 		...added > 0 || deleted > 0 ? [`+${added} −${deleted}`] : [],
@@ -10979,7 +11391,7 @@ const stateParts = (worktree) => {
 	const { state } = worktree;
 	switch (state._tag) {
 		case "Main": return mainParts(worktree);
-		case "Merged": return [getOrElse(flatMap$3(state.reason, (r) => fromNullishOr(MERGE_REASONS[r])), () => "merged")];
+		case "Merged": return [getOrElse$1(flatMap$3(state.reason, (r) => fromNullishOr(MERGE_REASONS[r])), () => "merged")];
 		default: return workParts(worktree);
 	}
 };
@@ -11008,12 +11420,12 @@ const badgeOf = (ci) => {
 	}
 };
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
-const ciOf = (snapshot, repo, worktree) => getOrElse(fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)), () => worktree.ci);
+const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)), () => worktree.ci);
 const rowView = (snapshot, repo, worktree, space) => ({
 	key: worktree.path,
 	repo: repo.root,
-	label: getOrElse(worktree.branch, () => "(detached)"),
-	tone: getOrElse(kindOf(worktree), () => "main"),
+	label: getOrElse$1(worktree.branch, () => "(detached)"),
+	tone: getOrElse$1(kindOf(worktree), () => "main"),
 	hollow: isNone(space),
 	dirty: worktree.dirty,
 	open: isSome(space),
@@ -11023,7 +11435,7 @@ const rowView = (snapshot, repo, worktree, space) => ({
 	click: match$5(space, {
 		onNone: () => ({
 			_tag: "New",
-			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse(worktree.branch, () => lastSegment(worktree.path)),
+			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
 			folder: worktree.path
 		}),
 		onSome: (s) => ({
@@ -11032,7 +11444,7 @@ const rowView = (snapshot, repo, worktree, space) => ({
 		})
 	})
 });
-const newestFirst = (a, b) => getOrElse(b.committedAt, () => 0) - getOrElse(a.committedAt, () => 0);
+const newestFirst = (a, b) => getOrElse$1(b.committedAt, () => 0) - getOrElse$1(a.committedAt, () => 0);
 const statusOf = (list) => match$5(list, {
 	onNone: () => ({ _tag: "Reading" }),
 	onSome: (l) => match$5(l.error, {
@@ -11279,7 +11691,7 @@ const readViewState = (value) => {
 	const { group, show, only } = fields(value);
 	return {
 		group: text(group),
-		show: getOrElse(readShow(show), () => DEFAULT_VIEW_STATE.show),
+		show: getOrElse$1(readShow(show), () => DEFAULT_VIEW_STATE.show),
 		only: isBoolean(only) ? only : DEFAULT_VIEW_STATE.only
 	};
 };
@@ -11294,7 +11706,7 @@ const readClick = (value) => {
 			_tag: "Select",
 			space
 		}));
-		case "New": return map$3(all({
+		case "New": return map$3(all$2({
 			name: text(f.name),
 			folder: text(f.folder)
 		}), (click) => ({
@@ -11306,7 +11718,7 @@ const readClick = (value) => {
 };
 const readLinked = (value) => {
 	const f = fields(value);
-	return all({
+	return all$2({
 		main: text(f.main),
 		path: text(f.path),
 		branch: text(f.branch)
@@ -11314,7 +11726,7 @@ const readLinked = (value) => {
 };
 const readBatch = (value) => {
 	const f = fields(value);
-	return all({
+	return all$2({
 		main: text(f.main),
 		branches: listOf$2(f.branches, text)
 	});
@@ -11327,7 +11739,7 @@ const readAction = (value) => {
 			_tag: "Open",
 			click
 		}));
-		case "Merge": return map$3(all({
+		case "Merge": return map$3(all$2({
 			target: readLinked(f.target),
 			mode: readMode(f.mode),
 			dirty: bool(f.dirty)
@@ -11335,14 +11747,14 @@ const readAction = (value) => {
 			_tag: "Merge",
 			...merge
 		}));
-		case "Remove": return map$3(all({
+		case "Remove": return map$3(all$2({
 			target: readLinked(f.target),
 			dirty: bool(f.dirty)
 		}), (remove) => ({
 			_tag: "Remove",
 			...remove
 		}));
-		case "Cleanup": return map$3(all({
+		case "Cleanup": return map$3(all$2({
 			batches: listOf$2(f.batches, readBatch),
 			paths: listOf$2(f.paths, text),
 			dirty: finite(f.dirty)
@@ -11350,11 +11762,11 @@ const readAction = (value) => {
 			_tag: "Cleanup",
 			...cleanup
 		}));
-		case "New": return map$3(text(f.main), (main) => ({
-			_tag: "New",
-			main
+		case "NewOrOpen": return map$3(textOrNull(f.folder), (folder) => ({
+			_tag: "NewOrOpen",
+			folder
 		}));
-		case "Create": return map$3(all({
+		case "Create": return map$3(all$2({
 			main: text(f.main),
 			name: text(f.name),
 			base: textOrNull(f.base)
@@ -11377,14 +11789,13 @@ const readAction = (value) => {
 		case "Refresh": return some({ _tag: "Refresh" });
 		case "Settings": return some({ _tag: "Settings" });
 		case "Focus": return some({ _tag: "Focus" });
-		case "NewHere": return some({ _tag: "NewHere" });
 		default: return none();
 	}
 };
 /** The mailbox's request; none when it holds nothing the panel can run. */
 const readRequest = (value) => {
 	const f = fields(value);
-	return all({
+	return all$2({
 		id: finite(f.id),
 		action: readAction(f.action)
 	});
@@ -11393,7 +11804,7 @@ const readRequest = (value) => {
 const overlayOf = (props) => text(fields(props).overlay);
 const readMenuItem = (value) => {
 	const f = fields(value);
-	return all({
+	return all$2({
 		label: text(f.label),
 		danger: bool(f.danger),
 		action: readAction(f.action)
@@ -11403,7 +11814,7 @@ const readMenuItem = (value) => {
 const readMenuProps = (props) => {
 	const f = fields(props);
 	return {
-		title: getOrElse(text(f.title), () => ""),
+		title: getOrElse$1(text(f.title), () => ""),
 		items: Array.isArray(f.items) ? f.items.flatMap((item) => toArray(readMenuItem(item))) : []
 	};
 };
@@ -11419,12 +11830,19 @@ const readConfirmProps = (props) => flatMap$3(readAction(fields(props).action), 
 const readTitlebarProps = (props) => {
 	const f = fields(props);
 	return {
-		title: getOrElse(text(f.title), () => "worktrunk"),
+		title: getOrElse$1(text(f.title), () => "worktrunk"),
 		addr: text(f.addr)
 	};
 };
-/** The repo the New worktree dialog makes a worktree in: its main checkout. */
-const readNewProps = (props) => text(fields(props).main);
+/** The New-or-open dialog's props read back; anything missing or mistyped is none. */
+const readDialogProps = (props) => {
+	const f = fields(props);
+	return {
+		repo: text(f.repo),
+		branch: text(f.branch),
+		repos: Array.isArray(f.repos) ? f.repos.filter(isString) : []
+	};
+};
 /** A menu's props, for `openOverlay`; read back with `readMenuProps`. */
 const menuProps = (title, items) => ({
 	role: "menu",
@@ -11442,10 +11860,12 @@ const titlebarProps = (title, addr) => ({
 	title,
 	addr
 });
-/** The New worktree dialog's props: the repo's main checkout; read back with `readNewProps`. */
-const newProps = (main) => ({
+/** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
+const dialogProps = ({ repo, branch, repos }) => ({
 	role: "new",
-	main
+	repo: getOrNull(repo),
+	branch: getOrNull(branch),
+	repos
 });
 /** The settings file's text the Settings dialog opens on; null when there was no file. */
 const readSettingsText = (props) => getOrNull(text(fields(props).text));
@@ -11613,6 +12033,9 @@ const settingsFile = () => ({
 	path: `${appHome()}/${SETTINGS_FILE}`,
 	name: SETTINGS_FILE
 });
+/** The New-or-open dialog's size; its list scrolls. */
+const NEW_WIDTH = 540;
+const NEW_HEIGHT = 440;
 /** The Settings dialog's size; its body scrolls when the lists outgrow it. */
 const SETTINGS_WIDTH = 620;
 const SETTINGS_HEIGHT = 600;
@@ -11721,27 +12144,34 @@ var Worktrunk = class extends View {
 			}));
 		}
 	}
-	/** The New worktree dialog for the focused folder's repo, else for the first repo listed. */
-	newHere(cx) {
+	/**
+	* Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
+	* offering the branch that folder is on as a base. Outside every repo, the dialog asks
+	* for one of the repos the panel lists.
+	*/
+	openNewOrOpen(cx, folder) {
 		const places = localPlaces(spaces(), panes());
-		const folder = getOrElse(focusedFolder(focused(), places), () => "");
-		const listed = this.reposToRead();
-		cx.spawn(async (cx) => {
-			const repo = await runEdge(repoForNew(folder, listed), fail$2);
-			match$4(repo, {
-				onSuccess: (root) => match$5(root, {
+		const at = folder ?? getOrElse$1(focusedFolder(focused(), places), () => "");
+		const listed = this.repos.map((repo) => repo.root);
+		cx.spawn(async () => {
+			const opened = await runEdge(dialogFor(at, listed), fail$2);
+			match$4(opened, {
+				onSuccess: (props) => match$5(props, {
 					onNone: () => notify({
-						title: "No repo for a new worktree",
+						title: "No repo for a worktree",
 						body: "Focus a terminal in a repo, or add your repo folders in Settings.",
 						level: "warning"
 					}),
-					onSome: (main) => this.perform(cx, {
-						_tag: "New",
-						main
+					onSome: (props) => openOverlay({
+						mod: "iangregsondev-worktrunk",
+						kind: "dialog",
+						width: NEW_WIDTH,
+						height: NEW_HEIGHT,
+						props: dialogProps(props)
 					})
 				}),
 				onFailure: (body) => notify({
-					title: "Couldn't find the repo for a new worktree",
+					title: "Couldn't find the repo for a worktree",
 					body,
 					level: "warning"
 				})
@@ -11773,30 +12203,62 @@ var Worktrunk = class extends View {
 				};
 				return;
 			case "new": {
-				const input = InputState.new({ placeholder: "branch name, pr:123, or a PR link" });
-				input.on("submit", () => this.submitNew(input));
-				input.focus();
+				const state = openDialog(readDialogProps(ownProps()));
+				const dialog = {
+					state,
+					input: this.newInput(() => dialog, state)
+				};
 				this.copy = {
 					_tag: "New",
-					input
+					dialog
 				};
+				map$3(state.repo, (repo) => this.readDialogRepo(cx, dialog, repo));
 				return;
 			}
 		}
 	}
-	/** The New worktree dialog's Enter: asks the panel to switch to or create the branch. */
-	submitNew(input) {
-		const name = input.value().trim();
-		map$3(readNewProps(ownProps()), (main) => {
-			if (name === "") return;
-			closeSelf();
-			send({
-				_tag: "Create",
-				main,
-				name,
-				base: null
-			});
+	/** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
+	newInput(dialog, state) {
+		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link" });
+		input.on("change", (_event, cx) => {
+			dialog().state = retyped(dialog().state);
+			cx.notify();
 		});
+		input.on("submit", (_event, cx) => {
+			const { state, input } = dialog();
+			const lines = linesFor(state, input.value());
+			this.pickNew(cx, dialog(), fromNullishOr(lines[highlight(state, lines)]));
+		});
+		input.focus();
+		return input;
+	}
+	/** Reads the worktrees and branches of `repo` into the dialog's list. */
+	readDialogRepo(cx, dialog, repo) {
+		cx.spawn(async (cx) => {
+			const read = await runEdge(readDialogRepo(repo), (defect) => ({
+				list: fail$2(defect),
+				branches: succeed$3([])
+			}));
+			dialog.state = withRead(dialog.state, read.list, read.branches);
+			cx.notify();
+		});
+	}
+	/** Enter or a click on a line: picks the repo, or hands the choice to the panel. */
+	pickNew(cx, dialog, line) {
+		const picked = pick(dialog.state, line);
+		switch (picked._tag) {
+			case "ReadRepo":
+				dialog.state = picked.state;
+				dialog.input = this.newInput(() => dialog, picked.state);
+				this.readDialogRepo(cx, dialog, picked.root);
+				cx.notify();
+				return;
+			case "Send":
+				closeSelf();
+				send(picked.action);
+				return;
+			case "Nothing": return;
+		}
 	}
 	/** The Settings dialog starts from the file's text the panel read when it opened it. */
 	initSettings() {
@@ -11911,16 +12373,7 @@ var Worktrunk = class extends View {
 					this.refresh(cx, { scan: false });
 				});
 				return;
-			case "New":
-				openOverlay({
-					mod: "iangregsondev-worktrunk",
-					kind: "dialog",
-					width: 460,
-					height: 170,
-					props: newProps(action.main)
-				});
-				return;
-			case "NewHere": return this.newHere(cx);
+			case "NewOrOpen": return this.openNewOrOpen(cx, action.folder);
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
 				return;
@@ -11999,7 +12452,7 @@ var Worktrunk = class extends View {
 	*/
 	createWorktree(cx, main, name, base) {
 		if (this.busy()) return;
-		const title = `New worktree ${name}`;
+		const title = `Open or create ${name}`;
 		this.job = some(title);
 		cx.notify();
 		cx.spawn(async (cx) => {
@@ -12044,7 +12497,7 @@ var Worktrunk = class extends View {
 	*/
 	followFocus(cx, following) {
 		const places = localPlaces(spaces(), panes());
-		const folder = getOrElse(focusedFolder(focused(), places), () => "");
+		const folder = getOrElse$1(focusedFolder(focused(), places), () => "");
 		const step = followFocus(this.follow, {
 			following,
 			folder
@@ -12159,7 +12612,7 @@ var Worktrunk = class extends View {
 		});
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
 		const state = viewState();
-		const group = getOrElse(state.group, () => "");
+		const group = getOrElse$1(state.group, () => "");
 		const rendered = onRender(this.reads, {
 			shown: shown(),
 			group
@@ -12187,7 +12640,10 @@ var Worktrunk = class extends View {
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
-		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
+		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("new", "plus", () => send({
+			_tag: "NewOrOpen",
+			folder: null
+		}))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
 		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body))).children(this.renderFooter(style));
 	}
 	worktreesOf(root) {
@@ -12214,7 +12670,7 @@ var Worktrunk = class extends View {
 				onNone: () => div(),
 				onSome: (asked) => this.renderConfirm(style, asked)
 			});
-			case "New": return this.renderNew(style, copy.input, getOrElse(readNewProps(p), () => ""));
+			case "New": return this.renderNew(style, copy.dialog);
 			case "Menu": return this.renderMenu(style, readMenuProps(p), copy.menu);
 			case "Settings": return this.renderSettings(style, copy.draft);
 		}
@@ -12250,11 +12706,46 @@ var Worktrunk = class extends View {
 			else if (e.key === "escape") closeSelf();
 		}).child(div().text_size(sizes.title).font_semibold().child(confirm.title)).child(v_flex().flex_1().min_h(0).gap(4).text_color(t.muted).children(confirm.lines.map((line) => div().child(line)))).child(h_flex().justify_end().gap(8).child(button(t, "cancel", "Cancel", "plain", closeSelf)).child(button(t, "go", confirm.go, confirm.danger ? "danger" : "accent", go))));
 	}
-	/** The New worktree dialog: a branch name or a wt shortcut, Enter to go. */
-	renderNew({ t, sizes }, input, main) {
-		return this.focused(v_flex().id("new").size_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(sizes.body).on_key_down((e) => {
-			if (e.key === "escape") closeSelf();
-		}).child(div().text_size(sizes.title).font_semibold().child(`New worktree in ${lastSegment(main)}`)).child(div().h(32).px(10).flex().items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(input).h_full().text_color(t.foreground))).child(div().text_size(sizes.label).text_color(t.muted).child("Enter creates it from the default branch, or switches to it if it exists.")));
+	/**
+	* The New-or-open dialog: an input, the matching worktrees and branches (or repos, while
+	* it asks for one), and the base a new branch starts from.
+	*/
+	renderNew(style, dialog) {
+		const { t, sizes } = style;
+		const { state } = dialog;
+		const lines = linesFor(state, dialog.input.value());
+		const at = highlight(state, lines);
+		const picking = isNone(state.repo);
+		const title = match$5(state.repo, {
+			onNone: () => "New or open worktree: pick a repo",
+			onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`
+		});
+		const describe = (line) => {
+			switch (line._tag) {
+				case "Repo": return [lastSegment(line.root), tildePath(line.root, home())];
+				case "Worktree": return [line.branch, "open worktree"];
+				case "Branch": return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
+				case "Typed": return [line.name, line.shortcut ? "ask wt" : "new branch"];
+			}
+		};
+		const row = (line, i) => {
+			const [label, hint] = describe(line);
+			return h_flex().id(`line-${i}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer().when(i === at, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pickNew(cx, dialog, some(line))).child(line._tag === "Typed" && !line.shortcut ? icon("plus", 12, t.accent) : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree")).child(div().flex_none().max_w(300).truncate().child(label)).child(div().flex_1()).child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint));
+		};
+		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : "Type a branch name to create it.";
+		const baseOption = (key, label) => h_flex().id(`base-${key}`).h(24).px(9).when(key === "default", (el) => el.flex_none()).min_w(0).items_center().rounded(12).cursor_pointer().border_1().border_color(state.base === key ? t.accent : t.border).bg(state.base === key ? t.selected : t.popover).text_size(sizes.label).text_color(state.base === key ? t.foreground : t.muted).on_click((_e, cx) => {
+			if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
+			cx.notify();
+		}).child(div().min_w(0).truncate().child(label));
+		const bases = [baseOption("default", "Default branch"), ...toArray(state.current).map((branch) => baseOption("current", `${branch} (the branch I'm on)`))];
+		return this.focused(v_flex().id("new").size_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(sizes.body).on_key_down((e, cx) => {
+			if (e.key === "escape") return closeSelf();
+			if (e.key === "down" || e.key === "up") dialog.state = moved(dialog.state, lines, e.key === "down" ? 1 : -1);
+			else if (e.key === "tab" && !picking) dialog.state = flippedBase(dialog.state);
+			else return;
+			cx.stop_propagation();
+			cx.notify();
+		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
 	}
 	/**
 	* The Settings dialog: group folders (name, order, remove, add), the scan's depth and

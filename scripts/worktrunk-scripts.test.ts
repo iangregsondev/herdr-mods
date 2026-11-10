@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  BRANCHES_SCRIPT,
+  BRANCH_SCRIPT,
   CI_SCRIPT,
   GONE_SCRIPT,
   JOB_SCRIPT,
@@ -178,6 +180,37 @@ describe("LIST_SCRIPT", () => {
       env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
     });
     expect(run.stdout).toBe(`${join(root, "api")} list --format=json`);
+  });
+});
+
+describe("BRANCHES_SCRIPT", () => {
+  test("prints the repo's local branches and origin's, by full ref name, and no tags", () => {
+    const { repo } = repoWithWorktree();
+    git(repo, ["update-ref", "refs/remotes/origin/fix/b", "HEAD"]);
+    git(repo, ["tag", "v1"]);
+    const run = runSh(scriptFile(BRANCHES_SCRIPT), { args: [repo], env: isolatedGitEnv() });
+    expect(run.stdout).toBe("refs/heads/feature\nrefs/heads/main\nrefs/remotes/origin/fix/b\n");
+  });
+});
+
+describe("BRANCH_SCRIPT", () => {
+  const branchAt = (folder: string) =>
+    runSh(scriptFile(BRANCH_SCRIPT), { args: [folder], env: isolatedGitEnv() });
+
+  test("prints the branch a folder inside a linked worktree is on", () => {
+    const { root } = repoWithWorktree();
+    mkdirSync(join(root, "api.feature", "src"));
+    expect(branchAt(join(root, "api.feature", "src")).stdout).toBe("feature\n");
+  });
+
+  test("prints nothing, and succeeds, for a detached HEAD", () => {
+    const { repo } = repoWithWorktree();
+    git(repo, ["checkout", "-q", "--detach"]);
+    expect(branchAt(repo)).toEqual({ code: 0, stdout: "", stderr: "" });
+  });
+
+  test("fails outside every repo", () => {
+    expect(branchAt(realpathSync(tempDir())).code).not.toBe(0);
   });
 });
 
