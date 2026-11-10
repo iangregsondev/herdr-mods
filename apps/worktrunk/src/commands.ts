@@ -71,3 +71,6 @@ done | sort -u`;
 
 /** Lists the worktrees of the repo at $1. */
 export const LIST_SCRIPT = 'cd "$1" && wt list --format=json';
+
+/** Lists the worktrees of the repo at $1 with their CI. */
+export const CI_SCRIPT = `${LIST_SCRIPT} --full`;

@@ -1,6 +1,13 @@
 import { assert, describe, expect, it, test } from "@effect/vitest";
 import { Effect, Result } from "effect";
-import { LIST_SCRIPT, OWNERS_SCRIPT, SCAN_SCRIPT, scanArgs, shArgs } from "../src/commands.ts";
+import {
+  CI_SCRIPT,
+  LIST_SCRIPT,
+  OWNERS_SCRIPT,
+  SCAN_SCRIPT,
+  scanArgs,
+  shArgs,
+} from "../src/commands.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import {
   CommandFailed,
@@ -11,10 +18,12 @@ import {
   scanRepos,
   Shell,
   ShellError,
+  wtCi,
   wtList,
   type ExecApi,
 } from "../src/shell.ts";
 import { parseList } from "../src/worktrees.ts";
+import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 
 /**
@@ -106,6 +115,14 @@ describe("runScript", () => {
     }),
   );
 
+  it.effect("a slow script runs for as long as it asks", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
+      yield* runScript("slow", "sleep 1", [], 240_000).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["sh", shArgs("sleep 1", []), { timeout: 240_000 }]]);
+    }),
+  );
+
   it.effect("a script that fails is CommandFailed under its label", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(runScript("wt list", "exit 3", []));
@@ -137,6 +154,31 @@ describe("wtList", () => {
         Result.fail(["ListUnreadable", "wt list printed no list of worktrees"]),
       );
     }).pipe(Effect.provide(Shell.layer(answering({ code: 0, stdout: "{}", stderr: "" })))),
+  );
+});
+
+describe("wtCi", () => {
+  it.effect("the worktrees and their CI, from wt list --full, for up to 4 minutes", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: ci, stderr: "" });
+      const worktrees = yield* wtCi("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(worktrees, Result.getOrThrow(parseList(ci)));
+      assert.deepStrictEqual(calls, [
+        ["sh", shArgs(CI_SCRIPT, ["/work/repo"]), { timeout: 240_000 }],
+      ]);
+    }),
+  );
+
+  it.effect("a CI read that fails is CommandFailed, named wt list --full", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(wtCi("/r"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "wt list --full", 1, "rate limited"]),
+      );
+    }).pipe(
+      Effect.provide(Shell.layer(answering({ code: 1, stdout: "", stderr: "rate limited" }))),
+    ),
   );
 });
 

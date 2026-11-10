@@ -2,6 +2,8 @@ import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   askRefresh,
+  ciDue,
+  foldCi,
   foldList,
   IDLE,
   NO_READS,
@@ -21,6 +23,7 @@ const wt = (path: string): Worktree => ({
   deleted: 0,
   upstream: Option.none(),
   dirty: false,
+  ci: { _tag: "Checks", status: "passed", stale: false },
   committedAt: Option.none(),
 });
 
@@ -51,6 +54,28 @@ describe("foldList", () => {
   });
 });
 
+describe("foldCi", () => {
+  test("a read that works maps each worktree's CI by path", () => {
+    const read = foldCi(Option.none(), Result.succeed([A, B]));
+    expect(Array.from(read.byPath)).toEqual([
+      ["/r/a", A.ci],
+      ["/r/b", B.ci],
+    ]);
+    expect(read.error).toEqual(Option.none());
+  });
+
+  test("a failed read keeps the CI from before, with the error", () => {
+    const old = foldCi(Option.none(), Result.succeed([A]));
+    const read = foldCi(Option.some(old), Result.fail("rate limited"));
+    expect(read.byPath).toBe(old.byPath);
+    expect(read.error).toEqual(Option.some("rate limited"));
+  });
+
+  test("a first read that fails has no CI", () => {
+    expect(foldCi(Option.none(), Result.fail("x")).byPath.size).toBe(0);
+  });
+});
+
 describe("scanDue", () => {
   const last = { key: "k", at: 1_000 };
 
@@ -77,6 +102,18 @@ describe("scanDue", () => {
     expect(scanDue(Option.some(last), { forced: false, key: "k", now: 1_600, every: 600 })).toBe(
       false,
     );
+  });
+});
+
+describe("ciDue", () => {
+  test("the first CI read is always due", () => {
+    expect(ciDue(Option.none(), { now: 0, every: 300_000 })).toBe(true);
+  });
+
+  test("due once the last CI read is older than every, and not before", () => {
+    const last = Option.some(1_000);
+    expect(ciDue(last, { now: 301_001, every: 300_000 })).toBe(true);
+    expect(ciDue(last, { now: 301_000, every: 300_000 })).toBe(false);
   });
 });
 
@@ -114,26 +151,56 @@ describe("askRefresh and refreshDone", () => {
 });
 
 describe("onRender", () => {
-  test("the first render while shown starts reading", () => {
-    expect(onRender(NO_READS, { shown: true })).toEqual({
-      reads: { started: true, wasHidden: false },
+  test("the first render while shown starts reading, for the chip shown", () => {
+    expect(onRender(NO_READS, { shown: true, group: "Work" })).toEqual({
+      reads: { started: true, wasHidden: false, group: "Work" },
       step: "Start",
     });
   });
 
   test("nothing is read while hidden, and showing again reads again", () => {
-    const hidden = onRender(NO_READS, { shown: false });
-    expect(hidden).toEqual({ reads: { started: false, wasHidden: true }, step: "None" });
-    const started = onRender(onRender(NO_READS, { shown: true }).reads, { shown: false });
-    expect(started).toEqual({ reads: { started: true, wasHidden: true }, step: "None" });
-    expect(onRender(started.reads, { shown: true })).toEqual({
-      reads: { started: true, wasHidden: false },
+    const hidden = onRender(NO_READS, { shown: false, group: "" });
+    expect(hidden).toEqual({
+      reads: { started: false, wasHidden: true, group: "" },
+      step: "None",
+    });
+    const shown = onRender(NO_READS, { shown: true, group: "" }).reads;
+    const started = onRender(shown, { shown: false, group: "" });
+    expect(started).toEqual({
+      reads: { started: true, wasHidden: true, group: "" },
+      step: "None",
+    });
+    expect(onRender(started.reads, { shown: true, group: "" })).toEqual({
+      reads: { started: true, wasHidden: false, group: "" },
       step: "Start",
     });
   });
 
-  test("still shown, it reads nothing more", () => {
-    const started = { started: true, wasHidden: false };
-    expect(onRender(started, { shown: true })).toEqual({ reads: started, step: "None" });
+  test("another group chip reads its repos", () => {
+    const started = { started: true, wasHidden: false, group: "" };
+    expect(onRender(started, { shown: true, group: "Work" })).toEqual({
+      reads: { started: true, wasHidden: false, group: "Work" },
+      step: "NewGroup",
+    });
+  });
+
+  test("a chip picked while hidden is read when the panel shows again", () => {
+    const hidden = { started: true, wasHidden: true, group: "" };
+    expect(onRender(hidden, { shown: false, group: "Work" })).toEqual({
+      reads: hidden,
+      step: "None",
+    });
+    expect(onRender(hidden, { shown: true, group: "Work" })).toEqual({
+      reads: { started: true, wasHidden: false, group: "Work" },
+      step: "Start",
+    });
+  });
+
+  test("the same chip, still shown, reads nothing more", () => {
+    const started = { started: true, wasHidden: false, group: "Work" };
+    expect(onRender(started, { shown: true, group: "Work" })).toEqual({
+      reads: started,
+      step: "None",
+    });
   });
 });

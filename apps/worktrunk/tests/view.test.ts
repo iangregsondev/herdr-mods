@@ -1,11 +1,17 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import type { RepoList } from "../src/reads.ts";
+import type { CiRead, RepoList } from "../src/reads.ts";
 import type { Repo } from "../src/repos.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import type { SpaceLike } from "../src/spaces.ts";
-import { buildView, type RepoView, type RowView, type Snapshot } from "../src/view.ts";
-import type { Worktree, WorktreeState } from "../src/worktrees.ts";
+import {
+  buildView,
+  DEFAULT_VIEW_STATE,
+  type RepoView,
+  type RowView,
+  type Snapshot,
+} from "../src/view.ts";
+import type { Ci, Worktree, WorktreeState } from "../src/worktrees.ts";
 
 const NOW = Date.parse("2026-11-09T12:00:00Z");
 const HOUR = 3_600_000;
@@ -25,6 +31,7 @@ const wt = (
   deleted: 0,
   upstream: Option.none(),
   dirty: false,
+  ci: { _tag: "NotAsked" },
   committedAt: Option.some(NOW - HOUR),
   ...more,
 });
@@ -77,6 +84,10 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   spaces: [],
   panes: [],
   folded: {},
+  ci: new Map(),
+  // "All repos", so single-checkout repos show unless a test turns the toggle on.
+  view: { ...DEFAULT_VIEW_STATE, only: false },
+  search: "",
   now: NOW,
   ...more,
 });
@@ -366,5 +377,360 @@ describe("buildView: header, banners and empty states", () => {
       _tag: "Message",
       text: "No repos found in your group folders.",
     });
+  });
+});
+
+const PERSONAL: Repo = { root: "/p/blog", count: 2, group: "Personal" };
+const STRAY: Repo = { root: "/x/tool", count: 2, group: "Lab" };
+const withView = (view: Partial<Snapshot["view"]>, more: Partial<Snapshot> = {}) =>
+  snapshot({ view: { ...DEFAULT_VIEW_STATE, only: false, ...view }, ...more });
+const names = (s: Snapshot) => tree(s).map((r) => r.name);
+
+describe("buildView: group chips", () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    folders: [
+      { name: "Work", path: "/w" },
+      { name: "Personal", path: "/p" },
+    ],
+  };
+  const repos = [API, WEB, PERSONAL, STRAY];
+  const lists = new Map([
+    [API.root, read(API_WORKTREES)],
+    [WEB.root, read([wt("/p/web", "main", MAIN)])],
+    [PERSONAL.root, read([wt("/p/blog", "main", MAIN), wt("/p/blog.x", "x", ACTIVE)])],
+    [STRAY.root, read([wt("/x/tool", "main", MAIN), wt("/x/tool.y", "y", ACTIVE)])],
+  ]);
+  const chipsOf = (s: Snapshot) => buildView(s).chips.map((c) => [c.label, c.selected]);
+
+  test("All, then the groups in Settings order, unknown groups by name, then Other", () => {
+    expect(chipsOf(snapshot({ repos, lists, settings }))).toEqual([
+      ["All", true],
+      ["Work", false],
+      ["Personal", false],
+      ["Lab", false],
+      ["Other", false],
+    ]);
+  });
+
+  test("a group with no repos gets no chip", () => {
+    expect(chipsOf(snapshot({ repos: [API], lists, settings }))).toEqual([
+      ["All", true],
+      ["Work", false],
+    ]);
+  });
+
+  test("before the first scan the chips come from Settings, so a saved chip stays selected", () => {
+    const s = withView(
+      { group: Option.some("Personal") },
+      { repos: [], discovered: false, settings },
+    );
+    expect(chipsOf(s)).toEqual([
+      ["All", false],
+      ["Work", false],
+      ["Personal", true],
+    ]);
+  });
+
+  test("a chip lists only its group's repos", () => {
+    const s = (group: string) =>
+      withView({ group: Option.some(group) }, { repos, lists, settings });
+    expect(names(s("Personal"))).toEqual(["blog"]);
+    expect(names(s("Other"))).toEqual(["web"]);
+    expect(names(snapshot({ repos, lists, settings }))).toEqual(["api", "web", "blog", "tool"]);
+  });
+
+  test("a chip whose group is gone falls back to All", () => {
+    const s = withView({ group: Option.some("Renamed") }, { repos, lists, settings });
+    expect(chipsOf(s)[0]).toEqual(["All", true]);
+    expect(names(s)).toEqual(["api", "web", "blog", "tool"]);
+  });
+
+  test("each chip carries the group it selects", () => {
+    const chips = buildView(snapshot({ repos, lists, settings })).chips;
+    expect(chips.map((c) => c.group)).toEqual([
+      Option.none(),
+      Option.some("Work"),
+      Option.some("Personal"),
+      Option.some("Lab"),
+      Option.some("Other"),
+    ]);
+  });
+});
+
+describe("buildView: views", () => {
+  const blogList = read([
+    wt("/p/blog", "main", MAIN),
+    wt("/p/blog.done", "done", merged("ancestor"), { committedAt: Option.some(NOW - 3 * HOUR) }),
+    wt("/p/blog.wip", "wip", ACTIVE, { committedAt: Option.some(NOW - 10 * 60_000) }),
+  ]);
+  const both = (more: Partial<Snapshot> = {}) =>
+    snapshot({
+      repos: [API, PERSONAL],
+      lists: new Map([
+        [API.root, read(API_WORKTREES)],
+        [PERSONAL.root, blogList],
+      ]),
+      ...more,
+    });
+  const flat = (s: Snapshot) => {
+    const body = buildView(s).body;
+    if (body._tag !== "Flat") expect.fail(`expected a flat list, got ${body._tag}`);
+    return body;
+  };
+  const show = (view: Snapshot["view"]["show"], more: Partial<Snapshot> = {}) =>
+    both({ view: { ...DEFAULT_VIEW_STATE, only: false, show: view }, ...more });
+
+  test("the view picker lists every view, the selected one marked", () => {
+    expect(buildView(show("active")).views).toEqual([
+      { show: "repos", label: "Repos", selected: false },
+      { show: "merged", label: "Clean up", selected: false },
+      { show: "active", label: "Active", selected: true },
+      { show: "conflict", label: "Conflicts", selected: false },
+      { show: "open", label: "Open", selected: false },
+    ]);
+  });
+
+  test("Repos is the tree", () => {
+    expect(buildView(show("repos")).body._tag).toBe("Tree");
+  });
+
+  test("Clean up: merged worktrees across repos, newest first, with a count", () => {
+    const body = flat(show("merged"));
+    expect(body.rows.map((r) => r.label)).toEqual(["done", "old"]);
+    expect(body.summary).toEqual(Option.some("2 merged in 2 repos"));
+  });
+
+  test("Clean up in one repo says repo, not repos", () => {
+    expect(flat(show("merged", { repos: [API] })).summary).toEqual(
+      Option.some("1 merged in 1 repo"),
+    );
+  });
+
+  test("Active: in-progress worktrees across repos, newest first", () => {
+    const body = flat(show("active"));
+    expect(body.rows.map((r) => r.label)).toEqual(["new", "wip"]);
+    expect(body.summary).toEqual(Option.none());
+  });
+
+  test("Conflicts: worktrees that would conflict with main", () => {
+    expect(flat(show("conflict")).rows.map((r) => r.label)).toEqual(["fight"]);
+  });
+
+  test("Open: every worktree a space sits on, main checkouts too", () => {
+    const s = show("open", {
+      spaces: [space("s1", "/w/api"), space("s2", "/p/blog.wip/src")],
+    });
+    expect(flat(s).rows.map((r) => r.key)).toEqual(["/p/blog.wip", "/w/api"]);
+  });
+
+  test("a flat row names its repo first in the subline, and knows its repo", () => {
+    const [first] = flat(show("active")).rows;
+    expect(first?.subline).toBe("api · ↑0 ↓0 vs main · 2m");
+    expect(first?.repo).toBe("/w/api");
+  });
+
+  test("flat views follow the group chip", () => {
+    const s = show("merged", {
+      view: { ...DEFAULT_VIEW_STATE, show: "merged", group: Option.some("Work") },
+    });
+    expect(flat(s).rows.map((r) => r.label)).toEqual(["old"]);
+  });
+
+  test("an empty flat view says so", () => {
+    const webOnly = {
+      repos: [WEB],
+      lists: new Map([[WEB.root, read([wt("/p/web", "main", MAIN)])]]),
+    };
+    expect(buildView(show("conflict", { repos: [PERSONAL] })).body).toEqual({
+      _tag: "Message",
+      text: "No worktrees conflict with main.",
+    });
+    expect(buildView(show("merged", webOnly)).body).toEqual({
+      _tag: "Message",
+      text: "Nothing to clean up.",
+    });
+    expect(buildView(show("active", webOnly)).body).toEqual({
+      _tag: "Message",
+      text: "No worktrees in progress.",
+    });
+    expect(buildView(show("open")).body).toEqual({
+      _tag: "Message",
+      text: "No worktree has a space open.",
+    });
+  });
+
+  test("an empty flat view says Reading while a repo is still unread", () => {
+    expect(buildView(show("active", { lists: new Map() })).body).toEqual({
+      _tag: "Message",
+      text: "Reading…",
+    });
+  });
+});
+
+describe("buildView: the All repos / With worktrees toggle", () => {
+  test("offered in the Repos view only", () => {
+    expect(buildView(withView({ only: true })).toggle).toEqual(Option.some(true));
+    expect(buildView(withView({ only: false })).toggle).toEqual(Option.some(false));
+    expect(buildView(withView({ show: "active" })).toggle).toEqual(Option.none());
+  });
+
+  test("With worktrees hides repos with only a main checkout", () => {
+    expect(names(withView({ only: true }))).toEqual(["api"]);
+    expect(names(withView({ only: false }))).toEqual(["api", "web"]);
+  });
+
+  test("the count read from wt list wins over the scan's", () => {
+    const grown = read([wt("/p/web", "main", MAIN), wt("/p/web.x", "x", ACTIVE)]);
+    const lists = new Map([
+      [API.root, read(API_WORKTREES)],
+      [WEB.root, grown],
+    ]);
+    expect(names(withView({ only: true }, { lists }))).toEqual(["api", "web"]);
+  });
+
+  test("an unread repo is judged by the scan's count", () => {
+    expect(names(withView({ only: true }, { lists: new Map() }))).toEqual(["api"]);
+  });
+
+  test("the toggle doesn't touch flat views", () => {
+    const s = withView({ only: true, show: "open" }, { spaces: [space("s1", "/p/web")] });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => r.key)).toEqual(["/p/web"]);
+  });
+
+  test("when it hides every repo, it says how to see them", () => {
+    expect(buildView(withView({ only: true }, { repos: [WEB] })).body).toEqual({
+      _tag: "Message",
+      text: "No repos with worktrees here. Choose All repos to see the rest.",
+    });
+  });
+});
+
+describe("buildView: search", () => {
+  const labels = (s: Snapshot) => tree(s).flatMap((r) => allRows(r).map((x) => x.label));
+
+  test("matches a branch name, ignoring case and spaces around it", () => {
+    expect(labels(snapshot({ search: "  NEW " }))).toEqual(["new"]);
+  });
+
+  test("a repo with no matching worktree drops out while searching", () => {
+    expect(names(snapshot({ search: "fight" }))).toEqual(["api"]);
+  });
+
+  test("matching a repo's name keeps all its worktrees", () => {
+    expect(labels(snapshot({ search: "web" }))).toEqual(["main"]);
+    expect(labels(snapshot({ search: "ap" }))).toEqual(["main", "old", "new", "fight"]);
+  });
+
+  test("searching shows matches inside folded repos and sections", () => {
+    const s = snapshot({ search: "old", folded: { "/w/api": true, "/w/api|merged": true } });
+    const api = repo(s, "api");
+    expect(api.folded).toBe(false);
+    expect(api.sections[0]).toMatchObject({ folded: false, rows: [{ label: "old" }] });
+  });
+
+  test("folding comes back when the search is cleared", () => {
+    const s = snapshot({ search: " ", folded: { "/w/api": true } });
+    expect(repo(s, "api").folded).toBe(true);
+  });
+
+  test("an unread repo stays only when its name matches", () => {
+    const s = (search: string) => snapshot({ search, lists: new Map() });
+    expect(names(s("api"))).toEqual(["api"]);
+    expect(buildView(s("old")).body).toEqual({ _tag: "Message", text: 'Nothing matches "old".' });
+  });
+
+  test("narrows the flat views too", () => {
+    const found = buildView(withView({ show: "active" }, { search: "NE" })).body;
+    expect(found._tag === "Flat" && found.rows.map((r) => r.label)).toEqual(["new"]);
+    expect(buildView(withView({ show: "merged" }, { search: "nothing-like-it" })).body).toEqual({
+      _tag: "Message",
+      text: 'Nothing matches "nothing-like-it".',
+    });
+  });
+
+  test("nothing matching in the tree says so", () => {
+    expect(buildView(snapshot({ search: "zzz" })).body).toEqual({
+      _tag: "Message",
+      text: 'Nothing matches "zzz".',
+    });
+  });
+
+  test("a space on a worktree the search hides stays on it, never on the main checkout", () => {
+    const nested = read([wt("/w/api", "main", MAIN), wt("/w/api/.wt/feat", "feat", ACTIVE)]);
+    const s = snapshot({
+      repos: [API],
+      lists: new Map([[API.root, nested]]),
+      spaces: [space("s1", "/w/api/.wt/feat/src")],
+      search: "main",
+    });
+    expect(row(s, "/w/api")).toMatchObject({ open: false, hollow: true });
+  });
+});
+
+describe("buildView: CI", () => {
+  const checks = (status: "passed" | "running" | "failed", stale = false): Ci => ({
+    _tag: "Checks",
+    status,
+    stale,
+  });
+  const ciRead = (byPath: readonly (readonly [string, Ci])[], error: string | null = null) => {
+    const read: CiRead = { byPath: new Map(byPath), error: Option.fromNullishOr(error) };
+    return read;
+  };
+  const withCi = (byPath: readonly (readonly [string, Ci])[], error: string | null = null) =>
+    snapshot({ ci: new Map([[API.root, ciRead(byPath, error)]]) });
+
+  test("each row shows its CI from the last CI read", () => {
+    const s = withCi([
+      ["/w/api", checks("passed")],
+      ["/w/api.new", checks("running")],
+      ["/w/api.fight", checks("failed", true)],
+      ["/w/api.old", { _tag: "Conflicts" }],
+    ]);
+    expect(row(s, "/w/api").ci).toEqual(Option.some({ status: "passed", stale: false }));
+    expect(row(s, "/w/api.new").ci).toEqual(Option.some({ status: "running", stale: false }));
+    expect(row(s, "/w/api.fight").ci).toEqual(Option.some({ status: "failed", stale: true }));
+    expect(row(s, "/w/api.old").ci).toEqual(Option.some({ status: "conflicts", stale: false }));
+  });
+
+  test("a forge that gave no answer shows as unknown, never as nothing", () => {
+    const s = withCi([["/w/api.new", { _tag: "Unknown" }]]);
+    expect(row(s, "/w/api.new").ci).toEqual(Option.some({ status: "unknown", stale: false }));
+  });
+
+  test("no PR and no checks: no badge", () => {
+    expect(row(withCi([["/w/api.new", { _tag: "None" }]]), "/w/api.new").ci).toEqual(Option.none());
+  });
+
+  test("no CI read yet: no badge", () => {
+    expect(row(snapshot(), "/w/api.new").ci).toEqual(Option.none());
+  });
+
+  test("CI that came with the list itself counts when there's no CI read", () => {
+    const list = read([wt("/w/api", "main", MAIN, { ci: checks("passed") })]);
+    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    expect(row(s, "/w/api").ci).toEqual(Option.some({ status: "passed", stale: false }));
+  });
+
+  test("a failed CI read keeps the last answers and says it is out of date", () => {
+    const s = withCi([["/w/api", checks("passed")]], "timed out after 240s");
+    expect(row(s, "/w/api").ci).toEqual(Option.some({ status: "passed", stale: false }));
+    expect(repo(s, "api").ciNote).toEqual(
+      Option.some("CI status not updated: timed out after 240s"),
+    );
+    expect(repo(withCi([]), "api").ciNote).toEqual(Option.none());
+  });
+
+  test("flat rows carry CI too", () => {
+    const s = snapshot({
+      view: { ...DEFAULT_VIEW_STATE, show: "active" },
+      ci: new Map([[API.root, ciRead([["/w/api.new", checks("failed")]])]]),
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows[0]?.ci).toEqual(
+      Option.some({ status: "failed", stale: false }),
+    );
   });
 });

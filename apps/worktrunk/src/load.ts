@@ -19,6 +19,7 @@ import {
   failureText,
   reposOf,
   scanRepos,
+  wtCi,
   wtList,
   type CommandFailed,
   type ListUnreadable,
@@ -119,6 +120,28 @@ export const findRepos = Effect.fn("findRepos")(function* (
 export const readList = Effect.fn("readList")(function* (root: string) {
   return yield* wtList(root);
 }, asReason);
+
+/** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */
+export const readCi = Effect.fn("readCi")(function* (root: string) {
+  return yield* wtCi(root);
+}, asReason);
+
+/**
+ * Runs `read` on every repo root, at most `limit` at a time, handing each answer to
+ * `keep` as it lands. Each read spawns processes, and Herdr runs out of open files when
+ * every repo's list and CI start at once.
+ */
+export const readEach = <A, R>(
+  roots: readonly string[],
+  limit: number,
+  read: (root: string) => Effect.Effect<A, never, R>,
+  keep: (root: string, answer: A) => void,
+): Effect.Effect<void, never, R> =>
+  Effect.forEach(
+    roots,
+    (root) => read(root).pipe(Effect.tap((answer) => Effect.sync(() => keep(root, answer)))),
+    { concurrency: limit, discard: true },
+  );
 
 /**
  * The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr

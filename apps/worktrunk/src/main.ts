@@ -2,7 +2,7 @@
 // This file is the thin Herdr layer: it runs the Effect programs in load.ts at the edge,
 // keeps what they return and draws what the pure view builder (view.ts) returns.
 import { View, div, svg, type AsyncContext, type Context, type Element } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { Input, InputState, h_flex, v_flex } from "gpui-base";
 import {
   appHome,
   exec,
@@ -24,15 +24,26 @@ import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { scanArgs } from "./commands.ts";
 import { Files } from "./files.ts";
 import { findModBlock, roleOf, TOGGLE_ROLE } from "./layout.ts";
-import { findRepos, loadSettings, readList, syncToast, type LoadedSettings } from "./load.ts";
+import {
+  findRepos,
+  loadSettings,
+  readCi,
+  readEach,
+  readList,
+  syncToast,
+  type LoadedSettings,
+} from "./load.ts";
 import {
   askRefresh,
+  ciDue,
+  foldCi,
   foldList,
   IDLE,
   NO_READS,
   onRender,
   refreshDone,
   scanDue,
+  type CiRead,
   type LastScan,
   type Loader,
   type RefreshAsk,
@@ -44,13 +55,18 @@ import { Shell } from "./shell.ts";
 import { localPlaces } from "./spaces.ts";
 import {
   buildView,
+  reposInGroup,
+  type CiBadge,
   type Click,
+  type PanelView,
   type RepoView,
   type RowView,
   type SectionView,
   type Tone,
+  type ViewState,
 } from "./view.ts";
-import { readFolded } from "./wire.ts";
+import type { Worktree } from "./worktrees.ts";
+import { readFolded, readViewState, writeViewState } from "./wire.ts";
 
 type Hex = `#${string}`;
 type Colors = Record<string, Hex>;
@@ -62,6 +78,8 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `${__MOD_ID__}.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `${__MOD_ID__}.folded.v1`;
+/** The selected group chip, view and toggle, remembered across restarts. */
+const VIEW_KEY = `${__MOD_ID__}.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
 /** The installed Herdr version the "run herdr:sync" toast was last shown for. */
@@ -69,6 +87,13 @@ const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 
 const LIST_EVERY = 20_000;
 const SCAN_EVERY = 10 * 60_000;
+const CI_EVERY = 5 * 60_000;
+/**
+ * How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
+ * runs out of open files when every repo's start together.
+ */
+const LIST_LIMIT = 6;
+const CI_LIMIT = 3;
 
 /** Herdr's API, as the services call it. */
 const services = Layer.mergeAll(
@@ -124,6 +149,51 @@ const toggleFold = (key: string) => {
   setShared(FOLDED_KEY, { ...folded, [key]: !folded[key] });
 };
 
+/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
+const defectAsFailure = <A>(
+  read: Effect.Effect<Result.Result<A, string>, never, Shell | Files>,
+): Effect.Effect<Result.Result<A, string>, never, Shell | Files> =>
+  Effect.exit(read).pipe(
+    Effect.map(
+      Exit.match({
+        onSuccess: (answer) => answer,
+        onFailure: (cause) => Result.fail(Cause.pretty(cause)),
+      }),
+    ),
+  );
+
+/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
+const readAll = (
+  roots: readonly string[],
+  limit: number,
+  read: (root: string) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
+  keep: (root: string, answer: Result.Result<readonly Worktree[], string>) => void,
+): Promise<void> =>
+  runEdge(
+    readEach(roots, limit, (root) => defectAsFailure(read(root)), keep),
+    () => undefined,
+  );
+
+const viewState = (): ViewState => readViewState(shared(VIEW_KEY));
+
+const setView = (change: Partial<ViewState>) =>
+  setShared(VIEW_KEY, writeViewState({ ...viewState(), ...change }));
+
+const ciIcon = (t: Colors, badge: CiBadge): readonly [string, Hex] => {
+  switch (badge.status) {
+    case "passed":
+      return ["check", t.done];
+    case "running":
+      return ["ring", t.working];
+    case "failed":
+      return ["alert", t.ansi1];
+    case "conflicts":
+      return ["alert", t.blocked];
+    case "unknown":
+      return ["help", t.muted];
+  }
+};
+
 /** Defers work out of `render`, which may not notify. */
 const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
   cx.spawn(async (cx) => {
@@ -177,13 +247,50 @@ export default class Worktrunk extends View {
   lists: ReadonlyMap<string, RepoList> = new Map();
   loader: Loader = IDLE;
   reads = NO_READS;
+  ci: ReadonlyMap<string, CiRead> = new Map();
+  /** When the last CI read started; none makes the next refresh read CI too. */
+  ciAt: Option.Option<number> = Option.none();
+  checking = false;
+  search = "";
+  searchBox: Option.Option<InputState> = Option.none();
 
   init(props: unknown, cx: AsyncContext) {
     this.copy = copyOf(props);
     if (this.copy !== "Panel") return;
+    const box = InputState.new({ placeholder: "Branch or repo" });
+    box.on("change", (_event, cx) => {
+      this.search = box.value();
+      cx.notify();
+    });
+    this.searchBox = Option.some(box);
     cx.spawn(checkSync);
     cx.timer.every(LIST_EVERY, (cx) => {
       if (shown()) this.refresh(cx, { scan: false });
+    });
+  }
+
+  /** The repos the selected group chip shows: the only ones worth reading. */
+  reposToRead(): readonly string[] {
+    return reposInGroup({
+      repos: this.repos,
+      discovered: this.discovered,
+      settings: this.settings,
+      view: viewState(),
+    }).map((repo) => repo.root);
+  }
+
+  /** CI for the repos shown, from `wt list --full`. A failed read keeps the CI from before. */
+  checkCi(cx: AsyncContext) {
+    if (this.checking || !this.discovered) return;
+    this.checking = true;
+    this.ciAt = Option.some(Date.now());
+    cx.spawn(async (cx) => {
+      await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
+        const old = Option.fromNullishOr(this.ci.get(root));
+        this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+        cx.notify();
+      });
+      this.checking = false;
     });
   }
 
@@ -198,11 +305,12 @@ export default class Worktrunk extends View {
       const done = refreshDone(this.loader);
       this.loader = done.loader;
       cx.notify();
+      if (ciDue(this.ciAt, { now: Date.now(), every: CI_EVERY })) this.checkCi(cx);
       if (Option.isSome(done.again)) this.refresh(cx, done.again.value);
     });
   }
 
-  /** One refresh: the settings, then the repos, then each repo's worktrees. */
+  /** One refresh: the settings, then the repos, then the shown repos' worktrees. */
   async load(cx: AsyncContext, { scan }: RefreshAsk) {
     const settled = shared(IMPORTED_KEY) === true;
     const loaded = await runEdge(
@@ -243,14 +351,17 @@ export default class Worktrunk extends View {
     this.discovered = true;
     cx.notify();
 
-    await Promise.all(
-      this.repos.map(async (repo) => {
-        const read = await runEdge(readList(repo.root), Result.fail);
-        const old = Option.fromNullishOr(this.lists.get(repo.root));
-        this.lists = new Map([...this.lists, [repo.root, foldList(old, read)]]);
-        cx.notify();
-      }),
-    );
+    await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
+      const old = Option.fromNullishOr(this.lists.get(root));
+      this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
+      cx.notify();
+    });
+  }
+
+  /** Reads CI again with the next refresh, which `ask` starts. */
+  refreshWithCi(cx: AsyncContext, ask: RefreshAsk) {
+    this.ciAt = Option.none();
+    this.refresh(cx, ask);
   }
 
   render(cx: Context) {
@@ -260,9 +371,15 @@ export default class Worktrunk extends View {
     if (this.copy === "Unknown") return div();
     const { t, sizes } = style;
     const block = findModBlock(layout(), __MOD_ID__);
-    const rendered = onRender(this.reads, { shown: shown() });
+    const state = viewState();
+    const group = Option.getOrElse(state.group, () => "");
+    const rendered = onRender(this.reads, { shown: shown(), group });
     this.reads = rendered.reads;
     if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
+    // Another group chip: its repos may not have been read yet, CI included.
+    if (rendered.step === "NewGroup") {
+      later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
+    }
 
     const view = buildView({
       repos: this.repos,
@@ -276,6 +393,9 @@ export default class Worktrunk extends View {
       spaces: spaces(),
       panes: panes(),
       folded: readFolded(shared(FOLDED_KEY)),
+      ci: this.ci,
+      view: state,
+      search: this.search,
       now: Date.now(),
     });
 
@@ -304,7 +424,9 @@ export default class Worktrunk extends View {
       .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
       .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
       .child(
-        iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refresh(cx, { scan: true }))),
+        iconButton("refresh", "sync", (cx) =>
+          later(cx, (cx) => this.refreshWithCi(cx, { scan: true })),
+        ),
       )
       .when(Option.isSome(block), (el) =>
         el.child(
@@ -313,13 +435,6 @@ export default class Worktrunk extends View {
           ),
         ),
       );
-
-    const body =
-      view.body._tag === "Message"
-        ? div().p(16).text_size(sizes.small).text_color(t.muted).child(view.body.text)
-        : v_flex()
-            .pb(16)
-            .children(view.body.repos.map((repo) => this.renderRepo(style, repo)));
 
     return v_flex()
       .id("worktrunk")
@@ -341,7 +456,168 @@ export default class Worktrunk extends View {
             .child(text),
         ),
       )
-      .child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(body));
+      .child(this.renderControls(style, view))
+      .child(
+        div()
+          .id("list")
+          .flex_1()
+          .min_h(0)
+          .overflow_y_scrollbar()
+          .child(this.renderBody(style, view.body)),
+      );
+  }
+
+  /** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
+  renderControls({ t, sizes }: Style, view: PanelView): Element {
+    const chip = (id: string, label: string, on: boolean, onClick: () => void) =>
+      h_flex()
+        .id(id)
+        .h(24)
+        .px(9)
+        .flex_none()
+        .items_center()
+        .rounded(12)
+        .cursor_pointer()
+        .border_1()
+        .border_color(on ? t.accent : t.border)
+        .bg(on ? t.selected : t.background)
+        .text_size(sizes.label)
+        .text_color(on ? t.foreground : t.muted)
+        .when(on, (el) => el.font_semibold())
+        .hover((s) => s.text_color(t.foreground))
+        .on_click(onClick)
+        .child(label);
+    const segment = (
+      id: string,
+      options: readonly { readonly key: string; readonly label: string; readonly on: boolean }[],
+      onPick: (key: string) => void,
+    ) =>
+      h_flex()
+        .id(id)
+        .w_full()
+        .p(2)
+        .gap(2)
+        .rounded(8)
+        .bg(t.chrome)
+        .border_1()
+        .border_color(t.border)
+        .children(
+          options.map(({ key, label, on }) =>
+            h_flex()
+              .id(`${id}-${key}`)
+              .flex_1()
+              .min_w(0)
+              .h(24)
+              .justify_center()
+              .items_center()
+              .rounded(6)
+              .bg(on ? t.raised : t.chrome)
+              .text_size(sizes.label)
+              .text_color(on ? t.foreground : t.muted)
+              .when(on, (el) => el.font_semibold())
+              .cursor_pointer()
+              .hover((s) => s.text_color(t.foreground))
+              .on_click(() => onPick(key))
+              .child(div().truncate().child(label)),
+          ),
+        );
+    const search = h_flex()
+      .flex_1()
+      .min_w(0)
+      .h(28)
+      .px(8)
+      .gap(6)
+      .items_center()
+      .rounded(6)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.chrome)
+      .child(icon("search", 13, t.muted))
+      .children(
+        Option.toArray(this.searchBox).map((box) =>
+          Input.new(box).flex_1().min_w(0).h_full().text_size(sizes.small).text_color(t.foreground),
+        ),
+      );
+    return v_flex()
+      .flex_none()
+      .px(12)
+      .py(8)
+      .gap(7)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap(5)
+          .items_center()
+          .children(
+            view.chips.map((c) =>
+              chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group })),
+            ),
+          ),
+      )
+      .child(
+        segment(
+          "show",
+          view.views.map((v) => ({ key: v.show, label: v.label, on: v.selected })),
+          (key) =>
+            Option.map(Option.fromNullishOr(view.views.find((v) => v.show === key)), (picked) =>
+              setView({ show: picked.show }),
+            ),
+        ),
+      )
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(search)
+          .children(
+            Option.toArray(view.toggle).map((only) =>
+              h_flex()
+                .w(190)
+                .flex_none()
+                .child(
+                  segment(
+                    "only",
+                    [
+                      { key: "all", label: "All repos", on: !only },
+                      { key: "only", label: "With worktrees", on: only },
+                    ],
+                    (key) => setView({ only: key === "only" }),
+                  ),
+                ),
+            ),
+          ),
+      );
+  }
+
+  renderBody(style: Style, body: PanelView["body"]): Element {
+    const { t, sizes } = style;
+    switch (body._tag) {
+      case "Message":
+        return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
+      case "Tree":
+        return v_flex()
+          .pb(16)
+          .children(body.repos.map((repo) => this.renderRepo(style, repo)));
+      case "Flat":
+        return v_flex()
+          .pt(6)
+          .pb(16)
+          .children(
+            Option.toArray(body.summary).map((summary) =>
+              div()
+                .px(14)
+                .pt(4)
+                .pb(4)
+                .text_size(sizes.label)
+                .font_semibold()
+                .text_color(t.done)
+                .child(summary),
+            ),
+          )
+          .children(body.rows.map((row) => this.renderRow(style, row)));
+    }
   }
 
   /** The tab-bar button: shows and hides the panel's block. */
@@ -419,10 +695,14 @@ export default class Worktrunk extends View {
         : repo.status._tag === "Reading"
           ? [note("Reading…", t.muted)]
           : [note(repo.status.text, t.ansi1)];
+    const ciNote = repo.folded
+      ? []
+      : Option.toArray(repo.ciNote).map((text) => note(text, t.muted));
     const style = { t, sizes };
     return v_flex()
       .child(head)
       .children(status)
+      .children(ciNote)
       .children(repo.main.map((row) => this.renderRow(style, row)))
       .children(repo.sections.map((section) => this.renderSection(style, section)));
   }
@@ -484,6 +764,14 @@ export default class Worktrunk extends View {
               .when(row.dirty, (el) => el.child(dot(t.blocked, 6, false))),
           )
           .child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline)),
+      )
+      .children(
+        Option.toArray(row.ci).map((badge) => {
+          const [name, color] = ciIcon(t, badge);
+          // Checks on an older commit than the one pushed: shown, but dimmed.
+          const drawn = icon(name, 13, badge.stale ? t.dim : color);
+          return badge.status === "running" ? drawn.spin(1200) : drawn;
+        }),
       )
       .when(row.open, (el) =>
         el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")),

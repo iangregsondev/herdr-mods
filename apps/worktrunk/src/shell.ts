@@ -3,7 +3,14 @@
 // layer by main.ts, so tests build the layer from a fake.
 import { Context, Data, Effect, Layer } from "effect";
 import type * as herdr from "herdr";
-import { LIST_SCRIPT, OWNERS_SCRIPT, SCAN_SCRIPT, scanArgs, shArgs } from "./commands.ts";
+import {
+  CI_SCRIPT,
+  LIST_SCRIPT,
+  OWNERS_SCRIPT,
+  SCAN_SCRIPT,
+  scanArgs,
+  shArgs,
+} from "./commands.ts";
 import { parseOwners, parseScan } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
@@ -67,15 +74,19 @@ export class Shell extends Context.Service<
 /** The longest a script may run, in ms. */
 const SCRIPT_TIMEOUT = 60_000;
 
-/** Runs `body` under `sh` with `args` as $1...; a failure names the run `label`. */
+/**
+ * Runs `body` under `sh` with `args` as $1..., for up to `timeout` ms; a failure names
+ * the run `label`.
+ */
 export const runScript = Effect.fn("runScript")(function* (
   label: string,
   body: string,
   args: readonly string[],
+  timeout: number = SCRIPT_TIMEOUT,
 ) {
   const shell = yield* Shell;
   return yield* shell
-    .exec("sh", shArgs(body, args), { timeout: SCRIPT_TIMEOUT })
+    .exec("sh", shArgs(body, args), { timeout })
     .pipe(
       Effect.catchTag("CommandFailed", (failed) =>
         Effect.fail(
@@ -85,12 +96,30 @@ export const runScript = Effect.fn("runScript")(function* (
     );
 });
 
-/** The worktrees of the repo at `root`, from `wt list --format=json`. */
-export const wtList = Effect.fn("wtList")(function* (root: string) {
-  const run = yield* runScript("wt list", LIST_SCRIPT, [root]);
+/** The worktrees `body` prints for the repo at `root`, its run named `label`. */
+const worktreesFrom = Effect.fnUntraced(function* (
+  label: string,
+  body: string,
+  root: string,
+  timeout?: number,
+) {
+  const run = yield* runScript(label, body, [root], timeout);
   return yield* Effect.fromResult(parseList(run.stdout)).pipe(
     Effect.mapError((message) => new ListUnreadable({ message })),
   );
+});
+
+/** The worktrees of the repo at `root`, from `wt list --format=json`. */
+export const wtList = Effect.fn("wtList")(function* (root: string) {
+  return yield* worktreesFrom("wt list", LIST_SCRIPT, root);
+});
+
+/** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
+const CI_TIMEOUT = 240_000;
+
+/** The worktrees of the repo at `root` with their CI, from `wt list --full`. */
+export const wtCi = Effect.fn("wtCi")(function* (root: string) {
+  return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
 });
 
 /** The repos the folder scan finds in the settings' group folders. */

@@ -1,7 +1,7 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import type { RepoList } from "./reads.ts";
+import type { CiRead, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
 import {
@@ -12,7 +12,30 @@ import {
   type SpaceLike,
   type SpaceRef,
 } from "./spaces.ts";
-import type { Worktree } from "./worktrees.ts";
+import type { Ci, CiStatus, Worktree } from "./worktrees.ts";
+
+/** The panel's views: the Repos tree, or one flat list of worktrees by what to do next. */
+export type Show = "repos" | "merged" | "active" | "conflict" | "open";
+
+/** Every view, in the picker's order, with its label. */
+export const SHOWS: readonly (readonly [Show, string])[] = [
+  ["repos", "Repos"],
+  ["merged", "Clean up"],
+  ["active", "Active"],
+  ["conflict", "Conflicts"],
+  ["open", "Open"],
+];
+
+/** How the list is sliced; remembered across restarts. */
+export interface ViewState {
+  /** The selected group chip; none for All. */
+  readonly group: Option.Option<string>;
+  readonly show: Show;
+  /** "With worktrees": the Repos view hides repos with only a main checkout. */
+  readonly only: boolean;
+}
+
+export const DEFAULT_VIEW_STATE: ViewState = { group: Option.none(), show: "repos", only: true };
 
 export interface Snapshot {
   /** The repos to list, in order. */
@@ -32,6 +55,11 @@ export interface Snapshot {
   readonly panes: readonly PaneLike[];
   /** Folded repos (by root) and groups (by `<root>|<kind>`). */
   readonly folded: Readonly<Record<string, boolean>>;
+  /** Each repo's CI by its root; CI is read less often than the list. */
+  readonly ci: ReadonlyMap<string, CiRead>;
+  readonly view: ViewState;
+  /** The search box's text. */
+  readonly search: string;
   /** ms since the epoch, for commit ages. */
   readonly now: number;
 }
@@ -43,9 +71,17 @@ export type Click =
   | { readonly _tag: "Select"; readonly space: string }
   | { readonly _tag: "New"; readonly name: string; readonly folder: string };
 
+/** A row's CI badge; `stale` when the checks ran on an older commit than the one pushed. */
+export interface CiBadge {
+  readonly status: CiStatus | "conflicts" | "unknown";
+  readonly stale: boolean;
+}
+
 export interface RowView {
   /** The worktree's path: unique, so also the element id. */
   readonly key: string;
+  /** Its repo's root. */
+  readonly repo: string;
   readonly label: string;
   readonly tone: Tone;
   /** No space sits on it. */
@@ -58,6 +94,8 @@ export interface RowView {
   readonly current: boolean;
   /** The line under the branch name. */
   readonly subline: string;
+  /** None when CI wasn't asked for, or there is no PR and no checks. */
+  readonly ci: Option.Option<CiBadge>;
   readonly click: Click;
 }
 
@@ -88,6 +126,8 @@ export interface RepoView {
   /** How many worktrees, none before the first read. */
   readonly count: Option.Option<number>;
   readonly status: RepoStatus;
+  /** The latest CI read failed, so the CI shown is older. */
+  readonly ciNote: Option.Option<string>;
   readonly folded: boolean;
   /** Empty while folded. */
   readonly main: readonly RowView[];
@@ -96,11 +136,36 @@ export interface RepoView {
 
 export type Body =
   | { readonly _tag: "Message"; readonly text: string }
-  | { readonly _tag: "Tree"; readonly repos: readonly RepoView[] };
+  | { readonly _tag: "Tree"; readonly repos: readonly RepoView[] }
+  /** One list across repos, newest first; `summary` heads the Clean up view. */
+  | {
+      readonly _tag: "Flat";
+      readonly summary: Option.Option<string>;
+      readonly rows: readonly RowView[];
+    };
+
+export interface ShowOption {
+  readonly show: Show;
+  readonly label: string;
+  readonly selected: boolean;
+}
+
+export interface Chip {
+  readonly label: string;
+  /** The group it selects; none for All. */
+  readonly group: Option.Option<string>;
+  readonly selected: boolean;
+}
 
 export interface PanelView {
   /** Show the spinner. */
   readonly loading: boolean;
+  /** All, then one per group. */
+  readonly chips: readonly Chip[];
+  /** The view picker. */
+  readonly views: readonly ShowOption[];
+  /** The All repos / With worktrees toggle (true: With worktrees); Repos view only. */
+  readonly toggle: Option.Option<boolean>;
   /** Lines across the top, for what went wrong outside any one repo. */
   readonly banners: readonly string[];
   readonly body: Body;
@@ -190,20 +255,43 @@ const subline = (worktree: Worktree, now: number): string =>
     ...Option.toArray(Option.map(worktree.committedAt, (at) => age(at, now))),
   ].join(" · ");
 
+const badgeOf = (ci: Ci): Option.Option<CiBadge> => {
+  switch (ci._tag) {
+    case "NotAsked":
+    case "None":
+      return Option.none();
+    case "Checks":
+      return Option.some({ status: ci.status, stale: ci.stale });
+    case "Conflicts":
+      return Option.some({ status: "conflicts", stale: false });
+    case "Unknown":
+      return Option.some({ status: "unknown", stale: false });
+  }
+};
+
+/** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
+const ciOf = (snapshot: Snapshot, repo: Repo, worktree: Worktree): Ci =>
+  Option.getOrElse(
+    Option.fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)),
+    () => worktree.ci,
+  );
+
 const rowView = (
+  snapshot: Snapshot,
   repo: Repo,
   worktree: Worktree,
   space: Option.Option<SpaceRef>,
-  now: number,
 ): RowView => ({
   key: worktree.path,
+  repo: repo.root,
   label: Option.getOrElse(worktree.branch, () => "(detached)"),
   tone: Option.getOrElse(kindOf(worktree), (): Tone => "main"),
   hollow: Option.isNone(space),
   dirty: worktree.dirty,
   open: Option.isSome(space),
   current: Option.exists(space, (s) => s.active),
-  subline: subline(worktree, now),
+  subline: subline(worktree, snapshot.now),
+  ci: badgeOf(ciOf(snapshot, repo, worktree)),
   click: Option.match(space, {
     onNone: (): Click => ({
       _tag: "New",
@@ -230,24 +318,64 @@ const statusOf = (list: Option.Option<RepoList>): RepoStatus =>
       }),
   });
 
+const listOf = (snapshot: Snapshot, repo: Repo): Option.Option<RepoList> =>
+  Option.fromNullishOr(snapshot.lists.get(repo.root));
+
+/** How many worktrees: wt list's answer once read, else the scan's. */
+const countOf = (repo: Repo, list: Option.Option<RepoList>): number =>
+  Option.match(list, {
+    onNone: () => repo.count,
+    onSome: (l) => (l.worktrees.length > 0 ? l.worktrees.length : repo.count),
+  });
+
+/** The search, lowercased; none when the box is empty. */
+const queryOf = (snapshot: Snapshot): Option.Option<string> =>
+  Option.liftPredicate(snapshot.search.trim().toLowerCase(), (q) => q !== "");
+
+/** Does the search let this worktree through: its branch or its repo's name holds the text. */
+const matches = (query: Option.Option<string>, repo: Repo, worktree: Worktree): boolean =>
+  Option.match(query, {
+    onNone: () => true,
+    onSome: (q) =>
+      lastSegment(repo.root).toLowerCase().includes(q) ||
+      Option.exists(worktree.branch, (branch) => branch.toLowerCase().includes(q)),
+  });
+
+const nameMatches = (query: Option.Option<string>, repo: Repo): boolean =>
+  Option.match(query, {
+    onNone: () => true,
+    onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q),
+  });
+
+const noMatch = (query: string): string => `Nothing matches "${query}".`;
+
 const repoView = (repo: Repo, snapshot: Snapshot, places: readonly Place[]): RepoView => {
-  const list = Option.fromNullishOr(snapshot.lists.get(repo.root));
-  const worktrees = Option.match(list, { onNone: () => [], onSome: (l) => l.worktrees });
-  const folded = snapshot.folded[repo.root] === true;
+  const list = listOf(snapshot, repo);
+  const all = Option.match(list, { onNone: () => [], onSome: (l) => l.worktrees });
+  const query = queryOf(snapshot);
+  const worktrees = all.filter((w) => matches(query, repo, w));
+  // A search shows every match, so it opens whatever is folded.
+  const searching = Option.isSome(query);
+  const folded = !searching && snapshot.folded[repo.root] === true;
+  // Every worktree, matching or not, so a space never moves to a shorter path.
   const on = spacesOnWorktrees(
     places,
-    worktrees.map((w) => w.path),
+    all.map((w) => w.path),
   );
   const toRow = (worktree: Worktree) =>
-    rowView(repo, worktree, Option.fromNullishOr(on.get(worktree.path)), snapshot.now);
+    rowView(snapshot, repo, worktree, Option.fromNullishOr(on.get(worktree.path)));
   const inSection = (kind: SectionKind) =>
     worktrees.filter((w) => Option.contains(kindOf(w), kind)).sort(newestFirst);
   return {
     key: repo.root,
     name: lastSegment(repo.root),
     group: repo.group === OTHER ? Option.none() : Option.some(repo.group),
-    count: Option.map(list, (l) => (l.worktrees.length > 0 ? l.worktrees.length : repo.count)),
+    count: Option.map(list, () => countOf(repo, list)),
     status: statusOf(list),
+    ciNote: Option.map(
+      Option.flatMap(Option.fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error),
+      (error) => `CI status not updated: ${error}`,
+    ),
     folded,
     main: folded ? [] : worktrees.filter((w) => Option.isNone(kindOf(w))).map(toRow),
     sections: folded
@@ -255,7 +383,7 @@ const repoView = (repo: Repo, snapshot: Snapshot, places: readonly Place[]): Rep
       : SECTIONS.flatMap(([kind, label]) => {
           const rows = inSection(kind);
           const key = `${repo.root}|${kind}`;
-          const sectionFolded = snapshot.folded[key] === true;
+          const sectionFolded = !searching && snapshot.folded[key] === true;
           return rows.length === 0
             ? []
             : [
@@ -280,11 +408,145 @@ const emptyText = (snapshot: Snapshot): string => {
   return "No repos found in your group folders.";
 };
 
+/** Group names in chip order: Settings order, then unknown names sorted, then Other. */
+const orderGroups = (names: readonly string[], settings: Settings): readonly string[] => {
+  const have = new Set(names);
+  const order = settings.folders.map((folder) => folder.name);
+  const unknown = Array.from(have)
+    .filter((name) => !order.includes(name) && name !== OTHER)
+    .sort();
+  return Array.from(
+    new Set([
+      ...order.filter((name) => have.has(name)),
+      ...unknown,
+      ...(have.has(OTHER) ? [OTHER] : []),
+    ]),
+  );
+};
+
+/** What decides which repos a group chip lets through. */
+type Scope = Pick<Snapshot, "repos" | "discovered" | "settings" | "view">;
+
+/**
+ * The selected group. A saved group no repo is in any more falls back to All, but only
+ * once the repos are known, so a saved chip never flashes back to All at start.
+ */
+const selectedGroup = ({ repos, discovered, view }: Scope): Option.Option<string> =>
+  Option.filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
+
+/** The repos the selected group chip lets through, in order: the ones worth reading. */
+export const reposInGroup = (scope: Scope): readonly Repo[] =>
+  Option.match(selectedGroup(scope), {
+    onNone: () => scope.repos,
+    onSome: (group) => scope.repos.filter((repo) => repo.group === group),
+  });
+
+const chipsOf = (snapshot: Snapshot): readonly Chip[] => {
+  const selected = selectedGroup(snapshot);
+  const groups = snapshot.discovered
+    ? orderGroups(
+        snapshot.repos.map((repo) => repo.group),
+        snapshot.settings,
+      )
+    : Array.from(new Set(snapshot.settings.folders.map((folder) => folder.name)));
+  return [
+    { label: "All", group: Option.none(), selected: Option.isNone(selected) },
+    ...groups.map((group) => ({
+      label: group,
+      group: Option.some(group),
+      selected: Option.contains(selected, group),
+    })),
+  ];
+};
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** The views that list worktrees flat, across repos. */
+type FlatShow = Exclude<Show, "repos">;
+
+const FLAT_EMPTY: Readonly<Record<FlatShow, string>> = {
+  merged: "Nothing to clean up.",
+  active: "No worktrees in progress.",
+  conflict: "No worktrees conflict with main.",
+  open: "No worktree has a space open.",
+};
+
+const treeBody = (snapshot: Snapshot, places: readonly Place[]): Body => {
+  const query = queryOf(snapshot);
+  const repos = reposInGroup(snapshot)
+    .filter((repo) => !snapshot.view.only || countOf(repo, listOf(snapshot, repo)) > 1)
+    .filter(
+      (repo) =>
+        nameMatches(query, repo) ||
+        Option.exists(listOf(snapshot, repo), (l) =>
+          l.worktrees.some((w) => matches(query, repo, w)),
+        ),
+    );
+  // Every chip has repos, so only the search or the toggle can leave the tree empty.
+  if (repos.length === 0) {
+    return {
+      _tag: "Message",
+      text: Option.match(query, {
+        onSome: noMatch,
+        onNone: () => "No repos with worktrees here. Choose All repos to see the rest.",
+      }),
+    };
+  }
+  return { _tag: "Tree", repos: repos.map((repo) => repoView(repo, snapshot, places)) };
+};
+
+const flatBody = (snapshot: Snapshot, places: readonly Place[], show: FlatShow): Body => {
+  const repos = reposInGroup(snapshot);
+  const query = queryOf(snapshot);
+  const found = repos.flatMap((repo) => {
+    const worktrees = Option.match(listOf(snapshot, repo), {
+      onNone: () => [],
+      onSome: (list) => list.worktrees,
+    });
+    const on = spacesOnWorktrees(
+      places,
+      worktrees.map((w) => w.path),
+    );
+    return worktrees
+      .filter((w) => (show === "open" ? on.has(w.path) : Option.contains(kindOf(w), show)))
+      .filter((w) => matches(query, repo, w))
+      .map((worktree) => ({ repo, worktree, space: Option.fromNullishOr(on.get(worktree.path)) }));
+  });
+  if (found.length === 0) {
+    const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
+    const empty = Option.match(query, { onSome: noMatch, onNone: () => FLAT_EMPTY[show] });
+    return { _tag: "Message", text: unread ? "Reading…" : empty };
+  }
+  const repoCount = new Set(found.map(({ repo }) => repo.root)).size;
+  return {
+    _tag: "Flat",
+    summary:
+      show === "merged"
+        ? Option.some(`${found.length} merged in ${plural(repoCount, "repo")}`)
+        : Option.none(),
+    rows: [...found]
+      .sort((a, b) => newestFirst(a.worktree, b.worktree))
+      .map(({ repo, worktree, space }) => {
+        const row = rowView(snapshot, repo, worktree, space);
+        return { ...row, subline: `${lastSegment(repo.root)} · ${row.subline}` };
+      }),
+  };
+};
+
+const bodyOf = (snapshot: Snapshot, places: readonly Place[]): Body => {
+  const { show } = snapshot.view;
+  if (snapshot.repos.length === 0) return { _tag: "Message", text: emptyText(snapshot) };
+  return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
+};
+
 /** Everything the panel draws for `snapshot`. */
 export const buildView = (snapshot: Snapshot): PanelView => {
   const places = localPlaces(snapshot.spaces, snapshot.panes);
   return {
     loading: snapshot.loading,
+    chips: chipsOf(snapshot),
+    views: SHOWS.map(([show, label]) => ({ show, label, selected: show === snapshot.view.show })),
+    toggle: snapshot.view.show === "repos" ? Option.some(snapshot.view.only) : Option.none(),
     banners: [
       ...Option.toArray(
         Option.map(
@@ -296,9 +558,6 @@ export const buildView = (snapshot: Snapshot): PanelView => {
         Option.map(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`),
       ),
     ],
-    body:
-      snapshot.repos.length === 0
-        ? { _tag: "Message", text: emptyText(snapshot) }
-        : { _tag: "Tree", repos: snapshot.repos.map((repo) => repoView(repo, snapshot, places)) },
+    body: bodyOf(snapshot, places),
   };
 };

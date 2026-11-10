@@ -1,8 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Option, Result } from "effect";
 import { Files, type FilesApi } from "../src/files.ts";
-import { findRepos, loadSettings, readList, syncToast } from "../src/load.ts";
+import { findRepos, loadSettings, readCi, readEach, readList, syncToast } from "../src/load.ts";
 import { parseList } from "../src/worktrees.ts";
+import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
 import { DEFAULT_SETTINGS, serializeSettings } from "../src/settings.ts";
@@ -243,6 +244,59 @@ describe("readList", () => {
       };
       const list = yield* readList("/gone").pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(list, Result.fail("fatal: not a git repository"));
+    }),
+  );
+});
+
+describe("readCi", () => {
+  it.effect("a repo's worktrees with their CI, from wt list --full", () =>
+    Effect.gen(function* () {
+      // wt answers with CI only when asked for it.
+      const api: ExecApi = {
+        exec: (_command, args = []) =>
+          Promise.resolve({
+            code: 0,
+            stdout: (args[1] ?? "").includes("--full") ? ci : states,
+            stderr: "",
+          }),
+      };
+      const read = yield* readCi("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(read, parseList(ci));
+    }),
+  );
+});
+
+describe("readEach", () => {
+  it.effect("hands each repo's answer on as it lands", () =>
+    Effect.gen(function* () {
+      const kept: unknown[] = [];
+      yield* readEach(
+        ["/r/a", "/r/b", "/r/c"],
+        2,
+        (root) => Effect.succeed(root.toUpperCase()),
+        (root, answer) => kept.push([root, answer]),
+      );
+      assert.deepStrictEqual(kept, [
+        ["/r/a", "/R/A"],
+        ["/r/b", "/R/B"],
+        ["/r/c", "/R/C"],
+      ]);
+    }),
+  );
+
+  it.effect("runs at most limit reads at once, and keeps that many going", () =>
+    Effect.gen(function* () {
+      const running = { now: 0, most: 0 };
+      const read = () =>
+        Effect.gen(function* () {
+          running.now += 1;
+          running.most = Math.max(running.most, running.now);
+          // Lets the other reads start before this one ends.
+          yield* Effect.yieldNow;
+          running.now -= 1;
+        });
+      yield* readEach(["/a", "/b", "/c", "/d", "/e"], 2, read, () => undefined);
+      assert.strictEqual(running.most, 2);
     }),
   );
 });

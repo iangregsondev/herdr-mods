@@ -1,14 +1,17 @@
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import { parseList, type Worktree } from "../src/worktrees.ts";
+import ciStates from "./fixtures/ci-states.json?raw";
 import ci from "./fixtures/ci.json?raw";
 import reasons from "./fixtures/reasons.json?raw";
 import states from "./fixtures/states.json?raw";
 
 // Recorded `wt list --format=json` output (paths rewritten), from throwaway repos built to
 // reach every state: states.json (one repo with a remote), reasons.json (the integration
-// reasons states.json can't reach) and ci.json (`--full`, with squash merges).
-const FIXTURES = { ci, reasons, states };
+// reasons states.json can't reach) and ci.json (`--full`, with CI and squash merges).
+// ci-states.json is ci.json's shape with the CI answers a test repo can't produce on
+// demand (running, failed, stale, conflicts, undetermined, a forge error) filled in by hand.
+const FIXTURES = { ci, "ci-states": ciStates, reasons, states };
 
 const parsed = (name: keyof typeof FIXTURES): readonly Worktree[] =>
   Result.getOrThrow(parseList(FIXTURES[name]));
@@ -97,6 +100,57 @@ describe("parseList", () => {
     expect(byBranch("states", "main").committedAt).toEqual(
       Option.some(Date.parse("2026-11-09T15:32:31Z")),
     );
+  });
+
+  test("CI: passed checks, on the branch or its PR", () => {
+    expect(byBranch("ci", "main").ci).toEqual({ _tag: "Checks", status: "passed", stale: false });
+    expect(byBranch("ci", "feat/5-worktrunk-mod").ci).toEqual({
+      _tag: "Checks",
+      status: "passed",
+      stale: false,
+    });
+  });
+
+  test("CI: running and failed checks", () => {
+    expect(byBranch("ci-states", "running").ci).toEqual({
+      _tag: "Checks",
+      status: "running",
+      stale: false,
+    });
+    expect(byBranch("ci-states", "failed").ci).toEqual({
+      _tag: "Checks",
+      status: "failed",
+      stale: false,
+    });
+  });
+
+  test("CI: checks for an older commit than the one pushed are stale", () => {
+    expect(byBranch("ci-states", "stale").ci).toEqual({
+      _tag: "Checks",
+      status: "passed",
+      stale: true,
+    });
+  });
+
+  test("CI: a PR the forge says conflicts", () => {
+    expect(byBranch("ci-states", "conflicts").ci).toEqual({ _tag: "Conflicts" });
+  });
+
+  test("CI: asked, but the forge gave no answer", () => {
+    expect(byBranch("ci-states", "undetermined").ci).toEqual({ _tag: "Unknown" });
+    expect(byBranch("ci-states", "error").ci).toEqual({ _tag: "Unknown" });
+  });
+
+  test("CI: asked, and there is no PR and no checks", () => {
+    expect(byBranch("ci", "feat/6-namespace").ci).toEqual({ _tag: "None" });
+    expect(byBranch("ci-states", "nopr").ci).toEqual({ _tag: "None" });
+  });
+
+  test("CI: not asked when wt list ran without --full", () => {
+    expect(byBranch("states", "main").ci).toEqual({ _tag: "NotAsked" });
+    const items: unknown = JSON.parse(FIXTURES.ci).items;
+    const [first] = Result.getOrThrow(parseList(JSON.stringify(items)));
+    expect(first?.ci).toEqual({ _tag: "NotAsked" });
   });
 
   test("the bare-array shape of older wt versions", () => {

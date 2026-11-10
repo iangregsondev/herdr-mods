@@ -4,7 +4,13 @@
 import { mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
-import { LIST_SCRIPT, OWNERS_SCRIPT, SCAN_SCRIPT, shArgs } from "../apps/worktrunk/src/commands.ts";
+import {
+  CI_SCRIPT,
+  LIST_SCRIPT,
+  OWNERS_SCRIPT,
+  SCAN_SCRIPT,
+  shArgs,
+} from "../apps/worktrunk/src/commands.ts";
 import { fakeBin, git, isolatedGitEnv, runSh, tempDir, writeFile } from "./test-support.ts";
 
 /** `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. */
@@ -134,5 +140,18 @@ describe("LIST_SCRIPT", () => {
       env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
     });
     expect(run.stdout).toBe(`${join(root, "api")} list --format=json`);
+  });
+});
+
+describe("CI_SCRIPT", () => {
+  test("runs wt list --format=json --full in the repo at $1, for its CI", () => {
+    const root = realpathSync(tempDir());
+    mkdirSync(join(root, "api"));
+    fakeBin(join(root, "bin"), "wt", 'printf "%s %s" "$PWD" "$*"');
+    const run = runSh(scriptFile(CI_SCRIPT), {
+      args: [join(root, "api")],
+      env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
+    });
+    expect(run.stdout).toBe(`${join(root, "api")} list --format=json --full`);
   });
 });

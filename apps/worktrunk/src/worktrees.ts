@@ -10,6 +10,21 @@ export type WorktreeState =
   | { readonly _tag: "Active" }
   | { readonly _tag: "Conflict" };
 
+export type CiStatus = "passed" | "running" | "failed";
+
+/** A worktree's CI, as `wt list --full` reports it. */
+export type Ci =
+  /** `wt list` ran without `--full`, so CI wasn't asked for. */
+  | { readonly _tag: "NotAsked" }
+  /** Asked: there is no PR and no checks. */
+  | { readonly _tag: "None" }
+  /** `stale`: the checks ran on an older commit than the one pushed. */
+  | { readonly _tag: "Checks"; readonly status: CiStatus; readonly stale: boolean }
+  /** The forge says the PR conflicts with its base. */
+  | { readonly _tag: "Conflicts" }
+  /** Asked, but the forge gave no answer (rate limit, network, timeout). */
+  | { readonly _tag: "Unknown" };
+
 export interface Upstream {
   readonly ahead: number;
   readonly behind: number;
@@ -30,6 +45,7 @@ export interface Worktree {
   readonly upstream: Option.Option<Upstream>;
   /** Uncommitted changes of any kind. */
   readonly dirty: boolean;
+  readonly ci: Ci;
   /** The last commit's time in ms since the epoch; none on an unborn branch. */
   readonly committedAt: Option.Option<number>;
 }
@@ -56,7 +72,22 @@ const committedAt = (item: unknown): Option.Option<number> =>
     Option.filter((ms) => !Number.isNaN(ms)),
   );
 
-const toWorktree = (item: unknown): Option.Option<Worktree> =>
+const CI_STATUSES: readonly unknown[] = ["passed", "running", "failed"] satisfies CiStatus[];
+
+const isCiStatus = (value: unknown): value is CiStatus => CI_STATUSES.includes(value);
+
+const ciOf = (item: unknown, asked: boolean): Ci => {
+  if (!asked) return { _tag: "NotAsked" };
+  const checks = at(item, "checks");
+  const status = at(checks, "status");
+  if (isCiStatus(status)) return { _tag: "Checks", status, stale: at(checks, "stale") === true };
+  if (at(item, "pr", "mergeable") === false) return { _tag: "Conflicts" };
+  // wt's own table: absent means nothing to report, null means asked but not determined.
+  if (checks === undefined && at(item, "pr") !== null) return { _tag: "None" };
+  return { _tag: "Unknown" };
+};
+
+const toWorktree = (item: unknown, asked: boolean): Option.Option<Worktree> =>
   Option.map(text(at(item, "worktree", "path")), (path) => {
     const upstream = at(item, "upstream");
     return {
@@ -71,6 +102,7 @@ const toWorktree = (item: unknown): Option.Option<Worktree> =>
         ? Option.some({ ahead: count(upstream, "ahead"), behind: count(upstream, "behind") })
         : Option.none(),
       dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+      ci: ciOf(item, asked),
       committedAt: committedAt(item),
     };
   });
@@ -86,6 +118,11 @@ const itemsOf = (list: unknown): Result.Result<readonly unknown[], string> => {
 /** The worktrees in `wt list --format=json` output, in wt's order, or why it didn't parse. */
 export const parseList = (output: string): Result.Result<readonly Worktree[], string> =>
   parseJson(output).pipe(
-    Result.flatMap(itemsOf),
-    Result.map((items) => items.flatMap((item) => Option.toArray(toWorktree(item)))),
+    Result.flatMap((list) =>
+      Result.map(itemsOf(list), (items) => {
+        // Only `--full` collects CI; the bare-array shape never says, so it counts as not asked.
+        const asked = at(list, "collected", "ci") === true;
+        return items.flatMap((item) => Option.toArray(toWorktree(item, asked)));
+      }),
+    ),
   );

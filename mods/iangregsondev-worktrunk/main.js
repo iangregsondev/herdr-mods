@@ -1,5 +1,5 @@
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { Input, InputState, h_flex, v_flex } from "gpui-base";
 import { appHome, exec, home, layout, notify, panes, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
@@ -285,6 +285,26 @@ const constTrue = /*#__PURE__*/ constant(true);
 * @since 2.0.0
 */
 const constFalse = /*#__PURE__*/ constant(false);
+/**
+* Returns `null` when called.
+*
+* **When to use**
+*
+* Use when you need a thunk that returns `null` on every invocation.
+*
+* **Example** (Returning null from a thunk)
+*
+* ```ts import.meta.vitest
+* import { Function } from "effect"
+*
+* Function.constNull() // => null
+* ```
+*
+* @stability stable
+* @category constants
+* @since 2.0.0
+*/
+const constNull = /*#__PURE__*/ constant(null);
 /**
 * Returns `undefined` when called.
 *
@@ -2883,6 +2903,35 @@ const getOrElse = /*#__PURE__*/ dual(2, (self, onNone) => isNone(self) ? onNone(
 */
 const fromNullishOr = (a) => a == null ? none() : some(a);
 /**
+* Extracts the value from a `Some`, or returns `null` for `None`.
+*
+* **When to use**
+*
+* Use when you need to pass absent `Option` values to APIs that expect `null`.
+*
+* **Details**
+*
+* - `Some` → the inner value
+* - `None` → `null`
+*
+* **Example** (Unwrapping to null)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.getOrNull(Option.some(1)) // => 1
+* Option.getOrNull(Option.none()) // => null
+* ```
+*
+* @see {@link getOrUndefined} to return `undefined` instead
+* @see {@link getOrElse} for a custom fallback
+*
+* @stability stable
+* @category getters
+* @since 2.0.0
+*/
+const getOrNull = /*#__PURE__*/ getOrElse(constNull);
+/**
 * Extracts the value from a `Some`, or returns `undefined` for `None`.
 *
 * **When to use**
@@ -3110,6 +3159,40 @@ const toArray = (self) => isNone(self) ? [] : [self.value];
 * @since 2.0.0
 */
 const filter = /*#__PURE__*/ dual(2, (self, predicate) => isNone(self) ? none() : predicate(self.value) ? some(self.value) : none());
+/**
+* Lifts a `Predicate` or `Refinement` into the `Option` context: returns
+* `Some(value)` when the predicate holds, `None` otherwise.
+*
+* **When to use**
+*
+* Use to convert a boolean check into an `Option`-returning function
+* - Validating input and wrapping it in `Option`
+*
+* **Details**
+*
+* - `predicate(value)` is `true` → `Some(value)`
+* - `predicate(value)` is `false` → `None`
+* - Supports refinements for type narrowing
+*
+* **Example** (Validating positive numbers)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* const parsePositive = Option.liftPredicate((n: number) => n > 0)
+*
+* parsePositive(1) // => Option.some(1)
+* parsePositive(-1) // => Option.none()
+* ```
+*
+* @see {@link filter} to apply a predicate to an existing `Option`
+* @see {@link toRefinement} for the inverse direction
+*
+* @stability stable
+* @category lifting
+* @since 2.0.0
+*/
+const liftPredicate = /*#__PURE__*/ dual(2, (b, predicate) => predicate(b) ? some(b) : none());
 /**
 * Checks whether an `Option` contains a value equivalent to the given one, using a
 * custom `Equivalence`.
@@ -5853,7 +5936,7 @@ const fiberAwaitAll = (self) => callback((resume) => {
 		resume(succeed$2(exits));
 	}
 	loop();
-	return sync(() => cancel?.());
+	return sync$1(() => cancel?.());
 });
 /** @internal */
 const fiberInterruptAll = (fibers) => withFiber((parent) => {
@@ -5872,7 +5955,7 @@ const failCause = exitFailCause;
 /** @internal */
 const fail$1 = exitFail;
 /** @internal */
-const sync = /*#__PURE__*/ makePrimitive({
+const sync$1 = /*#__PURE__*/ makePrimitive({
 	op: "Sync",
 	[evaluate](fiber) {
 		const thunk = this[args];
@@ -5987,7 +6070,7 @@ const callback = (register) => callbackOptions(register, register.length >= 2);
 const never = /*#__PURE__*/ callback(constVoid);
 const fnBody = (bodyOrOptions, pipeables) => typeof bodyOrOptions === "function" ? bodyOrOptions : pipeables.shift().bind(bodyOrOptions.self);
 /** @internal */
-const fnUntraced = (bodyOrOptions, ...pipeables) => {
+const fnUntraced$1 = (bodyOrOptions, ...pipeables) => {
 	const body = fnBody(bodyOrOptions, pipeables);
 	const fn = pipeables.length === 0 ? function() {
 		return suspend(() => fromIteratorUnsafe(body.apply(this, arguments)));
@@ -6095,6 +6178,9 @@ ContImpl.prototype = OnSuccessProto;
 const returnPayload = function() {
 	return this.payload;
 };
+const succeedPayload = function(_value, fiber) {
+	return fiber.succeedWith(this.payload);
+};
 const continuationMarksStack = /*#__PURE__*/ (() => {
 	const limit = /*#__PURE__*/ getStackTraceLimit();
 	if (limit === 0) return false;
@@ -6115,6 +6201,15 @@ const andThenCont = function(value) {
 	const f = this.payload;
 	return f(value);
 };
+const tapCont = function(value) {
+	const f = this.payload;
+	return new ContImpl(f(value), succeedPayload, value);
+};
+const tapEffectCont = function(value) {
+	return new ContImpl(this.payload, succeedPayload, value);
+};
+/** @internal */
+const tap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? tapEffectCont : tapCont, f));
 /** @internal */
 const asVoid$1 = (self) => new ContImpl(self, returnPayload, exitVoid);
 /** @internal */
@@ -6258,7 +6353,7 @@ const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 	return match$1(self, options);
 });
 /** @internal */
-const exit = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
+const exit$1 = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
 const exitPrimitive = /*#__PURE__*/ makePrimitive({
 	op: "Exit",
 	[evaluate](fiber) {
@@ -6304,14 +6399,14 @@ const runFinalizer = (finalizer, exit_) => {
 	}
 };
 const combineFinalizerCause = (exit_, finalizer) => exitIsSuccess(exit_) ? finalizer : catchCause(finalizer, (cause) => failCause(causeElectDefects(causeCombine(exit_.cause, cause))));
-const scopeCloseFinalizers = /*#__PURE__*/ fnUntraced(function* (self, finalizers, exit_) {
+const scopeCloseFinalizers = /*#__PURE__*/ fnUntraced$1(function* (self, finalizers, exit_) {
 	let exits = [];
 	const fibers = [];
 	const arr = Array.from(finalizers);
 	const parent = getCurrentFiber();
 	for (let i = arr.length - 1; i >= 0; i--) {
 		const [key, finalizer] = arr[i];
-		if (self.strategy === "sequential") exits.push(yield* exit(runFinalizer(finalizer, exit_)));
+		if (self.strategy === "sequential") exits.push(yield* exit$1(runFinalizer(finalizer, exit_)));
 		else if (key !== parent) fibers.push(forkUnsafe$1(parent, runFinalizer(finalizer, exit_), true, true, "inherit"));
 	}
 	if (fibers.length > 0) exits = yield* fiberAwaitAll(fibers);
@@ -6470,7 +6565,7 @@ const whileLoop = /*#__PURE__*/ makePrimitive({
 	}
 });
 /** @internal */
-const forEach = /*#__PURE__*/ dual((args) => typeof args[1] === "function", (iterable, f, options) => suspend(() => {
+const forEach$1 = /*#__PURE__*/ dual((args) => typeof args[1] === "function", (iterable, f, options) => suspend(() => {
 	const concurrency = resolveConcurrency(options?.concurrency);
 	if (concurrency === 1) return forEachSequential(iterable, f, options);
 	const items = fromIterable(iterable);
@@ -6716,7 +6811,7 @@ const makeSpanUnsafe = (fiber, name, options) => {
 	return span;
 };
 /** @internal */
-const endSpan = (span, exit, clock, timingEnabled) => sync(() => {
+const endSpan = (span, exit, clock, timingEnabled) => sync$1(() => {
 	if (span.status._tag === "Ended") return;
 	span.end(timingEnabled ? clock.currentTimeNanosUnsafe() : bigint0, exit);
 });
@@ -6740,15 +6835,15 @@ var ClockImpl = class {
 	currentTimeMillisUnsafe() {
 		return Date.now();
 	}
-	currentTimeMillis = /*#__PURE__*/ sync(() => this.currentTimeMillisUnsafe());
+	currentTimeMillis = /*#__PURE__*/ sync$1(() => this.currentTimeMillisUnsafe());
 	currentTimeNanosUnsafe() {
 		return wallTimeNanos();
 	}
-	currentTimeNanos = /*#__PURE__*/ sync(() => this.currentTimeNanosUnsafe());
+	currentTimeNanos = /*#__PURE__*/ sync$1(() => this.currentTimeNanosUnsafe());
 	monotonicTimeNanosUnsafe() {
 		return monotonicNowNanos();
 	}
-	monotonicTimeNanos = /*#__PURE__*/ sync(() => this.monotonicTimeNanosUnsafe());
+	monotonicTimeNanos = /*#__PURE__*/ sync$1(() => this.monotonicTimeNanosUnsafe());
 	sleep(duration) {
 		return this.sleepMillis(toMillis(duration));
 	}
@@ -6758,7 +6853,7 @@ var ClockImpl = class {
 		return callback((resume) => {
 			const continuation = millis > MAX_TIMER_MILLIS ? this.sleepMillis(millis - MAX_TIMER_MILLIS) : void_;
 			const handle = setTimeout(() => resume(continuation), Math.min(millis, MAX_TIMER_MILLIS));
-			return sync(() => clearTimeout(handle));
+			return sync$1(() => clearTimeout(handle));
 		});
 	}
 };
@@ -6962,7 +7057,7 @@ const _await = (self) => callback((resume) => {
 	if (self.effect) return resume(self.effect);
 	self.resumes ??= [];
 	self.resumes.push(resume);
-	return sync(() => {
+	return sync$1(() => {
 		const resumes = self.resumes;
 		if (resumes === void 0) return;
 		const index = resumes.indexOf(resume);
@@ -7555,7 +7650,7 @@ const succeed$1 = function() {
 const succeedContext = (context) => fromBuildUnsafe(constant(succeed$2(context)));
 const mergeAllEffect = (layers, memoMap, scope) => {
 	const parentScope = forkUnsafe(scope, "parallel");
-	return forEach(layers, (layer) => layer.build(memoMap, forkUnsafe(parentScope, "sequential")), { concurrency: layers.length }).pipe(map$1((context) => mergeAll$1(...context)));
+	return forEach$1(layers, (layer) => layer.build(memoMap, forkUnsafe(parentScope, "sequential")), { concurrency: layers.length }).pipe(map$1((context) => mergeAll$1(...context)));
 };
 /**
 * Combines all the provided layers concurrently, creating a new layer with
@@ -7614,6 +7709,72 @@ const provideLayer = (self, layer, options) => scopedWith((scope) => flatMap(opt
 const provide$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, source, options) => isContext(source) ? provideContext(self, source) : provideLayer(self, Array.isArray(source) ? mergeAll(...source) : source, options));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Effect.js
+/**
+* Executes an effectful operation for each element in an `Iterable`.
+*
+* **When to use**
+*
+* Use to traverse an iterable with an effectful function while preserving
+* element order in the collected results.
+*
+* **Details**
+*
+* The `forEach` function applies a provided operation to each element in the
+* iterable, producing a new effect that returns an array of results.
+*
+* If any effect fails, the iteration stops immediately (short-circuiting), and
+* the error is propagated.
+*
+* Concurrency:
+*
+* The `concurrency` option controls how many operations are performed
+* concurrently. By default, the operations are performed sequentially.
+*
+* Discarding Results:
+*
+* If the `discard` option is set to `true`, the intermediate results are not
+* collected, and the final result of the operation is `void`.
+*
+* **Example** (Mapping over an iterable with effects)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* const result = Effect.forEach(
+*   [1, 2, 3, 4, 5],
+*   (n, index) =>
+*     Effect.sync(() => { output.push(`Currently at index ${index}`) }).pipe(Effect.as(n * 2))
+* )
+*
+* void output.push(await Effect.runPromise(result))
+* output // => ["Currently at index 0", "Currently at index 1", "Currently at index 2", "Currently at index 3", "Currently at index 4", [2, 4, 6, 8, 10]]
+* ```
+*
+* **Example** (Running effects without collecting results)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* // Apply effects but discard the results
+* const result = Effect.forEach(
+*   [1, 2, 3, 4, 5],
+*   (n, index) =>
+*     Effect.sync(() => { output.push(`Currently at index ${index}`) }).pipe(Effect.as(n * 2)),
+*   { discard: true }
+* )
+*
+* void output.push(await Effect.runPromise(result))
+* output // => ["Currently at index 0", "Currently at index 1", "Currently at index 2", "Currently at index 3", "Currently at index 4", undefined]
+* ```
+*
+* @see {@link all} for combining multiple effects into one.
+* @stability stable
+* @category collecting
+* @since 2.0.0
+*/
+const forEach = forEach$1;
 /**
 * Creates an `Effect` from an asynchronous computation that may throw or
 * reject, mapping failures into the error channel.
@@ -7722,6 +7883,47 @@ const tryPromise = tryPromise$1;
 */
 const succeed = succeed$2;
 /**
+* Creates an `Effect` that represents a synchronous side-effectful computation.
+*
+* **When to use**
+*
+* Use when you need to wrap a synchronous side-effectful operation that is not
+* expected to throw.
+*
+* **Details**
+*
+* The provided function is evaluated lazily when the effect runs.
+*
+* **Gotchas**
+*
+* The function must not throw. If it throws, the thrown value is treated as a
+* defect, not as a typed failure. Use `try` when throwing is expected.
+*
+* **Example** (Capturing synchronous logging in an Effect)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* const log = (message: string) =>
+*   Effect.sync(() => {
+*     void output.push(message) // side effect
+*   })
+*
+* //      ┌─── Effect<void, never, never>
+* //      ▼
+* const program = log("Hello, World!")
+* Effect.runSync(program)
+* output // => ["Hello, World!"]
+* ```
+*
+* @see {@link try_ | try} for a version that can handle failures.
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+const sync = sync$1;
+/**
 * Creates an `Effect` that represents a recoverable error.
 *
 * **When to use**
@@ -7779,6 +7981,59 @@ const fail = fail$1;
 * @since 4.0.0
 */
 const fromResult = fromResult$1;
+/**
+* Runs a side effect with the result of an effect without changing the original
+* value.
+*
+* **When to use**
+*
+* Use when you need to run an effectful observation, such as logging or
+* tracking, while passing the original success value to the next step.
+*
+* **Details**
+*
+* `tap` works similarly to `flatMap`, but it ignores the result of the function
+* passed to it. The value from the previous effect remains available for the
+* next part of the chain. Note that if the side effect fails, the entire chain
+* will fail too.
+*
+* **Example** (Logging a step in a pipeline)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, pipe } from "effect"
+* const output: Array<unknown> = []
+*
+* class DiscountRateError extends Data.TaggedError("DiscountRateError")<{}> {}
+*
+* // Function to apply a discount safely to a transaction amount
+* const applyDiscount = (
+*   total: number,
+*   discountRate: number
+* ): Effect.Effect<number, DiscountRateError> =>
+*   discountRate === 0
+*     ? Effect.fail(new DiscountRateError())
+*     : Effect.succeed(total - (total * discountRate) / 100)
+*
+* // Simulated asynchronous task to fetch a transaction amount from database
+* const fetchTransactionAmount = Effect.promise(() => Promise.resolve(100))
+*
+* const finalAmount = pipe(
+*   fetchTransactionAmount,
+*   // Log the fetched transaction amount
+*   Effect.tap((amount) => Effect.sync(() => { output.push(`Apply a discount to: ${amount}`) })),
+*   // `amount` is still available!
+*   Effect.flatMap((amount) => applyDiscount(amount, 5))
+* )
+*
+* void output.push(await Effect.runPromise(finalAmount))
+* output // => ["Apply a discount to: 100", 95]
+* ```
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const tap = tap$1;
 /**
 * Converts both success and failure of an `Effect` into a `Result` type.
 *
@@ -7881,6 +8136,48 @@ const result = result$1;
 * @since 2.0.0
 */
 const option = option$1;
+/**
+* Transforms an effect to encapsulate both failure and success using the `Exit`
+* data type.
+*
+* **When to use**
+*
+* Use when you need to inspect the full outcome, including typed failures, defects,
+* and interruptions.
+*
+* **Details**
+*
+* `exit` wraps an effect's success or failure inside an `Exit` type, allowing
+* you to handle both cases explicitly.
+*
+* The resulting effect cannot fail because the failure is encapsulated within
+* the `Exit.Failure` type. The error type is set to `never`, indicating that
+* the effect is structured to never fail directly.
+*
+* **Example** (Capturing completion as Exit)
+*
+* ```ts import.meta.vitest
+* import { Effect, Exit } from "effect"
+*
+* const success = Effect.succeed(42)
+* const failure = Effect.fail("Something went wrong")
+*
+* const program1 = Effect.exit(success)
+* const program2 = Effect.exit(failure)
+*
+* Effect.runSync(program1) // => Exit.succeed(42)
+*
+* Effect.runSync(program2) // => Exit.fail("Something went wrong")
+* ```
+*
+* @see {@link option} for a version that uses `Option` instead.
+* @see {@link result} for a version that uses `Result` instead.
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const exit = exit$1;
 /**
 * Transforms the value inside an effect by applying a function to it.
 *
@@ -8222,6 +8519,104 @@ const provide = provide$1;
 */
 const runPromiseExit = runPromiseExit$1;
 /**
+* Creates an Effect-returning function without tracing.
+*
+* **When to use**
+*
+* Use when you are defining a reusable Effect function whose implementation
+* would otherwise be a normal function returning {@link gen}, especially when
+* tracing spans or stack-frame capture are not needed.
+*
+* **Details**
+*
+* Compared to a plain function that returns {@link gen}, `Effect.fnUntraced`
+* reuses the generator body instead of allocating a fresh generator closure
+* around the arguments on every call. It does not record an Effect stack-frame
+* boundary and does not create tracing spans. Use {@link fn} when you need
+* those stack frames or spans. Additional arguments after the generator body
+* act like `pipe` transforms: each transform receives the previous result and
+* the original function arguments. Generator bodies may declare a `this`
+* parameter; pass `{ self }` before the body to bind `this` when the function
+* is created. Annotate the generator return type with
+* `Effect.fn.Return<A, E, R>` when the produced `Effect` type needs to be
+* stated explicitly.
+*
+* **Example** (Defining untraced effect functions)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const f = Effect.fnUntraced(function*(
+*   value: string
+* ) {
+*   return yield* Effect.succeed(value.length)
+* })
+*
+* //      ┌─── Effect.Effect<number>
+* //      ▼
+* const program = f("hello")
+* Effect.runSync(program) // => 5
+* ```
+*
+* **Example** (Transforming the returned Effect)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const f = Effect.fnUntraced(
+*   function*(value: string) {
+*     return yield* Effect.succeed(value.length)
+*   },
+*   (effect, value) =>
+*     effect.pipe(Effect.map((length) => `${value}: ${length}`))
+* )
+*
+* //      ┌─── Effect.Effect<string>
+* //      ▼
+* const program = f("hello")
+* Effect.runSync(program) // => "hello: 5"
+* ```
+*
+* **Example** (Annotating an untraced non-parametric function)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const f = Effect.fnUntraced(function*(
+*   value: string
+* ): Effect.fn.Return<number> {
+*   return yield* Effect.succeed(value.length)
+* })
+*
+* //      ┌─── Effect.Effect<number>
+* //      ▼
+* const program = f("hello")
+* Effect.runSync(program) // => 5
+* ```
+*
+* **Example** (Annotating an untraced parametric function)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const f = Effect.fnUntraced(function*<A>(
+*   value: A
+* ): Effect.fn.Return<A> {
+*   return yield* Effect.succeed(value)
+* })
+*
+* //      ┌─── Effect.Effect<string>
+* //      ▼
+* const program = f("hello")
+* Effect.runSync(program) // => "hello"
+* ```
+*
+* @stability stable
+* @category constructors
+* @since 3.12.0
+*/
+const fnUntraced = fnUntraced$1;
+/**
 * Creates a reusable traced function from an Effect body.
 *
 * **When to use**
@@ -8368,14 +8763,14 @@ const DEFAULT_SETTINGS = {
 	skip: ["node_modules", ".cache"]
 };
 const isFolderEntry = (value) => isObject(value) && isString(value.path) && (value.name === void 0 || isString(value.name));
-const listOf = (value, item) => Array.isArray(value) && value.every(item);
+const listOf$1 = (value, item) => Array.isArray(value) && value.every(item);
 /** The file's shape, or what is wrong with it. A wrong shape is never half read. */
 const readSettingsFile = (value) => {
 	if (!isObject(value)) return fail$2("expected a JSON object");
 	const { folders, depth, skip } = value;
-	if (folders !== void 0 && !listOf(folders, isFolderEntry)) return fail$2("\"folders\" must be a list of { \"name\", \"path\" }");
+	if (folders !== void 0 && !listOf$1(folders, isFolderEntry)) return fail$2("\"folders\" must be a list of { \"name\", \"path\" }");
 	if (depth !== void 0 && isNone(finite(depth))) return fail$2("\"depth\" must be a number");
-	if (skip !== void 0 && !listOf(skip, isString)) return fail$2("\"skip\" must be a list of folder names");
+	if (skip !== void 0 && !listOf$1(skip, isString)) return fail$2("\"skip\" must be a list of folder names");
 	return succeed$3({
 		...folders === void 0 ? {} : { folders },
 		...isNumber(depth) ? { depth } : {},
@@ -8554,6 +8949,8 @@ const OWNERS_SCRIPT = `for dir in "$@"; do
 done | sort -u`;
 /** Lists the worktrees of the repo at $1. */
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
+/** Lists the worktrees of the repo at $1 with their CI. */
+const CI_SCRIPT = `${LIST_SCRIPT} --full`;
 
 // src/files.ts
 /** There is no file at `path`. */
@@ -8659,7 +9056,26 @@ const stateOf = (item) => {
 	return { _tag: "Active" };
 };
 const committedAt = (item) => text(at(item, "head", "committed_at")).pipe(map$3(Date.parse), filter((ms) => !Number.isNaN(ms)));
-const toWorktree = (item) => map$3(text(at(item, "worktree", "path")), (path) => {
+const CI_STATUSES = [
+	"passed",
+	"running",
+	"failed"
+];
+const isCiStatus = (value) => CI_STATUSES.includes(value);
+const ciOf$1 = (item, asked) => {
+	if (!asked) return { _tag: "NotAsked" };
+	const checks = at(item, "checks");
+	const status = at(checks, "status");
+	if (isCiStatus(status)) return {
+		_tag: "Checks",
+		status,
+		stale: at(checks, "stale") === true
+	};
+	if (at(item, "pr", "mergeable") === false) return { _tag: "Conflicts" };
+	if (checks === void 0 && at(item, "pr") !== null) return { _tag: "None" };
+	return { _tag: "Unknown" };
+};
+const toWorktree = (item, asked) => map$3(text(at(item, "worktree", "path")), (path) => {
 	const upstream = at(item, "upstream");
 	return {
 		branch: text(at(item, "branch")),
@@ -8674,6 +9090,7 @@ const toWorktree = (item) => map$3(text(at(item, "worktree", "path")), (path) =>
 			behind: count(upstream, "behind")
 		}) : none(),
 		dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+		ci: ciOf$1(item, asked),
 		committedAt: committedAt(item)
 	};
 });
@@ -8682,7 +9099,10 @@ const itemsOf = (list) => {
 	return Array.isArray(items) ? succeed$3(items) : fail$2("wt list printed no list of worktrees");
 };
 /** The worktrees in `wt list --format=json` output, in wt's order, or why it didn't parse. */
-const parseList = (output) => parseJson(output).pipe(flatMap$1(itemsOf), map$2((items) => items.flatMap((item) => toArray(toWorktree(item)))));
+const parseList = (output) => parseJson(output).pipe(flatMap$1((list) => map$2(itemsOf(list), (items) => {
+	const asked = at(list, "collected", "ci") === true;
+	return items.flatMap((item) => toArray(toWorktree(item, asked)));
+})));
 
 // src/shell.ts
 /** The promise rejected: the program couldn't start (not installed, no such folder). */
@@ -8714,18 +9134,31 @@ var Shell = class Shell extends Service()("iangregsondev-worktrunk/Shell") {
 };
 /** The longest a script may run, in ms. */
 const SCRIPT_TIMEOUT = 6e4;
-/** Runs `body` under `sh` with `args` as $1...; a failure names the run `label`. */
-const runScript = fn("runScript")(function* (label, body, args) {
-	return yield* (yield* Shell).exec("sh", shArgs(body, args), { timeout: SCRIPT_TIMEOUT }).pipe(catchTag("CommandFailed", (failed) => fail(new CommandFailed({
+/**
+* Runs `body` under `sh` with `args` as $1..., for up to `timeout` ms; a failure names
+* the run `label`.
+*/
+const runScript = fn("runScript")(function* (label, body, args, timeout = SCRIPT_TIMEOUT) {
+	return yield* (yield* Shell).exec("sh", shArgs(body, args), { timeout }).pipe(catchTag("CommandFailed", (failed) => fail(new CommandFailed({
 		command: label,
 		code: failed.code,
 		stderr: failed.stderr
 	}))));
 });
+/** The worktrees `body` prints for the repo at `root`, its run named `label`. */
+const worktreesFrom = fnUntraced(function* (label, body, root, timeout) {
+	const run = yield* runScript(label, body, [root], timeout);
+	return yield* fromResult(parseList(run.stdout)).pipe(mapError((message) => new ListUnreadable({ message })));
+});
 /** The worktrees of the repo at `root`, from `wt list --format=json`. */
 const wtList = fn("wtList")(function* (root) {
-	const run = yield* runScript("wt list", LIST_SCRIPT, [root]);
-	return yield* fromResult(parseList(run.stdout)).pipe(mapError((message) => new ListUnreadable({ message })));
+	return yield* worktreesFrom("wt list", LIST_SCRIPT, root);
+});
+/** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
+const CI_TIMEOUT = 24e4;
+/** The worktrees of the repo at `root` with their CI, from `wt list --full`. */
+const wtCi = fn("wtCi")(function* (root) {
+	return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
 });
 /** The repos the folder scan finds in the settings' group folders. */
 const scanRepos = fn("scanRepos")(function* (settings, home) {
@@ -8801,6 +9234,19 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan) {
 const readList = fn("readList")(function* (root) {
 	return yield* wtList(root);
 }, asReason);
+/** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */
+const readCi = fn("readCi")(function* (root) {
+	return yield* wtCi(root);
+}, asReason);
+/**
+* Runs `read` on every repo root, at most `limit` at a time, handing each answer to
+* `keep` as it lands. Each read spawns processes, and Herdr runs out of open files when
+* every repo's list and CI start at once.
+*/
+const readEach = (roots, limit, read, keep) => forEach(roots, (root) => read(root).pipe(tap((answer) => sync(() => keep(root, answer)))), {
+	concurrency: limit,
+	discard: true
+});
 /**
 * The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr
 * version and the version the toast was last shown for (see `syncNotice`).
@@ -8828,6 +9274,20 @@ const foldList = (old, read) => match$3(read, {
 		error: some(error)
 	})
 });
+/** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
+const foldCi = (old, read) => match$3(read, {
+	onSuccess: (worktrees) => ({
+		byPath: new Map(worktrees.map((w) => [w.path, w.ci])),
+		error: none()
+	}),
+	onFailure: (error) => ({
+		byPath: match$4(old, {
+			onNone: () => /* @__PURE__ */ new Map(),
+			onSome: (ci) => ci.byPath
+		}),
+		error: some(error)
+	})
+});
 /**
 * Whether the group folders are scanned again: always the first time, when `forced`,
 * when the settings change what to scan (`key`), and once the last scan is older than
@@ -8836,6 +9296,15 @@ const foldList = (old, read) => match$3(read, {
 const scanDue = (last, now) => match$4(last, {
 	onNone: () => true,
 	onSome: (scan) => now.forced || now.key !== scan.key || now.now - scan.at > now.every
+});
+/**
+* Whether a refresh reads CI too: when there is no last CI read (`last`, when it started,
+* in ms; none before the first, or once something asks for fresh CI), and once the last
+* is older than `every` ms.
+*/
+const ciDue = (last, { now, every }) => match$4(last, {
+	onNone: () => true,
+	onSome: (at) => now - at > every
 });
 const IDLE = { _tag: "Idle" };
 /**
@@ -8862,21 +9331,33 @@ const refreshDone = (loader) => ({
 });
 const NO_READS = {
 	started: false,
-	wasHidden: false
+	wasHidden: false,
+	group: ""
 };
 /**
 * What a render starts: `Start` reads everything when the panel first shows, or shows
-* again after being hidden; `None` otherwise. Nothing is read while hidden.
+* again after being hidden; `NewGroup` reads the repos of a newly picked group chip, CI
+* included; `None` otherwise. Nothing is read while hidden.
 */
 const onRender = (reads, now) => {
 	const wasHidden = !now.shown;
-	return now.shown && (!reads.started || reads.wasHidden) ? {
+	if (now.shown && (!reads.started || reads.wasHidden)) return {
 		reads: {
 			started: true,
-			wasHidden
+			wasHidden,
+			group: now.group
 		},
 		step: "Start"
-	} : {
+	};
+	if (now.shown && now.group !== reads.group) return {
+		reads: {
+			...reads,
+			wasHidden,
+			group: now.group
+		},
+		step: "NewGroup"
+	};
+	return {
 		reads: {
 			...reads,
 			wasHidden
@@ -8923,6 +9404,19 @@ const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) =
 }, /* @__PURE__ */ new Map());
 
 // src/view.ts
+/** Every view, in the picker's order, with its label. */
+const SHOWS = [
+	["repos", "Repos"],
+	["merged", "Clean up"],
+	["active", "Active"],
+	["conflict", "Conflicts"],
+	["open", "Open"]
+];
+const DEFAULT_VIEW_STATE = {
+	group: none(),
+	show: "repos",
+	only: true
+};
 const SECTIONS = [
 	["merged", "Merged · ready to clean up"],
 	["active", "In progress"],
@@ -8980,15 +9474,37 @@ const subline = (worktree, now) => [
 	...worktree.dirty ? ["uncommitted changes"] : [],
 	...toArray(map$3(worktree.committedAt, (at) => age(at, now)))
 ].join(" · ");
-const rowView = (repo, worktree, space, now) => ({
+const badgeOf = (ci) => {
+	switch (ci._tag) {
+		case "NotAsked":
+		case "None": return none();
+		case "Checks": return some({
+			status: ci.status,
+			stale: ci.stale
+		});
+		case "Conflicts": return some({
+			status: "conflicts",
+			stale: false
+		});
+		case "Unknown": return some({
+			status: "unknown",
+			stale: false
+		});
+	}
+};
+/** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
+const ciOf = (snapshot, repo, worktree) => getOrElse(fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)), () => worktree.ci);
+const rowView = (snapshot, repo, worktree, space) => ({
 	key: worktree.path,
+	repo: repo.root,
 	label: getOrElse(worktree.branch, () => "(detached)"),
 	tone: getOrElse(kindOf(worktree), () => "main"),
 	hollow: isNone(space),
 	dirty: worktree.dirty,
 	open: isSome(space),
 	current: exists(space, (s) => s.active),
-	subline: subline(worktree, now),
+	subline: subline(worktree, snapshot.now),
+	ci: badgeOf(ciOf(snapshot, repo, worktree)),
 	click: match$4(space, {
 		onNone: () => ({
 			_tag: "New",
@@ -9012,28 +9528,50 @@ const statusOf = (list) => match$4(list, {
 		})
 	})
 });
+const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repo.root));
+/** How many worktrees: wt list's answer once read, else the scan's. */
+const countOf = (repo, list) => match$4(list, {
+	onNone: () => repo.count,
+	onSome: (l) => l.worktrees.length > 0 ? l.worktrees.length : repo.count
+});
+/** The search, lowercased; none when the box is empty. */
+const queryOf = (snapshot) => liftPredicate(snapshot.search.trim().toLowerCase(), (q) => q !== "");
+/** Does the search let this worktree through: its branch or its repo's name holds the text. */
+const matches = (query, repo, worktree) => match$4(query, {
+	onNone: () => true,
+	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q) || exists(worktree.branch, (branch) => branch.toLowerCase().includes(q))
+});
+const nameMatches = (query, repo) => match$4(query, {
+	onNone: () => true,
+	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q)
+});
+const noMatch = (query) => `Nothing matches "${query}".`;
 const repoView = (repo, snapshot, places) => {
-	const list = fromNullishOr(snapshot.lists.get(repo.root));
-	const worktrees = match$4(list, {
+	const list = listOf(snapshot, repo);
+	const all = match$4(list, {
 		onNone: () => [],
 		onSome: (l) => l.worktrees
 	});
-	const folded = snapshot.folded[repo.root] === true;
-	const on = spacesOnWorktrees(places, worktrees.map((w) => w.path));
-	const toRow = (worktree) => rowView(repo, worktree, fromNullishOr(on.get(worktree.path)), snapshot.now);
+	const query = queryOf(snapshot);
+	const worktrees = all.filter((w) => matches(query, repo, w));
+	const searching = isSome(query);
+	const folded = !searching && snapshot.folded[repo.root] === true;
+	const on = spacesOnWorktrees(places, all.map((w) => w.path));
+	const toRow = (worktree) => rowView(snapshot, repo, worktree, fromNullishOr(on.get(worktree.path)));
 	const inSection = (kind) => worktrees.filter((w) => contains(kindOf(w), kind)).sort(newestFirst);
 	return {
 		key: repo.root,
 		name: lastSegment(repo.root),
 		group: repo.group === "Other" ? none() : some(repo.group),
-		count: map$3(list, (l) => l.worktrees.length > 0 ? l.worktrees.length : repo.count),
+		count: map$3(list, () => countOf(repo, list)),
 		status: statusOf(list),
+		ciNote: map$3(flatMap$2(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
 		folded,
 		main: folded ? [] : worktrees.filter((w) => isNone(kindOf(w))).map(toRow),
 		sections: folded ? [] : SECTIONS.flatMap(([kind, label]) => {
 			const rows = inSection(kind);
 			const key = `${repo.root}|${kind}`;
-			const sectionFolded = snapshot.folded[key] === true;
+			const sectionFolded = !searching && snapshot.folded[key] === true;
 			return rows.length === 0 ? [] : [{
 				key,
 				kind,
@@ -9050,23 +9588,142 @@ const emptyText = (snapshot) => {
 	if (snapshot.settings.folders.length === 0) return `No repos yet. Add your repo folders to ${snapshot.settingsFile} in Herdr's folder.`;
 	return "No repos found in your group folders.";
 };
+/** Group names in chip order: Settings order, then unknown names sorted, then Other. */
+const orderGroups = (names, settings) => {
+	const have = new Set(names);
+	const order = settings.folders.map((folder) => folder.name);
+	const unknown = Array.from(have).filter((name) => !order.includes(name) && name !== "Other").sort();
+	return Array.from(/* @__PURE__ */ new Set([
+		...order.filter((name) => have.has(name)),
+		...unknown,
+		...have.has("Other") ? [OTHER] : []
+	]));
+};
+/**
+* The selected group. A saved group no repo is in any more falls back to All, but only
+* once the repos are known, so a saved chip never flashes back to All at start.
+*/
+const selectedGroup = ({ repos, discovered, view }) => filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
+/** The repos the selected group chip lets through, in order: the ones worth reading. */
+const reposInGroup = (scope) => match$4(selectedGroup(scope), {
+	onNone: () => scope.repos,
+	onSome: (group) => scope.repos.filter((repo) => repo.group === group)
+});
+const chipsOf = (snapshot) => {
+	const selected = selectedGroup(snapshot);
+	const groups = snapshot.discovered ? orderGroups(snapshot.repos.map((repo) => repo.group), snapshot.settings) : Array.from(new Set(snapshot.settings.folders.map((folder) => folder.name)));
+	return [{
+		label: "All",
+		group: none(),
+		selected: isNone(selected)
+	}, ...groups.map((group) => ({
+		label: group,
+		group: some(group),
+		selected: contains(selected, group)
+	}))];
+};
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const FLAT_EMPTY = {
+	merged: "Nothing to clean up.",
+	active: "No worktrees in progress.",
+	conflict: "No worktrees conflict with main.",
+	open: "No worktree has a space open."
+};
+const treeBody = (snapshot, places) => {
+	const query = queryOf(snapshot);
+	const repos = reposInGroup(snapshot).filter((repo) => !snapshot.view.only || countOf(repo, listOf(snapshot, repo)) > 1).filter((repo) => nameMatches(query, repo) || exists(listOf(snapshot, repo), (l) => l.worktrees.some((w) => matches(query, repo, w))));
+	if (repos.length === 0) return {
+		_tag: "Message",
+		text: match$4(query, {
+			onSome: noMatch,
+			onNone: () => "No repos with worktrees here. Choose All repos to see the rest."
+		})
+	};
+	return {
+		_tag: "Tree",
+		repos: repos.map((repo) => repoView(repo, snapshot, places))
+	};
+};
+const flatBody = (snapshot, places, show) => {
+	const repos = reposInGroup(snapshot);
+	const query = queryOf(snapshot);
+	const found = repos.flatMap((repo) => {
+		const worktrees = match$4(listOf(snapshot, repo), {
+			onNone: () => [],
+			onSome: (list) => list.worktrees
+		});
+		const on = spacesOnWorktrees(places, worktrees.map((w) => w.path));
+		return worktrees.filter((w) => show === "open" ? on.has(w.path) : contains(kindOf(w), show)).filter((w) => matches(query, repo, w)).map((worktree) => ({
+			repo,
+			worktree,
+			space: fromNullishOr(on.get(worktree.path))
+		}));
+	});
+	if (found.length === 0) {
+		const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
+		const empty = match$4(query, {
+			onSome: noMatch,
+			onNone: () => FLAT_EMPTY[show]
+		});
+		return {
+			_tag: "Message",
+			text: unread ? "Reading…" : empty
+		};
+	}
+	const repoCount = new Set(found.map(({ repo }) => repo.root)).size;
+	return {
+		_tag: "Flat",
+		summary: show === "merged" ? some(`${found.length} merged in ${plural(repoCount, "repo")}`) : none(),
+		rows: [...found].sort((a, b) => newestFirst(a.worktree, b.worktree)).map(({ repo, worktree, space }) => {
+			const row = rowView(snapshot, repo, worktree, space);
+			return {
+				...row,
+				subline: `${lastSegment(repo.root)} · ${row.subline}`
+			};
+		})
+	};
+};
+const bodyOf = (snapshot, places) => {
+	const { show } = snapshot.view;
+	if (snapshot.repos.length === 0) return {
+		_tag: "Message",
+		text: emptyText(snapshot)
+	};
+	return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
+};
 /** Everything the panel draws for `snapshot`. */
 const buildView = (snapshot) => {
 	const places = localPlaces(snapshot.spaces, snapshot.panes);
 	return {
 		loading: snapshot.loading,
+		chips: chipsOf(snapshot),
+		views: SHOWS.map(([show, label]) => ({
+			show,
+			label,
+			selected: show === snapshot.view.show
+		})),
+		toggle: snapshot.view.show === "repos" ? some(snapshot.view.only) : none(),
 		banners: [...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)), ...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`))],
-		body: snapshot.repos.length === 0 ? {
-			_tag: "Message",
-			text: emptyText(snapshot)
-		} : {
-			_tag: "Tree",
-			repos: snapshot.repos.map((repo) => repoView(repo, snapshot, places))
-		}
+		body: bodyOf(snapshot, places)
 	};
 };
 
 // src/wire.ts
+const writeViewState = (state) => ({
+	group: getOrNull(state.group),
+	show: state.show,
+	only: state.only
+});
+const readShow = (value) => fromNullishOr(SHOWS.find(([show]) => show === value)?.[0]);
+/** The view state kept in shared state; anything missing or unreadable is the default. */
+const readViewState = (value) => {
+	const { group, show, only } = fields(value);
+	return {
+		group: text(group),
+		show: getOrElse(readShow(show), () => DEFAULT_VIEW_STATE.show),
+		only: isBoolean(only) ? only : DEFAULT_VIEW_STATE.only
+	};
+};
 /** The folded repos and groups record; entries that aren't true or false are left out. */
 const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).flatMap(([key, folded]) => isBoolean(folded) ? [[key, folded]] : []));
 
@@ -9078,12 +9735,21 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `iangregsondev-worktrunk.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `iangregsondev-worktrunk.folded.v1`;
+/** The selected group chip, view and toggle, remembered across restarts. */
+const VIEW_KEY = `iangregsondev-worktrunk.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `iangregsondev-sync.json`;
 /** The installed Herdr version the "run herdr:sync" toast was last shown for. */
 const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 const LIST_EVERY = 2e4;
 const SCAN_EVERY = 6e5;
+const CI_EVERY = 3e5;
+/**
+* How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
+* runs out of open files when every repo's start together.
+*/
+const LIST_LIMIT = 6;
+const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
 const services = mergeAll(Shell.layer({ exec }), Files.layer({
 	readTextFile,
@@ -9129,6 +9795,27 @@ const toggleFold = (key) => {
 		[key]: !folded[key]
 	});
 };
+/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
+const defectAsFailure = (read) => exit(read).pipe(map(match({
+	onSuccess: (answer) => answer,
+	onFailure: (cause) => fail$2(pretty(cause))
+})));
+/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
+const readAll = (roots, limit, read, keep) => runEdge(readEach(roots, limit, (root) => defectAsFailure(read(root)), keep), () => void 0);
+const viewState = () => readViewState(shared(VIEW_KEY));
+const setView = (change) => setShared(VIEW_KEY, writeViewState({
+	...viewState(),
+	...change
+}));
+const ciIcon = (t, badge) => {
+	switch (badge.status) {
+		case "passed": return ["check", t.done];
+		case "running": return ["ring", t.working];
+		case "failed": return ["alert", t.ansi1];
+		case "conflicts": return ["alert", t.blocked];
+		case "unknown": return ["help", t.muted];
+	}
+};
 /** Defers work out of `render`, which may not notify. */
 const later = (cx, fn) => cx.spawn(async (cx) => {
 	await cx.sleep(0);
@@ -9168,12 +9855,47 @@ var Worktrunk = class extends View {
 	lists = /* @__PURE__ */ new Map();
 	loader = IDLE;
 	reads = NO_READS;
+	ci = /* @__PURE__ */ new Map();
+	/** When the last CI read started; none makes the next refresh read CI too. */
+	ciAt = none();
+	checking = false;
+	search = "";
+	searchBox = none();
 	init(props, cx) {
 		this.copy = copyOf(props);
 		if (this.copy !== "Panel") return;
+		const box = InputState.new({ placeholder: "Branch or repo" });
+		box.on("change", (_event, cx) => {
+			this.search = box.value();
+			cx.notify();
+		});
+		this.searchBox = some(box);
 		cx.spawn(checkSync);
 		cx.timer.every(LIST_EVERY, (cx) => {
 			if (shown()) this.refresh(cx, { scan: false });
+		});
+	}
+	/** The repos the selected group chip shows: the only ones worth reading. */
+	reposToRead() {
+		return reposInGroup({
+			repos: this.repos,
+			discovered: this.discovered,
+			settings: this.settings,
+			view: viewState()
+		}).map((repo) => repo.root);
+	}
+	/** CI for the repos shown, from `wt list --full`. A failed read keeps the CI from before. */
+	checkCi(cx) {
+		if (this.checking || !this.discovered) return;
+		this.checking = true;
+		this.ciAt = some(Date.now());
+		cx.spawn(async (cx) => {
+			await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
+				const old = fromNullishOr(this.ci.get(root));
+				this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+				cx.notify();
+			});
+			this.checking = false;
 		});
 	}
 	refresh(cx, ask) {
@@ -9187,10 +9909,14 @@ var Worktrunk = class extends View {
 			const done = refreshDone(this.loader);
 			this.loader = done.loader;
 			cx.notify();
+			if (ciDue(this.ciAt, {
+				now: Date.now(),
+				every: CI_EVERY
+			})) this.checkCi(cx);
 			if (isSome(done.again)) this.refresh(cx, done.again.value);
 		});
 	}
-	/** One refresh: the settings, then the repos, then each repo's worktrees. */
+	/** One refresh: the settings, then the repos, then the shown repos' worktrees. */
 	async load(cx, { scan }) {
 		const settled = shared(IMPORTED_KEY) === true;
 		const loaded = await runEdge(loadSettings({
@@ -9228,12 +9954,16 @@ var Worktrunk = class extends View {
 		} else this.discoverError = some(found.failure);
 		this.discovered = true;
 		cx.notify();
-		await Promise.all(this.repos.map(async (repo) => {
-			const read = await runEdge(readList(repo.root), fail$2);
-			const old = fromNullishOr(this.lists.get(repo.root));
-			this.lists = new Map([...this.lists, [repo.root, foldList(old, read)]]);
+		await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
+			const old = fromNullishOr(this.lists.get(root));
+			this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
 			cx.notify();
-		}));
+		});
+	}
+	/** Reads CI again with the next refresh, which `ask` starts. */
+	refreshWithCi(cx, ask) {
+		this.ciAt = none();
+		this.refresh(cx, ask);
 	}
 	render(cx) {
 		const style = {
@@ -9244,9 +9974,15 @@ var Worktrunk = class extends View {
 		if (this.copy === "Unknown") return div();
 		const { t, sizes } = style;
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
-		const rendered = onRender(this.reads, { shown: shown() });
+		const state = viewState();
+		const group = getOrElse(state.group, () => "");
+		const rendered = onRender(this.reads, {
+			shown: shown(),
+			group
+		});
 		this.reads = rendered.reads;
 		if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
+		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,
@@ -9259,12 +9995,41 @@ var Worktrunk = class extends View {
 			spaces: spaces(),
 			panes: panes(),
 			folded: readFolded(shared(FOLDED_KEY)),
+			ci: this.ci,
+			view: state,
+			search: this.search,
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
-		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refresh(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
-		const body = view.body._tag === "Message" ? div().p(16).text_size(sizes.small).text_color(t.muted).child(view.body.text) : v_flex().pb(16).children(view.body.repos.map((repo) => this.renderRepo(style, repo)));
-		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(body));
+		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
+		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body)));
+	}
+	/** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
+	renderControls({ t, sizes }, view) {
+		const chip = (id, label, on, onClick) => h_flex().id(id).h(24).px(9).flex_none().items_center().rounded(12).cursor_pointer().border_1().border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).hover((s) => s.text_color(t.foreground)).on_click(onClick).child(label);
+		const segment = (id, options, onPick) => h_flex().id(id).w_full().p(2).gap(2).rounded(8).bg(t.chrome).border_1().border_color(t.border).children(options.map(({ key, label, on }) => h_flex().id(`${id}-${key}`).flex_1().min_w(0).h(24).justify_center().items_center().rounded(6).bg(on ? t.raised : t.chrome).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => onPick(key)).child(div().truncate().child(label))));
+		const search = h_flex().flex_1().min_w(0).h(28).px(8).gap(6).items_center().rounded(6).border_1().border_color(t.border).bg(t.chrome).child(icon("search", 13, t.muted)).children(toArray(this.searchBox).map((box) => Input.new(box).flex_1().min_w(0).h_full().text_size(sizes.small).text_color(t.foreground)));
+		return v_flex().flex_none().px(12).py(8).gap(7).border_b(1).border_color(t.border).child(h_flex().flex_wrap().gap(5).items_center().children(view.chips.map((c) => chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group }))))).child(segment("show", view.views.map((v) => ({
+			key: v.show,
+			label: v.label,
+			on: v.selected
+		})), (key) => map$3(fromNullishOr(view.views.find((v) => v.show === key)), (picked) => setView({ show: picked.show })))).child(h_flex().gap(6).items_center().child(search).children(toArray(view.toggle).map((only) => h_flex().w(190).flex_none().child(segment("only", [{
+			key: "all",
+			label: "All repos",
+			on: !only
+		}, {
+			key: "only",
+			label: "With worktrees",
+			on: only
+		}], (key) => setView({ only: key === "only" }))))));
+	}
+	renderBody(style, body) {
+		const { t, sizes } = style;
+		switch (body._tag) {
+			case "Message": return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
+			case "Tree": return v_flex().pb(16).children(body.repos.map((repo) => this.renderRepo(style, repo)));
+			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => div().px(14).pt(4).pb(4).text_size(sizes.label).font_semibold().text_color(t.done).child(summary))).children(body.rows.map((row) => this.renderRow(style, row)));
+		}
 	}
 	/** The tab-bar button: shows and hides the panel's block. */
 	renderToggle({ t, sizes }) {
@@ -9279,11 +10044,12 @@ var Worktrunk = class extends View {
 		})));
 		const note = (text, color) => div().px(16).py(4).text_size(sizes.small).text_color(color).child(text);
 		const status = repo.folded || repo.status._tag === "Ok" ? [] : repo.status._tag === "Reading" ? [note("Reading…", t.muted)] : [note(repo.status.text, t.ansi1)];
+		const ciNote = repo.folded ? [] : toArray(repo.ciNote).map((text) => note(text, t.muted));
 		const style = {
 			t,
 			sizes
 		};
-		return v_flex().child(head).children(status).children(repo.main.map((row) => this.renderRow(style, row))).children(repo.sections.map((section) => this.renderSection(style, section)));
+		return v_flex().child(head).children(status).children(ciNote).children(repo.main.map((row) => this.renderRow(style, row))).children(repo.sections.map((section) => this.renderSection(style, section)));
 	}
 	renderSection(style, section) {
 		const { t, sizes } = style;
@@ -9291,7 +10057,11 @@ var Worktrunk = class extends View {
 		return v_flex().child(h_flex().id(`group-${section.key}`).min_h(26).pl(18).pr(10).pt(6).gap(6).items_center().cursor_pointer().on_click(() => toggleFold(section.key)).child(icon(section.folded ? "chevron-right" : "chevron-down", 12, color)).child(div().flex_1().text_size(sizes.label).font_semibold().text_color(color).child(`${section.label} · ${section.count}`))).children(section.rows.map((row) => this.renderRow(style, row)));
 	}
 	renderRow({ t, sizes }, row) {
-		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).when(row.open, (el) => el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")));
+		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
+			const [name, color] = ciIcon(t, badge);
+			const drawn = icon(name, 13, badge.stale ? t.dim : color);
+			return badge.status === "running" ? drawn.spin(1200) : drawn;
+		})).when(row.open, (el) => el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")));
 	}
 };
 
