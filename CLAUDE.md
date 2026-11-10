@@ -12,9 +12,22 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 - To see a mod running, use the dev loop: `vp run <name>#dev` builds into the Herdr app, shows its panel and reloads on save; `vp run dev:remove <name>` (watch stopped first) removes the files and the panel. Prove a change with `herdr-app shot`. Steps and never-dos: `.claude/rules/dev-loop.md`; human guide: `docs/develop.md`. Never symlink a mod into Herdr: it doesn't hot-reload.
 - Every mod ships `assets/RECIPE.md` and `assets/preview.png` (`.claude/rules/mod-sharing.md`).
 
-## Effect
+## TDD — IMPORTANT
 
-Mods may use the Effect library (v4). Before writing any Effect code, first read `node_modules/effect/AGENTS.md` **completely**, and follow the links in the file when required. For APIs and concepts it doesn't cover, search the source in `node_modules/effect/src`. Effect is a root dev dependency (version in the `pnpm-workspace.yaml` catalog); a mod that uses it adds `"effect": "catalog:"` to its own `package.json`. What Herdr's runtime allows: `.claude/rules/effect.md`. Test Effect code with `@effect/vitest` (root dev dependency, also `catalog:`): `.claude/rules/tests.md`.
+**TDD is mandatory** for every feature, bug fix and review finding in `apps/`, `packages/` and `scripts/`. Run the loop with this repo's `tdd` skill, every time, in the main thread and in every subagent. It is not optional and it is not a one-time read.
+
+- **One behaviour per cycle.** Write one test, see it fail, write the least code that passes it, then the next test. Never write a whole test file and then the whole module.
+- **Red means a failed assertion** on the new behaviour. "Cannot find module", a type error or a bad import is not red: add a stub export that returns the wrong value, then run again.
+- **Gate:** show the red test and its failure output before writing the code. In the main thread, stop for my review. A subagent puts each red output in its report; the main thread rejects work that has none.
+- **Seams:** a seam named in the spec's Testing Decisions or in the ticket counts as agreed. An unattended implementer uses only those; if it needs a new one, it stops that ticket and reports.
+- **Requirements go in files at once.** TDD, Effect, or anything else I ask for between stages goes into the grill record straight away, and `/to-spec` copies it into the spec's Implementation and Testing Decisions. A requirement only in the chat is lost at `/clear`.
+- Only UI glue in `main.ts` (the `View` class) and pure refactors with existing coverage are exempt. Logic found inside `main.ts` moves to a pure module and gets tests.
+
+## Effect — IMPORTANT
+
+**Mods use Effect (v4).** Pure logic uses `Option`, `Result` and `Predicate`. Every call to Herdr's promise API (`exec`, files, `fetch`) goes through an Effect service with tagged errors, as `.claude/rules/effect.md` shows (the `use` pattern), and is tested with `@effect/vitest`. Never `.catch(() => null)` a failure away: it becomes a tagged error and then view state. The spec and tickets for a mod name its Effect services.
+
+Before writing any Effect code, first read `node_modules/effect/AGENTS.md` **completely**, and follow the links in the file when required. For APIs and concepts it doesn't cover, search the source in `node_modules/effect/src`. Effect is a root dev dependency (version in the `pnpm-workspace.yaml` catalog); a mod that uses it adds `"effect": "catalog:"` to its own `package.json`. What Herdr's runtime allows: `.claude/rules/effect.md`. Test Effect code with `@effect/vitest` (root dev dependency, also `catalog:`): `.claude/rules/tests.md`.
 
 Effect v3 code (most examples online, other repos) won't compile here: `Either`, `Context.Tag` and `Effect.Service` are gone. The v3-to-v4 table is in `.claude/rules/functional-style.md`.
 

@@ -83,9 +83,10 @@ layer(Users.layerTest)("Users, shared layer", (it) => {
 
 ## The test-first contract
 
-Write behaviour test-first with the `mattpocock-skills:tdd` skill. It owns the loop: seams, vertical slices, good and bad tests. These rules sit on top of it:
+Write behaviour test-first with this repo's `tdd` skill (`.claude/skills/tdd/`). It runs the loop and its gate; `mattpocock-skills:tdd` is the reference for what a good test is. These rules sit on top of it:
 
-- **Red for the right reason.** Before writing code, run the new test and read the failure. It must fail on the behaviour you're adding (a wrong value, a missing export), not on a typo, a bad import or a broken fixture. Fix the test until it fails for the right reason, then write the code.
+- **Red for the right reason.** Before writing code, run the new test and read the failure. It must be a failed assertion on the behaviour you're adding. A missing module or export, a type error, a typo, a bad import or a broken fixture is not red: add a stub that returns the wrong value, then run again.
+- **One behaviour per cycle.** One test, red, the least code to pass, green. A whole test file followed by a whole module is not TDD, even if the tests came first.
 - **Never weaken a failing test.** Don't loosen an assertion, delete a case, add `.skip` or `.todo`, or change the expected value to match what the code returns. The test is the spec; change the code.
 - **Stop and say so when the code can't pass the test as written.** If a test looks wrong, or passing it would need a change outside the task, stop. Tell the person which test, what it asks for and why the code can't meet it. They decide whether the test changes.
 - **A bug fix starts with a test** that reproduces it and fails, then the fix.
