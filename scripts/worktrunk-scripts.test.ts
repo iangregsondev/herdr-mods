@@ -1,17 +1,34 @@
 // The worktrunk panel's shell scripts (apps/worktrunk/src/commands.ts), run for real
 // under `sh` against temp folders. They need Node to run, so they live here rather than
 // in the mod's own tests.
-import { mkdirSync, realpathSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   CI_SCRIPT,
+  GONE_SCRIPT,
+  JOB_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
+  cleanupScript,
+  mergeScript,
+  newScript,
+  quote,
+  removeScript,
   shArgs,
 } from "../apps/worktrunk/src/commands.ts";
-import { fakeBin, git, isolatedGitEnv, runSh, tempDir, writeFile } from "./test-support.ts";
+import {
+  fakeBin,
+  fakeLoggingBin,
+  git,
+  loggedLines,
+  isolatedGitEnv,
+  runSh,
+  tempDir,
+  writeFile,
+} from "./test-support.ts";
 
 /** `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. */
 const scriptFile = (body: string): string =>
@@ -153,5 +170,230 @@ describe("CI_SCRIPT", () => {
       env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
     });
     expect(run.stdout).toBe(`${join(root, "api")} list --format=json --full`);
+  });
+});
+
+describe("quote", () => {
+  test("the shell reads back exactly the word that was quoted", () => {
+    const tricky = 'a b $HOME `x` "q" it\'s \\ *';
+    expect(runSh(scriptFile(`printf %s ${quote(tricky)}`)).stdout).toBe(tricky);
+  });
+});
+
+/**
+ * Runs a job's `body` under `sh` (as the person's shell would) with a fake `wt` program on
+ * PATH that logs its arguments; `prelude` goes first, such as a shell function named wt.
+ */
+const runWithWt = (body: string, prelude = "", failOn = "") => {
+  const root = tempDir();
+  const log = join(root, "wt.log");
+  fakeLoggingBin(join(root, "bin"), "wt", { log });
+  // A wt whose calls naming `failOn` fail.
+  if (failOn !== "") {
+    fakeBin(
+      join(root, "bin"),
+      "wt",
+      `printf '%s\\n' "$*" >> '${log}'; case "$*" in *${failOn}*) exit 1 ;; esac`,
+    );
+  }
+  const run = runSh(scriptFile(`${prelude}${body}`), {
+    env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
+  });
+  return { ...run, calls: loggedLines(log) };
+};
+
+const WRAPPED = { noWrapper: false };
+const PLAIN = { noWrapper: true };
+/** A wrapper the person's shell might define: it runs instead of the wt program. */
+const WRAPPER = 'wt() { echo wrapped "$@"; }\n';
+
+describe("removeScript", () => {
+  test("removes the branches from the main checkout, in the foreground", () => {
+    const run = runWithWt(removeScript("/r/my app", ["feat/a", "it's"], WRAPPED));
+    expect(run.calls).toEqual(["-C /r/my app remove --foreground feat/a it's"]);
+  });
+
+  test("calls plain wt, so a shell function named wt (the person's wrapper) runs", () => {
+    const run = runWithWt(removeScript("/r/app", ["a"], WRAPPED), WRAPPER);
+    expect([run.stdout, run.calls]).toEqual(["wrapped -C /r/app remove --foreground a\n", []]);
+  });
+
+  test("the no-wrapper setting calls the wt program itself, skipping the function", () => {
+    const run = runWithWt(removeScript("/r/app", ["a"], PLAIN), WRAPPER);
+    expect([run.stdout, run.calls]).toEqual(["", ["-C /r/app remove --foreground a"]]);
+  });
+});
+
+describe("mergeScript", () => {
+  const target = { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
+
+  test("squash-merges inside the worktree, then removes it from the main checkout", () => {
+    expect(runWithWt(mergeScript(target, "squash", WRAPPED)).calls).toEqual([
+      "-C /r/app.feat-x merge --no-remove",
+      "-C /r/app remove --foreground feat/x",
+    ]);
+  });
+
+  test("a merge that fails removes nothing, and the job fails", () => {
+    const run = runWithWt(mergeScript(target, "squash", WRAPPED), "", "merge");
+    expect([run.code, run.calls]).toEqual([1, ["-C /r/app.feat-x merge --no-remove"]]);
+  });
+
+  test("keeping every commit merges with --no-squash", () => {
+    expect(runWithWt(mergeScript(target, "keep", WRAPPED)).calls).toEqual([
+      "-C /r/app.feat-x merge --no-remove --no-squash",
+      "-C /r/app remove --foreground feat/x",
+    ]);
+  });
+
+  test("the no-wrapper setting skips the wrapper for both the merge and the remove", () => {
+    const run = runWithWt(mergeScript(target, "squash", PLAIN), WRAPPER);
+    expect([run.stdout, run.calls.length]).toEqual(["", 2]);
+  });
+});
+
+describe("cleanupScript", () => {
+  const batches = [
+    { main: "/r/app", branches: ["a", "b"] },
+    { main: "/r/lib", branches: ["c"] },
+  ];
+
+  test("removes each repo's merged branches from its main checkout", () => {
+    const run = runWithWt(cleanupScript(batches, WRAPPED));
+    expect([run.code, run.calls]).toEqual([
+      0,
+      ["-C /r/app remove --foreground a b", "-C /r/lib remove --foreground c"],
+    ]);
+  });
+
+  test("a repo that fails doesn't stop the others, and the script fails at the end", () => {
+    const run = runWithWt(cleanupScript(batches, WRAPPED), "", "/r/app");
+    expect([run.code, run.calls]).toEqual([
+      1,
+      ["-C /r/app remove --foreground a b", "-C /r/lib remove --foreground c"],
+    ]);
+  });
+
+  test("names each repo, in bold, before its removals", () => {
+    const run = runWithWt(cleanupScript(batches, WRAPPED), WRAPPER);
+    expect(run.stdout.split("\n")).toEqual([
+      "\u001b[1m/r/app\u001b[0m",
+      "wrapped -C /r/app remove --foreground a b",
+      "\u001b[1m/r/lib\u001b[0m",
+      "wrapped -C /r/lib remove --foreground c",
+      "",
+    ]);
+  });
+
+  test("the no-wrapper setting calls the wt program itself for every repo", () => {
+    const run = runWithWt(cleanupScript(batches, PLAIN), WRAPPER);
+    expect([run.stdout.includes("wrapped"), run.calls.length]).toEqual([false, 2]);
+  });
+});
+
+describe("newScript", () => {
+  /**
+   * Runs `newScript` with stand-ins: wt prints its arguments on stderr and a JSON answer
+   * on stdout; git knows only the refs in `refs`. Gives wt's arguments and what landed
+   * in the out file.
+   */
+  const runNew = (
+    job: { name: string; base: Option.Option<string> },
+    refs: readonly string[] = [],
+  ) => {
+    const out = join(tempDir(), "switch.json");
+    const fakes = [
+      `wt() { echo "$*" >&2; echo '{"branch":"b"}'; }`,
+      `git() { case " ${refs.join(" ")} " in *" $6 "*) return 0 ;; esac; return 1; }`,
+      "",
+    ].join("\n");
+    const run = runSh(scriptFile(fakes + newScript({ main: "/r/app", ...job, out })));
+    const written = existsSync(out) ? readFileSync(out, "utf8") : "";
+    return { wt: run.stderr.trim(), written };
+  };
+
+  test("a new branch is created from the chosen base, and wt's answer saved as JSON", () => {
+    expect(runNew({ name: "feat/y", base: Option.some("dev") })).toEqual({
+      wt: "-C /r/app switch --create feat/y --base dev --no-cd --format=json",
+      written: '{"branch":"b"}\n',
+    });
+  });
+
+  test("without a base, wt's default branch is the base", () => {
+    expect(runNew({ name: "y", base: Option.none() }).wt).toBe(
+      "-C /r/app switch --create y --no-cd --format=json",
+    );
+  });
+
+  test("a branch that exists locally is switched to, not created", () => {
+    expect(runNew({ name: "old", base: Option.some("dev") }, ["refs/heads/old"]).wt).toBe(
+      "-C /r/app switch old --no-cd --format=json",
+    );
+  });
+
+  test("a branch only on origin is switched to, so wt makes the local branch", () => {
+    expect(runNew({ name: "x", base: Option.none() }, ["refs/remotes/origin/x"]).wt).toBe(
+      "-C /r/app switch x --no-cd --format=json",
+    );
+  });
+
+  test("names, bases and folders reach wt and git as single literal words", () => {
+    const out = join(tempDir(), "it's out.json");
+    const fakes = `wt() { printf '<%s>' "$@" >&2; }\ngit() { printf '[%s]' "$@" >&2; return 1; }\n`;
+    const body = newScript({
+      main: "/r/my app",
+      name: "it's$(touch pwned)",
+      base: Option.some("feat/a b"),
+      out,
+    });
+    expect(runSh(scriptFile(fakes + body), { cwd: tempDir() }).stderr).toBe(
+      "[-C][/r/my app][show-ref][--verify][--quiet][refs/heads/it's$(touch pwned)]" +
+        "[-C][/r/my app][show-ref][--verify][--quiet][refs/remotes/origin/it's$(touch pwned)]" +
+        "<-C></r/my app><switch><--create><it's$(touch pwned)><--base><feat/a b><--no-cd><--format=json>",
+    );
+    expect(existsSync(out)).toBe(true);
+  });
+
+  test.each(["pr:12", "mr:3", "https://github.com/o/r/pull/12", "^", "-", "@"])(
+    "wt's shortcut %s goes to wt as it is, never created as a branch",
+    (name) => {
+      expect(runNew({ name, base: Option.some("dev") }).wt).toBe(
+        `-C /r/app switch ${name} --no-cd --format=json`,
+      );
+    },
+  );
+});
+
+describe("JOB_SCRIPT", () => {
+  /** Runs `body` as a job in a stand-in login shell that reports the flags it was given. */
+  const runJob = (body: string, stdin = "") => {
+    const bin = join(tempDir(), "bin");
+    fakeBin(bin, "fakesh", 'echo "flags: $1 $2 $3"; exec sh -c "$4"');
+    return runSh(scriptFile(JOB_SCRIPT), { args: [join(bin, "fakesh"), body], stdin });
+  };
+
+  test("runs the body in the person's shell as a login, interactive shell", () => {
+    expect(runJob("echo hi").stdout).toMatch(/^flags: -l -i -c\nhi\n/);
+  });
+
+  test("a job that succeeds says Done and exits 0", () => {
+    const run = runJob("true");
+    expect([run.stdout.includes("Done."), run.code]).toEqual([true, 0]);
+  });
+
+  test("a job that fails shows its exit code and waits for Enter, then exits with that code", () => {
+    const run = runJob("exit 3", "\n");
+    expect([run.stdout.includes("Failed (exit 3). Press Enter to close."), run.code]).toEqual([
+      true,
+      3,
+    ]);
+  });
+});
+
+describe("GONE_SCRIPT", () => {
+  test("prints the folders that no longer exist, one per line", () => {
+    const root = tempDir();
+    const gone = join(root, "no such folder it's");
+    expect(runSh(scriptFile(GONE_SCRIPT), { args: [root, gone] }).stdout).toBe(`${gone}\n`);
   });
 });

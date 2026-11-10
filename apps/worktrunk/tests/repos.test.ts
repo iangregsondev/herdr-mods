@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vite-plus/test";
-import { expandHome, groupOf, OTHER, parseOwners, parseScan, reposFrom } from "../src/repos.ts";
+import {
+  expandHome,
+  groupOf,
+  OTHER,
+  parseOwners,
+  parseScan,
+  reposFrom,
+  withoutHidden,
+} from "../src/repos.ts";
 
 const HOME = "/home/me";
 const folders = [
@@ -83,6 +91,20 @@ describe("reposFrom", () => {
       { root: "/home/me/dev/work/alpha", count: 4, group: "Work" },
       { root: "/tmp/mid", count: 1, group: "Other" },
       { root: "/home/me/dev/work/zeta", count: 2, group: "Work" },
+    ]);
+  });
+});
+
+describe("withoutHidden", () => {
+  test("leaves out the hidden repos; the rest keep their order", () => {
+    const repos = [
+      { root: "/w/b", count: 1 },
+      { root: "/w/old", count: 2 },
+      { root: "/w/a", count: 1 },
+    ];
+    expect(withoutHidden(repos, ["/w/old", "/w/gone"])).toEqual([
+      { root: "/w/b", count: 1 },
+      { root: "/w/a", count: 1 },
     ]);
   });
 });

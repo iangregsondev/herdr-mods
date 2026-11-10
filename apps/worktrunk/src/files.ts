@@ -1,6 +1,6 @@
 // Reading and writing files through Herdr, as Effects with tagged errors. Pure: `herdr`
 // is imported as a type only, and main.ts hands the real API to the layer.
-import { Context, Data, Effect, Layer, Predicate } from "effect";
+import { Context, Data, Effect, Layer, Option, Predicate } from "effect";
 import type * as herdr from "herdr";
 
 /** The parts of Herdr's API this service calls. */
@@ -27,6 +27,12 @@ export class Files extends Context.Service<
     readonly read: (path: string) => Effect.Effect<string, FileMissing | FileError>;
     /** Writes `text` as a new file at `path`; it never replaces a file. */
     readonly create: (path: string, text: string) => Effect.Effect<void, WriteConflict | FileError>;
+    /** Writes `text` over the file at `path`, only while it still holds `expected`. */
+    readonly replace: (
+      path: string,
+      text: string,
+      expected: string,
+    ) => Effect.Effect<void, WriteConflict | FileError>;
   }
 >()("iangregsondev-worktrunk/Files") {
   static readonly layer = (api: FilesApi) => {
@@ -53,6 +59,24 @@ export class Files extends Context.Service<
           ),
         ),
       );
-    return Layer.succeed(Files, Files.of({ read, create }));
+    // Herdr's rejection doesn't say why either: a file that no longer holds `expected`
+    // means it changed since it was read.
+    const replace = (path: string, text: string, expected: string) =>
+      Effect.tryPromise({
+        try: () => api.writeTextFile(path, text, expected),
+        catch: (cause) => new FileError({ path, cause }),
+      }).pipe(
+        Effect.asVoid,
+        Effect.catchTag("FileError", (failed) =>
+          Effect.option(read(path)).pipe(
+            Effect.flatMap((now): Effect.Effect<never, FileError | WriteConflict> =>
+              Option.contains(now, expected)
+                ? Effect.fail(failed)
+                : Effect.fail(new WriteConflict({ path })),
+            ),
+          ),
+        ),
+      );
+    return Layer.succeed(Files, Files.of({ read, create, replace }));
   };
 }

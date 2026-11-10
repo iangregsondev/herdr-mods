@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { findModBlock, ROLES, roleOf } from "../src/layout.ts";
+import { findModBlock, findRoleBlock, ROLES, roleOf } from "../src/layout.ts";
 
 const MOD = "iangregsondev-worktrunk";
 
@@ -62,6 +62,10 @@ describe("roleOf", () => {
     expect(roleOf({ role })).toEqual(Option.some(role));
   });
 
+  test.each(["menu", "confirm", "new", "titlebar"])("reads the %s role an overlay gave", (role) => {
+    expect(roleOf({ role, overlay: "o1" })).toEqual(Option.some(role));
+  });
+
   test("is the panel when props give no role, or aren't an object", () => {
     expect(roleOf({})).toEqual(Option.some("panel"));
     expect(roleOf({ role: 3 })).toEqual(Option.some("panel"));
@@ -71,5 +75,23 @@ describe("roleOf", () => {
 
   test("is none for a role name it doesn't know, never the panel", () => {
     expect(roleOf({ role: "sidebar" })).toEqual(Option.none());
+  });
+});
+
+describe("findRoleBlock", () => {
+  test("finds the block showing the mod in the given role, with whether it shows", () => {
+    const tree = {
+      type: "column",
+      children: [
+        { id: "panel", content: { mod: MOD } },
+        {
+          id: "bar",
+          hidden: true,
+          children: [{ id: "t", content: { mod: MOD, props: { role: "toggle" } } }],
+        },
+      ],
+    };
+    expect(findRoleBlock(tree, MOD, "toggle")).toEqual(Option.some({ id: "t", hidden: true }));
+    expect(findRoleBlock(tree, MOD, "panel")).toEqual(Option.some({ id: "panel", hidden: false }));
   });
 });

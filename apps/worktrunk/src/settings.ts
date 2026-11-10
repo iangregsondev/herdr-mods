@@ -1,7 +1,8 @@
 // The panel's settings: a JSON file in Herdr's folder, named after the mod id, that the
 // person may edit by hand. Pure: no `herdr` or `gpui` imports.
 //
-// { "folders": [{ "name": "Work", "path": "~/code/work" }], "depth": 4, "skip": [...] }
+// { "folders": [{ "name": "Work", "path": "~/code/work" }], "depth": 4, "skip": [...],
+//   "hidden": ["/code/work/old-repo"], "noWrapper": false }
 // Each folder is scanned for repos and names a group.
 import { Option, Predicate, Result } from "effect";
 import { finite, parseJson } from "./json.ts";
@@ -19,12 +20,18 @@ export interface Settings {
   readonly depth: number;
   /** Folder names the scan never enters. */
   readonly skip: readonly string[];
+  /** Repos (main checkout folders) the panel leaves out. */
+  readonly hidden: readonly string[];
+  /** Merge and remove call the wt program itself, skipping a shell function named `wt`. */
+  readonly noWrapper: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   folders: [],
   depth: 4,
   skip: ["node_modules", ".cache"],
+  hidden: [],
+  noWrapper: false,
 };
 
 export interface ParsedSettings {
@@ -43,6 +50,8 @@ interface SettingsFile {
   readonly folders?: readonly FolderEntry[];
   readonly depth?: number;
   readonly skip?: readonly string[];
+  readonly hidden?: readonly string[];
+  readonly noWrapper?: boolean;
 }
 
 const isFolderEntry = (value: unknown): value is FolderEntry =>
@@ -56,7 +65,7 @@ const listOf = <A>(value: unknown, item: (v: unknown) => v is A): value is reado
 /** The file's shape, or what is wrong with it. A wrong shape is never half read. */
 const readSettingsFile = (value: unknown): Result.Result<SettingsFile, string> => {
   if (!Predicate.isObject(value)) return Result.fail("expected a JSON object");
-  const { folders, depth, skip } = value;
+  const { folders, depth, skip, hidden, noWrapper } = value;
   if (folders !== undefined && !listOf(folders, isFolderEntry)) {
     return Result.fail('"folders" must be a list of { "name", "path" }');
   }
@@ -66,10 +75,18 @@ const readSettingsFile = (value: unknown): Result.Result<SettingsFile, string> =
   if (skip !== undefined && !listOf(skip, Predicate.isString)) {
     return Result.fail('"skip" must be a list of folder names');
   }
+  if (hidden !== undefined && !listOf(hidden, Predicate.isString)) {
+    return Result.fail('"hidden" must be a list of repo folders');
+  }
+  if (noWrapper !== undefined && !Predicate.isBoolean(noWrapper)) {
+    return Result.fail('"noWrapper" must be true or false');
+  }
   return Result.succeed({
     ...(folders === undefined ? {} : { folders }),
     ...(Predicate.isNumber(depth) ? { depth } : {}),
     ...(skip === undefined ? {} : { skip }),
+    ...(hidden === undefined ? {} : { hidden }),
+    ...(noWrapper === undefined ? {} : { noWrapper }),
   });
 };
 
@@ -96,6 +113,8 @@ const normalize = (file: SettingsFile): Settings => ({
     file.skip === undefined
       ? DEFAULT_SETTINGS.skip
       : file.skip.map((name) => name.trim()).filter((name) => name !== ""),
+  hidden: (file.hidden ?? DEFAULT_SETTINGS.hidden).filter((root) => root !== ""),
+  noWrapper: file.noWrapper ?? DEFAULT_SETTINGS.noWrapper,
 });
 
 /**
@@ -117,8 +136,20 @@ export const parseSettings = (text: string | null, fileName: string): ParsedSett
 };
 
 /** What the file holds: a stable key order and two-space indent, so it reads and diffs well. */
-export const serializeSettings = ({ folders, depth, skip }: Settings): string => {
-  const ordered = { folders: folders.map(({ name, path }) => ({ name, path })), depth, skip };
+export const serializeSettings = ({
+  folders,
+  depth,
+  skip,
+  hidden,
+  noWrapper,
+}: Settings): string => {
+  const ordered = {
+    folders: folders.map(({ name, path }) => ({ name, path })),
+    depth,
+    skip,
+    hidden,
+    noWrapper,
+  };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 };
 
@@ -149,4 +180,21 @@ export const planImport = (
   return legacy === null || Option.isSome(old.error)
     ? { write: Option.none(), settled: false }
     : { write: Option.some(serializeSettings(old.settings)), settled: true };
+};
+
+/**
+ * The settings file's text with the repo at `root` hidden, from its text now (null when
+ * there is none). A file that doesn't parse is never replaced: the result is its error
+ * instead, so a hand edit in progress is never lost to the defaults. A repo already
+ * hidden leaves the text as it is.
+ */
+export const hideRepo = (
+  current: string | null,
+  root: string,
+  fileName: string,
+): Result.Result<string, string> => {
+  const { settings, error } = parseSettings(current, fileName);
+  if (Option.isSome(error)) return Result.fail(error.value);
+  if (current !== null && settings.hidden.includes(root)) return Result.succeed(current);
+  return Result.succeed(serializeSettings({ ...settings, hidden: [...settings.hidden, root] }));
 };

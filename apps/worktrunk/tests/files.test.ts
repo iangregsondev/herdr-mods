@@ -89,3 +89,51 @@ describe("Files.create", () => {
     ),
   );
 });
+
+describe("Files.replace", () => {
+  it.effect("writes the text over the file, expecting it as it was read", () =>
+    Effect.gen(function* () {
+      const writes: unknown[] = [];
+      const api = onDisk({ "/a.json": "{}" }, (path, text, expected) => {
+        writes.push([path, text, expected]);
+        return Promise.resolve(null);
+      });
+      yield* Effect.gen(function* () {
+        const files = yield* Files;
+        yield* files.replace("/a.json", '{"depth":2}', "{}");
+      }).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(writes, [["/a.json", '{"depth":2}', "{}"]]);
+    }),
+  );
+
+  it.effect("refused because the file changed since it was read: WriteConflict", () =>
+    Effect.gen(function* () {
+      const files = yield* Files;
+      const result = yield* Effect.result(files.replace("/a.json", "{}", '{"old":1}'));
+      assert.deepStrictEqual(failureOf(result), Result.fail(["WriteConflict", "/a.json"]));
+    }).pipe(
+      Effect.provide(
+        Files.layer(
+          onDisk({ "/a.json": '{"edited":1}' }, () => Promise.reject(new Error("stale"))),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "a write that fails with the file unchanged is FileError, with the path and cause",
+    () =>
+      Effect.gen(function* () {
+        const files = yield* Files;
+        const result = yield* Effect.result(files.replace("/a.json", "{}", '{"old":1}'));
+        assert.deepStrictEqual(
+          failureOf(result),
+          Result.fail(["FileError", "/a.json", "disk full"]),
+        );
+      }).pipe(
+        Effect.provide(
+          Files.layer(onDisk({ "/a.json": '{"old":1}' }, () => Promise.reject("disk full"))),
+        ),
+      ),
+  );
+});

@@ -75,3 +75,9 @@ export const reposFrom = (
   Array.from(new Map([...scanned, ...owners].map((repo) => [repo.root, repo.count])))
     .map(([root, n]) => ({ root, count: n, group: groupOf(root, folders, home) }))
     .sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
+
+/** `repos` without the hidden ones (by main checkout folder), in their order. */
+export const withoutHidden = <R extends FoundRepo>(
+  repos: readonly R[],
+  hidden: readonly string[],
+): readonly R[] => repos.filter((repo) => !hidden.includes(repo.root));

@@ -1,10 +1,15 @@
 // Running programs through Herdr's `exec`, as Effects with tagged errors. Pure: `herdr`
 // is imported as a type only (erased at build), and the real API is handed to the
 // layer by main.ts, so tests build the layer from a fake.
-import { Context, Data, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer, Option } from "effect";
 import type * as herdr from "herdr";
 import {
   CI_SCRIPT,
+  GONE_SCRIPT,
+  jobArgs,
+  startedAddress,
+  waitResult,
+  type Job,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -15,8 +20,8 @@ import { parseOwners, parseScan } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
 
-/** The part of Herdr's API this service calls. */
-export type ExecApi = Pick<typeof herdr, "exec">;
+/** The parts of Herdr's API this service calls. */
+export type ExecApi = Pick<typeof herdr, "exec" | "hc">;
 
 /** The promise rejected: the program couldn't start (not installed, no such folder). */
 export class ShellError extends Data.TaggedError("ShellError")<{ readonly cause: unknown }> {}
@@ -50,6 +55,11 @@ export class Shell extends Context.Service<
       args: readonly string[],
       options?: ExecOptions,
     ) => Effect.Effect<herdr.ExecResult, ShellError | CommandFailed>;
+    /**
+     * Runs `hc` (herdr-core). Its answer comes back whatever its exit code: callers read
+     * its JSON output, which says what happened.
+     */
+    readonly hc: (args: readonly string[]) => Effect.Effect<herdr.ExecResult, ShellError>;
   }
 >()("iangregsondev-worktrunk/Shell") {
   static readonly layer = (api: ExecApi) => {
@@ -67,7 +77,8 @@ export class Shell extends Context.Service<
       }
       return run;
     });
-    return Layer.succeed(Shell, Shell.of({ use, exec }));
+    const hc = (args: readonly string[]) => use((herdr) => herdr.hc([...args]));
+    return Layer.succeed(Shell, Shell.of({ use, exec, hc }));
   };
 }
 
@@ -154,3 +165,96 @@ export const causeText = (cause: unknown): string =>
 
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text: string): string => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+
+/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
+export const loginShell = Effect.fn("loginShell")(function* () {
+  const shell = yield* Shell;
+  const out = yield* shell.exec("sh", ["-c", 'printf %s "$SHELL"']).pipe(
+    Effect.map((run) => run.stdout),
+    // Any shell will do to run a job; the person's own is only preferred.
+    Effect.orElseSucceed(() => ""),
+  );
+  return out.trim() || "/bin/sh";
+});
+
+/** `hc run` printed no terminal address: the job never started. `reason` says why. */
+export class JobNotStarted extends Data.TaggedError("JobNotStarted")<{
+  readonly reason: string;
+}> {}
+
+/** Starts `job` as a background terminal; its address, for waiting on and stopping it. */
+export const startJob = Effect.fn("startJob")(function* (job: Job) {
+  const shell = yield* Shell;
+  const run = yield* shell.hc(jobArgs(job));
+  return yield* Effect.fromOption(startedAddress(run.stdout)).pipe(
+    Effect.mapError(
+      () => new JobNotStarted({ reason: lastLine(run.stderr) || "hc printed no terminal address" }),
+    ),
+  );
+});
+
+/**
+ * Waits for the job in terminal `addr` to end: its exit code; none when it was lost (its
+ * terminal is gone, or hc gave no answer). Each wait is hc's own, a minute at most, so
+ * nothing here waits on a clock Herdr doesn't have.
+ */
+export const waitForJob = (addr: string): Effect.Effect<Option.Option<number>, ShellError, Shell> =>
+  Effect.gen(function* () {
+    const shell = yield* Shell;
+    const run = yield* shell.hc(["wait", addr, "--json", "--timeout", "60"]);
+    const seen = waitResult(run.stdout);
+    switch (seen._tag) {
+      case "Ended":
+        return Option.some(seen.code);
+      case "Lost":
+        return Option.none();
+      case "Running":
+        return yield* waitForJob(addr);
+    }
+  });
+
+/** Which of `folders` no longer exist. */
+export const goneFolders = Effect.fn("goneFolders")(function* (folders: readonly string[]) {
+  if (folders.length === 0) return [];
+  const run = yield* runScript("the removed folders' check", GONE_SCRIPT, folders);
+  return run.stdout.split("\n").filter((line) => line !== "");
+});
+
+/** Stops the job in terminal `addr`. */
+export const stopJob = Effect.fn("stopJob")(function* (addr: string) {
+  const shell = yield* Shell;
+  yield* shell.hc(["kill", addr]);
+});
+
+/** Shows `path` in the Finder. */
+export const reveal = Effect.fn("reveal")(function* (path: string) {
+  const shell = yield* Shell;
+  yield* shell.exec("open", [path]);
+});
+
+/** A new private temp folder (`mktemp -d`), for a job's answer file. */
+export const makeTempDir = Effect.fn("makeTempDir")(function* () {
+  const shell = yield* Shell;
+  const run = yield* shell.exec("mktemp", ["-d"]);
+  const dir = run.stdout.trim();
+  if (dir === "") {
+    return yield* new CommandFailed({
+      command: "mktemp",
+      code: 0,
+      stderr: "mktemp printed no folder",
+    });
+  }
+  return dir;
+});
+
+/** Removes the folder at `dir` and everything in it. */
+export const removeDir = Effect.fn("removeDir")(function* (dir: string) {
+  const shell = yield* Shell;
+  yield* shell.exec("rm", ["-rf", dir]);
+});
+
+/** Removes the ended job's terminal from herdr-core. */
+export const removeTerminal = Effect.fn("removeTerminal")(function* (addr: string) {
+  const shell = yield* Shell;
+  yield* shell.hc(["rm", addr]);
+});

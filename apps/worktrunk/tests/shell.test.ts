@@ -1,7 +1,9 @@
 import { assert, describe, expect, it, test } from "@effect/vitest";
-import { Effect, Result } from "effect";
+import { Effect, Option, Result } from "effect";
 import {
   CI_SCRIPT,
+  GONE_SCRIPT,
+  jobArgs,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -12,11 +14,19 @@ import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import {
   CommandFailed,
   failureText,
+  goneFolders,
   ListUnreadable,
+  loginShell,
+  makeTempDir,
+  removeDir,
   reposOf,
+  reveal,
   runScript,
   scanRepos,
   Shell,
+  startJob,
+  stopJob,
+  waitForJob,
   ShellError,
   wtCi,
   wtList,
@@ -25,6 +35,9 @@ import {
 import { parseList } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
+
+/** `hc` for fakes of tests that never call it. */
+const noHc: ExecApi["hc"] = () => Promise.reject(new Error("hc isn't called here"));
 
 /**
  * A result with its error's tag and fields as a plain list, so a deep comparison checks
@@ -43,6 +56,45 @@ const failureOf = <A, E>(result: Result.Result<A, E>) =>
 /** A Herdr API whose `exec` answers every call with `run`. */
 const answering = (run: Awaited<ReturnType<ExecApi["exec"]>>): ExecApi => ({
   exec: () => Promise.resolve(run),
+  hc: noHc,
+});
+
+describe("Shell.hc", () => {
+  it.effect("runs herdr-core with the arguments and gives its answer, whatever its exit code", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const api: ExecApi = {
+        exec: () => Promise.reject(new Error("exec isn't called here")),
+        hc: (args) => {
+          calls.push(args);
+          return Promise.resolve({ code: 1, stdout: '{"ended":false}', stderr: "" });
+        },
+      };
+      const run = yield* Effect.gen(function* () {
+        const shell = yield* Shell;
+        return yield* shell.hc(["wait", "t1", "--json"]);
+      }).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [run, calls],
+        [{ code: 1, stdout: '{"ended":false}', stderr: "" }, [["wait", "t1", "--json"]]],
+      );
+    }),
+  );
+
+  it.effect("hc that can't run is ShellError, with the cause", () =>
+    Effect.gen(function* () {
+      const shell = yield* Shell;
+      const result = yield* Effect.result(shell.hc(["ls"]));
+      assert.deepStrictEqual(failureOf(result), Result.fail(["ShellError", "no herdr-core"]));
+    }).pipe(
+      Effect.provide(
+        Shell.layer({
+          exec: () => Promise.reject(new Error("exec isn't called here")),
+          hc: () => Promise.reject("no herdr-core"),
+        }),
+      ),
+    ),
+  );
 });
 
 describe("Shell.use", () => {
@@ -59,7 +111,9 @@ describe("Shell.use", () => {
       const shell = yield* Shell;
       const error = yield* Effect.flip(shell.use((api) => api.exec("nope")));
       assert.deepStrictEqual([error._tag, error.cause], ["ShellError", "no such program"]);
-    }).pipe(Effect.provide(Shell.layer({ exec: () => Promise.reject("no such program") }))),
+    }).pipe(
+      Effect.provide(Shell.layer({ exec: () => Promise.reject("no such program"), hc: noHc })),
+    ),
   );
 });
 
@@ -68,6 +122,7 @@ describe("Shell.exec", () => {
     Effect.gen(function* () {
       const calls: unknown[] = [];
       const api: ExecApi = {
+        hc: noHc,
         exec: (command, args, options) => {
           calls.push([command, args, options]);
           return Promise.resolve({ code: 0, stdout: "out", stderr: "" });
@@ -95,6 +150,7 @@ describe("Shell.exec", () => {
 const recording = (run: Awaited<ReturnType<ExecApi["exec"]>>) => {
   const calls: unknown[] = [];
   const api: ExecApi = {
+    hc: noHc,
     exec: (command, args, options) => {
       calls.push([command, args, options]);
       return Promise.resolve(run);
@@ -261,4 +317,165 @@ describe("failureText", () => {
       failureText(new ListUnreadable({ message: "wt list printed no list of worktrees" })),
     ).toBe("wt list printed no list of worktrees");
   });
+});
+
+describe("loginShell", () => {
+  it.effect("the person's shell, from $SHELL", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/bin/zsh", stderr: "" });
+      const shell = yield* loginShell().pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [shell, calls],
+        ["/bin/zsh", [["sh", ["-c", 'printf %s "$SHELL"'], undefined]]],
+      );
+    }),
+  );
+
+  it.effect("/bin/sh when $SHELL is empty or can't be read", () =>
+    Effect.gen(function* () {
+      const empty = yield* loginShell().pipe(
+        Effect.provide(Shell.layer(answering({ code: 0, stdout: " ", stderr: "" }))),
+      );
+      const failed = yield* loginShell().pipe(
+        Effect.provide(Shell.layer({ exec: () => Promise.reject("no sh"), hc: noHc })),
+      );
+      assert.deepStrictEqual([empty, failed], ["/bin/sh", "/bin/sh"]);
+    }),
+  );
+});
+
+/** A Herdr API whose `hc` records each call and answers from `answers`, in turn. */
+const hcAnswering = (answers: readonly string[], stderr = "") => {
+  const calls: (readonly string[])[] = [];
+  const api: ExecApi = {
+    exec: () => Promise.reject(new Error("exec isn't called here")),
+    hc: (args) => {
+      calls.push(args);
+      return Promise.resolve({ code: 0, stdout: answers[calls.length - 1] ?? "", stderr });
+    },
+  };
+  return { api, calls };
+};
+
+describe("startJob", () => {
+  const job = { cwd: "/r/app", shell: "/bin/zsh", body: "wt list" };
+
+  it.effect("starts the job as a background terminal; its address", () =>
+    Effect.gen(function* () {
+      const { api, calls } = hcAnswering(['{"address":"t4g","state":"live"}']);
+      const addr = yield* startJob(job).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([addr, calls], ["t4g", [jobArgs(job)]]);
+    }),
+  );
+
+  it.effect("no address printed: JobNotStarted, saying why in hc's last line", () =>
+    Effect.gen(function* () {
+      const { api } = hcAnswering(["oops"], "warming up\nno such folder: /r/app\n");
+      const error = yield* Effect.flip(startJob(job).pipe(Effect.provide(Shell.layer(api))));
+      assert.deepStrictEqual(
+        [error._tag, "reason" in error ? error.reason : ""],
+        ["JobNotStarted", "no such folder: /r/app"],
+      );
+    }),
+  );
+});
+
+describe("waitForJob", () => {
+  it.effect("waits a minute at a time until the job ends; its exit code", () =>
+    Effect.gen(function* () {
+      const running = '{"ended":false,"terminal":"t4g"}';
+      const { api, calls } = hcAnswering([running, running, '{"ended":true,"exit_code":3}']);
+      const code = yield* waitForJob("t4g").pipe(Effect.provide(Shell.layer(api)));
+      const wait = ["wait", "t4g", "--json", "--timeout", "60"];
+      assert.deepStrictEqual([code, calls], [Option.some(3), [wait, wait, wait]]);
+    }),
+  );
+
+  it.effect("a terminal that is gone, or hc with no answer, lost the job", () =>
+    Effect.gen(function* () {
+      const { api } = hcAnswering(['{"ended":false}', "no such terminal: t4g"]);
+      const code = yield* waitForJob("t4g").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(code, Option.none());
+    }),
+  );
+});
+
+describe("goneFolders", () => {
+  it.effect("the folders among these that no longer exist", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/r/a\n/r/b c\n", stderr: "" });
+      const gone = yield* goneFolders(["/r/a", "/r/b c", "/r/d"]).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [gone, calls],
+        [
+          ["/r/a", "/r/b c"],
+          [["sh", shArgs(GONE_SCRIPT, ["/r/a", "/r/b c", "/r/d"]), { timeout: 60_000 }]],
+        ],
+      );
+    }),
+  );
+
+  it.effect("no folders: nothing gone, and nothing run", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/r/a\n", stderr: "" });
+      const gone = yield* goneFolders([]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([gone, calls], [[], []]);
+    }),
+  );
+});
+
+describe("stopJob", () => {
+  it.effect("kills the job's terminal", () =>
+    Effect.gen(function* () {
+      const { api, calls } = hcAnswering([""]);
+      yield* stopJob("t4g").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["kill", "t4g"]]);
+    }),
+  );
+});
+
+describe("reveal", () => {
+  it.effect("opens the folder in the Finder", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
+      yield* reveal("/r/my app").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["open", ["/r/my app"], undefined]]);
+    }),
+  );
+});
+
+describe("makeTempDir", () => {
+  it.effect("makes a private temp folder; its path", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/tmp/tmp.x1\n", stderr: "" });
+      const dir = yield* makeTempDir().pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([dir, calls], ["/tmp/tmp.x1", [["mktemp", ["-d"], undefined]]]);
+    }),
+  );
+
+  it.effect("mktemp printing no folder failed: CommandFailed, naming it", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        makeTempDir().pipe(
+          Effect.provide(Shell.layer(answering({ code: 0, stdout: "\n", stderr: "" }))),
+        ),
+      );
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "mktemp", 0, "mktemp printed no folder"]),
+      );
+    }),
+  );
+});
+
+describe("removeDir", () => {
+  it.effect("removes the folder and what is in it", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
+      yield* removeDir("/tmp/tmp.x1").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["rm", ["-rf", "/tmp/tmp.x1"], undefined]]);
+    }),
+  );
 });

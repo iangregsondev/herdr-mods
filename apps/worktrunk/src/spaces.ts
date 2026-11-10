@@ -74,3 +74,22 @@ export const spacesOnWorktrees = (
       if (held && (held.active || !space.active)) return on;
       return new Map([...on, [path, space]]);
     }, new Map());
+
+/**
+ * The ids of the spaces on this machine whose folder (where the space was made) or
+ * place (where its first terminal is now) is one of the `gone` folders, or inside one.
+ * Both count because wt moves a removed worktree into a trash folder and a shell inside
+ * it moves too, so the place alone can point somewhere that still exists.
+ */
+export const spacesInGone = (
+  spaces: readonly SpaceLike[],
+  panes: readonly PaneLike[],
+  gone: readonly string[],
+): readonly string[] => {
+  const inGone = (path: string) => gone.some((folder) => isUnder(path, folder));
+  const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+  return spaces
+    .filter((space) => space.machine === null)
+    .filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? ""))
+    .map((space) => space.id);
+};

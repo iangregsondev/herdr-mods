@@ -27,3 +27,18 @@ export const finite = (value: unknown): Option.Option<number> =>
 /** A string, else none. */
 export const text = (value: unknown): Option.Option<string> =>
   Predicate.isString(value) ? Option.some(value) : Option.none();
+
+/** A boolean, else none. */
+export const bool = (value: unknown): Option.Option<boolean> =>
+  Predicate.isBoolean(value) ? Option.some(value) : Option.none();
+
+/** A list whose every item `read` accepts, else none. */
+export const listOf = <A>(
+  value: unknown,
+  read: (item: unknown) => Option.Option<A>,
+): Option.Option<readonly A[]> =>
+  Array.isArray(value) ? Option.all(value.map(read)) : Option.none();
+
+/** A string or null, else none. */
+export const textOrNull = (value: unknown): Option.Option<string | null> =>
+  value === null ? Option.some(null) : text(value);

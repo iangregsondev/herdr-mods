@@ -2,23 +2,34 @@
 // the one-time import of the old mod's file), the repos, and each repo's worktrees.
 // Every failure the panel can show comes back as a value, so main.ts only runs these and
 // keeps what they return. Pure: no `herdr` or `gpui` imports.
-import { Effect, Option, Result } from "effect";
+import { Data, Effect, Option, Result } from "effect";
+import { newScript, switchedTo } from "./commands.ts";
 import { Files, type FileError } from "./files.ts";
+import type { JobSpec } from "./menus.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
   parseSettings,
+  hideRepo,
   planImport,
   type ParsedSettings,
   type Settings,
 } from "./settings.ts";
-import { reposFrom, type FoundRepo, type Repo } from "./repos.ts";
+import { reposFrom, withoutHidden, type FoundRepo, type Repo } from "./repos.ts";
 import { syncNotice } from "./sync.ts";
 import {
   causeText,
   failureText,
+  goneFolders,
+  JobNotStarted,
+  loginShell,
+  makeTempDir,
+  removeDir,
+  removeTerminal,
   reposOf,
   scanRepos,
+  startJob,
+  waitForJob,
   wtCi,
   wtList,
   type CommandFailed,
@@ -96,13 +107,14 @@ const asReason = <A, R>(
 export interface Found {
   /** What the folder scan found (this time, or the last time when none was due). */
   readonly scanned: readonly FoundRepo[];
-  /** The repos to list: scanned and open spaces' repos, grouped, by name. */
+  /** The repos to list: scanned and open spaces' repos, grouped, by name, none hidden. */
   readonly repos: readonly Repo[];
 }
 
 /**
  * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
- * repos the open spaces are in (`places`). A failure is its one-line reason.
+ * repos the open spaces are in (`places`), less the hidden ones. A failure is its
+ * one-line reason.
  */
 export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
@@ -112,7 +124,8 @@ export const findRepos = Effect.fn("findRepos")(function* (
 ) {
   const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
   const owners = yield* reposOf(places);
-  const found: Found = { scanned, repos: reposFrom(scanned, owners, settings.folders, home) };
+  const repos = reposFrom(scanned, owners, settings.folders, home);
+  const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
   return found;
 }, asReason);
 
@@ -157,3 +170,129 @@ export const syncToast = Effect.fn("syncToast")(function* (
   const record = yield* Effect.option(disk.read(path));
   return syncNotice(record, installed, told);
 });
+
+/** The settings file doesn't parse, so it is never written over; `reason` says why. */
+export class SettingsBroken extends Data.TaggedError("SettingsBroken")<{
+  readonly reason: string;
+}> {}
+
+/**
+ * Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
+ * made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
+ */
+export const hideInSettings = Effect.fn("hideInSettings")(
+  function* (files: Pick<SettingsFiles, "path" | "name">, root: string) {
+    const disk = yield* Files;
+    const current = yield* disk
+      .read(files.path)
+      .pipe(Effect.catchTag("FileMissing", () => Effect.succeed(null)));
+    const next = yield* Effect.fromResult(hideRepo(current, root, files.name)).pipe(
+      Effect.mapError((reason) => new SettingsBroken({ reason })),
+    );
+    if (next === current) return Result.succeed(undefined);
+    yield* current === null
+      ? disk.create(files.path, next)
+      : disk.replace(files.path, next, current);
+    const answer: Result.Result<void, string> = Result.succeed(undefined);
+    return answer;
+  },
+  (effect, files) =>
+    effect.pipe(
+      Effect.catchTags({
+        SettingsBroken: (broken) => Effect.succeed(Result.fail(broken.reason)),
+        WriteConflict: () =>
+          Effect.succeed(Result.fail(`${files.name} changed while hiding the repo: try again.`)),
+        FileError: (failed) =>
+          Effect.succeed(
+            Result.fail(`${files.name}: couldn't save it (${causeText(failed.cause)})`),
+          ),
+      }),
+    ),
+);
+
+/** How a job went. */
+export type JobOutcome =
+  /** It never started; `reason` says why. */
+  | { readonly _tag: "NotStarted"; readonly reason: string }
+  /**
+   * It ended: its exit code, none when its terminal was lost. `gone` is which of the
+   * job's folders no longer exist, so the spaces on them can close.
+   */
+  | {
+      readonly _tag: "Ended";
+      readonly code: Option.Option<number>;
+      readonly gone: readonly string[];
+    };
+
+/**
+ * Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
+ * gets its address as soon as it starts (to open its window), then this waits for it to
+ * end, removes its terminal and checks which of its folders are gone.
+ */
+export const runJob = Effect.fn("runJob")(
+  function* (spec: JobSpec, shown: (addr: string) => void) {
+    const shell = yield* loginShell();
+    const addr = yield* startJob({ cwd: spec.cwd, shell, body: spec.body });
+    yield* Effect.sync(() => shown(addr));
+    // Once started, the job runs on in its window whatever hc says: a wait or a removal
+    // that fails only loses track of it.
+    const code = yield* waitForJob(addr).pipe(Effect.orElseSucceed(() => Option.none<number>()));
+    yield* Effect.ignore(removeTerminal(addr));
+    // A check that fails can't tell which folders went, so no space is closed.
+    const gone = yield* goneFolders(spec.gone).pipe(Effect.orElseSucceed(() => []));
+    const outcome: JobOutcome = { _tag: "Ended", code, gone };
+    return outcome;
+  },
+  Effect.catchTags({
+    JobNotStarted: (failed) =>
+      Effect.succeed<JobOutcome>({ _tag: "NotStarted", reason: failed.reason }),
+    ShellError: (failed) =>
+      Effect.succeed<JobOutcome>({ _tag: "NotStarted", reason: failureText(failed) }),
+  }),
+);
+
+/** What the new worktree job did: how it went, and the worktree wt switched to, if any. */
+export interface NewOutcome {
+  readonly outcome: JobOutcome;
+  readonly switched: Option.Option<{ readonly branch: string; readonly path: string }>;
+}
+
+/**
+ * Switches to or creates the worktree for `name` in the repo at `main` as a job (see
+ * `runJob`), its JSON answer written to a private temp folder that is removed after.
+ */
+export const newWorktree = Effect.fn("newWorktree")(
+  function* (
+    target: { readonly main: string; readonly name: string; readonly base: string | null },
+    shown: (addr: string) => void,
+  ) {
+    const disk = yield* Files;
+    const dir = yield* makeTempDir().pipe(
+      Effect.mapError(
+        (failed) =>
+          new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` }),
+      ),
+    );
+    const out = `${dir}/switch.json`;
+    const spec: JobSpec = {
+      title: `New worktree ${target.name}`,
+      cwd: target.main,
+      body: newScript({ ...target, base: Option.fromNullishOr(target.base), out }),
+      gone: [],
+    };
+    const outcome = yield* runJob(spec, shown);
+    const succeeded = outcome._tag === "Ended" && Option.contains(outcome.code, 0);
+    // Only a job that succeeded wrote an answer worth reading.
+    const text = succeeded ? yield* Effect.option(disk.read(out)) : Option.none<string>();
+    // A temp folder left behind is harmless: the system clears its temp folders.
+    yield* Effect.ignore(removeDir(dir));
+    const answer: NewOutcome = { outcome, switched: Option.flatMap(text, switchedTo) };
+    return answer;
+  },
+  Effect.catchTag("JobNotStarted", (failed) =>
+    Effect.succeed<NewOutcome>({
+      outcome: { _tag: "NotStarted", reason: failed.reason },
+      switched: Option.none(),
+    }),
+  ),
+);

@@ -1,6 +1,12 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { localPlaces, spacesOnWorktrees, type PaneLike, type SpaceLike } from "../src/spaces.ts";
+import {
+  localPlaces,
+  spacesInGone,
+  spacesOnWorktrees,
+  type PaneLike,
+  type SpaceLike,
+} from "../src/spaces.ts";
 
 const space = (
   id: string,
@@ -77,5 +83,34 @@ describe("spacesOnWorktrees", () => {
       ).get("/r");
     expect(both(shown)).toEqual(shown);
     expect(Option.fromNullishOr(both({ id: "c", active: false }))).toEqual(Option.some(first));
+  });
+});
+
+describe("spacesInGone", () => {
+  test("the spaces whose place is in a gone folder or below it", () => {
+    const spaces = [
+      space("s1", "/elsewhere", ["t1"]),
+      space("s2", "/r/app", ["t2"]),
+      space("s3", "/r/app.feat-xy", ["t3"]),
+      space("s4", "/r/app.feat-x", ["t4"]),
+    ];
+    const panes = [pane("t1", "/r/app.feat-x/src"), pane("t4", "/r/app.feat-x")];
+    expect(spacesInGone(spaces, panes, ["/r/app.feat-x"])).toEqual(["s1", "s4"]);
+  });
+
+  test("a space made in a removed worktree closes though its terminal followed the folder elsewhere", () => {
+    // wt moves a removed worktree into a trash folder, and the shell inside goes with it.
+    const spaces = [space("s1", "/r/app.feat-x", ["t1"])];
+    const panes = [pane("t1", "/r/app/.git/wt/trash/app.feat-x-123")];
+    expect(spacesInGone(spaces, panes, ["/r/app.feat-x"])).toEqual(["s1"]);
+  });
+
+  test("spaces on other machines are never closed", () => {
+    const remote = space("s1", "/r/app.feat-x", ["t1"], { machine: "box" });
+    expect(spacesInGone([remote], [], ["/r/app.feat-x"])).toEqual([]);
+  });
+
+  test("nothing gone, nothing to close", () => {
+    expect(spacesInGone([space("s1", "/r/app", ["t1"])], [], [])).toEqual([]);
   });
 });

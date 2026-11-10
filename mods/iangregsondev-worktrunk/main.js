@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { Input, InputState, h_flex, v_flex } from "gpui-base";
-import { appHome, exec, home, layout, notify, panes, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, hc, home, layout, notify, openOverlay, panes, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -1754,6 +1754,18 @@ function isJsonPrimitiveWrapper(object) {
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Inspectable.js
 /**
+* Controls how values appear in logs and debugging output.
+*
+* Effect data types use `Inspectable` to provide stable string, JSON, and
+* Node.js inspection output. This keeps custom values readable in logs, REPLs,
+* test failures, and diagnostics. This module defines the Node inspect symbol,
+* the `Inspectable` interface, safe conversion helpers, and shared prototype or
+* class implementations for custom values.
+*
+* @stability stable
+* @since 2.0.0
+*/
+/**
 * Defines the symbol used by Node.js for custom object inspection.
 *
 * **When to use**
@@ -1818,6 +1830,31 @@ const toJson = (input) => {
 		return input;
 	} catch {
 		return "[toJSON threw]";
+	}
+};
+/**
+* Converts an unknown value to a string for diagnostics.
+*
+* **When to use**
+*
+* Use to produce a diagnostic string from a value whose runtime type is unknown.
+*
+* **Details**
+*
+* Strings are returned unchanged. Objects are formatted as JSON using the
+* provided whitespace setting when possible, and values that cannot be
+* formatted are converted with `String`.
+*
+* @stability stable
+* @category converting
+* @since 2.0.0
+*/
+const toStringUnknown = (u, whitespace = 2) => {
+	if (typeof u === "string") return u;
+	try {
+		return typeof u === "object" ? formatJson(u, { space: whitespace }) : format(u, { space: whitespace });
+	} catch {
+		return String(u);
 	}
 };
 
@@ -2161,6 +2198,8 @@ const causeAddInterrupts = (self, interrupts) => {
 	return reasons.length === self.reasons.length ? self : new CauseImpl(reasons);
 };
 /** @internal */
+const causeEmpty = /*#__PURE__*/ new CauseImpl([]);
+/** @internal */
 const causeFail = (error) => new CauseImpl([new Fail(error)]);
 /** @internal */
 var Die = class extends ReasonBase {
@@ -2403,7 +2442,7 @@ const SomeProto = /*#__PURE__*/ Object.defineProperty(/*#__PURE__*/ Object.assig
 	_tag: "Some",
 	_op: "Some",
 	[symbol](that) {
-		return isOption(that) && isSome$1(that) && equals$1(this.value, that.value);
+		return isOption$1(that) && isSome$1(that) && equals$1(this.value, that.value);
 	},
 	[symbol$1]() {
 		return combine(hash(this._tag))(hash(this.value));
@@ -2427,7 +2466,7 @@ const NoneProto = /*#__PURE__*/ Object.assign(/*#__PURE__*/ Object.create(Common
 	_op: "None",
 	valueOrUndefined: void 0,
 	[symbol](that) {
-		return isOption(that) && isNone$1(that);
+		return isOption$1(that) && isNone$1(that);
 	},
 	[symbol$1]() {
 		return NoneHash;
@@ -2443,7 +2482,7 @@ const NoneProto = /*#__PURE__*/ Object.assign(/*#__PURE__*/ Object.create(Common
 	}
 });
 /** @internal */
-const isOption = (input) => hasProperty(input, TypeId$5);
+const isOption$1 = (input) => hasProperty(input, TypeId$5);
 /** @internal */
 const isNone$1 = (fa) => fa._tag === "None";
 /** @internal */
@@ -2753,6 +2792,37 @@ const none = () => none$1;
 */
 const some = some$1;
 /**
+* Determines whether the given value is an `Option`.
+*
+* **When to use**
+*
+* Use to validate unknown values at runtime boundaries, such as type-narrowing
+* in union types.
+*
+* **Details**
+*
+* - Returns `true` for both `Some` and `None` instances
+* - Acts as a type guard, narrowing the input to `Option<unknown>`
+*
+* **Example** (Checking if a value is an Option)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.isOption(Option.some(1)) // => true
+* Option.isOption(Option.none()) // => true
+* Option.isOption({}) // => false
+* ```
+*
+* @see {@link isNone} to check for `None` specifically
+* @see {@link isSome} to check for `Some` specifically
+*
+* @stability stable
+* @category guards
+* @since 2.0.0
+*/
+const isOption = isOption$1;
+/**
 * Checks whether an `Option` is `None` (absent).
 *
 * **When to use**
@@ -2837,7 +2907,7 @@ const isSome = isSome$1;
 * @category pattern matching
 * @since 2.0.0
 */
-const match$4 = /*#__PURE__*/ dual(2, (self, { onNone, onSome }) => isNone(self) ? onNone() : onSome(self.value));
+const match$5 = /*#__PURE__*/ dual(2, (self, { onNone, onSome }) => isNone(self) ? onNone() : onSome(self.value));
 /**
 * Extracts the value from a `Some`, or evaluates a fallback thunk on `None`.
 *
@@ -3035,7 +3105,7 @@ const map$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(
 * @category sequencing
 * @since 2.0.0
 */
-const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
+const flatMap$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
 /**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
@@ -4184,7 +4254,7 @@ const map$2 = /*#__PURE__*/ dual(2, (self, f) => isSuccess(self) ? succeed$3(f(s
 * @category pattern matching
 * @since 2.0.0
 */
-const match$3 = /*#__PURE__*/ dual(2, (self, { onFailure, onSuccess }) => isFailure(self) ? onFailure(self.failure) : onSuccess(self.success));
+const match$4 = /*#__PURE__*/ dual(2, (self, { onFailure, onSuccess }) => isFailure(self) ? onFailure(self.failure) : onSuccess(self.success));
 /**
 * Chains a function that returns a `Result` onto a successful value.
 *
@@ -4220,7 +4290,7 @@ const match$3 = /*#__PURE__*/ dual(2, (self, { onFailure, onSuccess }) => isFail
 * @category sequencing
 * @since 2.0.0
 */
-const flatMap$1 = /*#__PURE__*/ dual(2, (self, f) => isFailure(self) ? fail$2(self.failure) : f(self.success));
+const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isFailure(self) ? fail$2(self.failure) : f(self.success));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Array.js
 /**
@@ -4660,7 +4730,7 @@ const millis = (millis) => make$1(millis);
 * @category getters
 * @since 2.0.0
 */
-const toMillis = (self) => match$2(fromInputUnsafe(self), {
+const toMillis = (self) => match$3(fromInputUnsafe(self), {
 	onMillis: identity,
 	onNanos: (nanos) => nanosToUnit(nanos, 1e6),
 	onInfinity: () => Infinity,
@@ -4732,7 +4802,7 @@ const toNanosUnsafe = (input) => {
 * @category pattern matching
 * @since 2.0.0
 */
-const match$2 = /*#__PURE__*/ dual(2, (self, options) => {
+const match$3 = /*#__PURE__*/ dual(2, (self, options) => {
 	switch (self.value._tag) {
 		case "Millis": return options.onMillis(self.value.millis);
 		case "Nanos": return options.onNanos(self.value.nanos);
@@ -5467,6 +5537,8 @@ const TracerSpanAnnotations = /*#__PURE__*/ Reference("effect/References/TracerS
 /** @internal */
 const TracerSpanLinks = /*#__PURE__*/ Reference("effect/References/TracerSpanLinks", { defaultValue: () => [] });
 /** @internal */
+const CurrentLogAnnotations = /*#__PURE__*/ Reference("effect/References/CurrentLogAnnotations", { defaultValue: () => ({}) });
+/** @internal */
 const CurrentLogLevel = /*#__PURE__*/ Reference("effect/References/CurrentLogLevel", {
 	fiberCached: true,
 	defaultValue: () => "Info"
@@ -5476,6 +5548,10 @@ const MinimumLogLevel = /*#__PURE__*/ Reference("effect/References/MinimumLogLev
 	fiberCached: true,
 	defaultValue: () => "Info"
 });
+/** @internal */
+const UnhandledLogLevel = /*#__PURE__*/ Reference("effect/References/UnhandledLogLevel", { defaultValue: () => "Error" });
+/** @internal */
+const CurrentLogSpans = /*#__PURE__*/ Reference("effect/References/CurrentLogSpans", { defaultValue: () => [] });
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/internal/tracer.js
 /** @internal */
@@ -5768,7 +5844,7 @@ var FiberImpl = class {
 			return;
 		}
 		const interruptChildren = fiberMiddleware.interruptChildren && fiberMiddleware.interruptChildren(this);
-		if (interruptChildren !== void 0) return this.evaluate(flatMap(interruptChildren, () => exit));
+		if (interruptChildren !== void 0) return this.evaluate(flatMap$1(interruptChildren, () => exit));
 		this._exit = exit;
 		this.cache.runtimeMetrics?.recordFiberEnd(this.context, this._exit);
 		if (this._parent) {
@@ -5809,7 +5885,7 @@ var FiberImpl = class {
 				if (!yielding && !cache.preventYield && cache.scheduler.shouldYield(this)) {
 					yielding = true;
 					const prev = current;
-					current = flatMap(yieldNow, () => prev);
+					current = flatMap$1(yieldNow, () => prev);
 				}
 				current = cache.tracerContext ? cache.tracerContext(current, this) : current[evaluate](this);
 				if (current === Yield) {
@@ -5973,7 +6049,9 @@ const suspend = /*#__PURE__*/ makePrimitive({
 	}
 });
 /** @internal */
-const fromResult$1 = /*#__PURE__*/ match$3({
+const fromOption$1 = /*#__PURE__*/ dual((args) => args.length >= 2 || isOption(args[0]), (option, onNone) => isNone(option) ? onNone ? failSync(onNone) : fail$1(new NoSuchElementError("Effect.fromOption: Option.none")) : succeed$2(option.value));
+/** @internal */
+const fromResult$1 = /*#__PURE__*/ match$4({
 	onFailure: fail$1,
 	onSuccess: succeed$2
 });
@@ -5995,6 +6073,8 @@ const yieldNowWith = /*#__PURE__*/ makePrimitive({
 const yieldNow = /*#__PURE__*/ yieldNowWith(0);
 /** @internal */
 const die = (defect) => exitDie(defect);
+/** @internal */
+const failSync = (error) => suspend(() => fail$1(error()));
 /** @internal */
 const void_ = /*#__PURE__*/ succeed$2(void 0);
 /** @internal */
@@ -6061,13 +6141,22 @@ const asyncFinalizer = /*#__PURE__*/ makePrimitive({
 		}
 	},
 	[contE](cause, _fiber) {
-		return hasInterrupts(cause) ? flatMap(combineFinalizerCause(exitFailCause(cause), this[args]()), () => failCause(cause)) : failCause(cause);
+		return hasInterrupts(cause) ? flatMap$1(combineFinalizerCause(exitFailCause(cause), this[args]()), () => failCause(cause)) : failCause(cause);
 	}
 });
 /** @internal */
 const callback = (register) => callbackOptions(register, register.length >= 2);
 /** @internal */
 const never = /*#__PURE__*/ callback(constVoid);
+/** @internal */
+const gen$1 = (...args) => {
+	if (args.length === 1) {
+		const body = args[0];
+		return suspend(() => fromIteratorUnsafe(body()));
+	}
+	const [options, body] = args;
+	return suspend(() => fromIteratorUnsafe(body.call(options.self)));
+};
 const fnBody = (bodyOrOptions, pipeables) => typeof bodyOrOptions === "function" ? bodyOrOptions : pipeables.shift().bind(bodyOrOptions.self);
 /** @internal */
 const fnUntraced$1 = (bodyOrOptions, ...pipeables) => {
@@ -6213,7 +6302,7 @@ const tap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) 
 /** @internal */
 const asVoid$1 = (self) => new ContImpl(self, returnPayload, exitVoid);
 /** @internal */
-const flatMap = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, andThenCont, f));
+const flatMap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, andThenCont, f));
 /** @internal */
 const effectIsExit = (effect) => effect[ExitTypeId] !== void 0;
 /** @internal */
@@ -6273,6 +6362,13 @@ const OnFailureImpl = function(self, f) {
 };
 OnFailureImpl.prototype = OnFailureProto;
 /** @internal */
+const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(self, (cause) => {
+	const eb = filter(cause);
+	return isFailure(eb) ? failCause(eb.failure) : f(eb.success, cause);
+}));
+/** @internal */
+const catch_ = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
+/** @internal */
 const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
@@ -6280,14 +6376,52 @@ const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate
 	return f(error.success);
 }));
 /** @internal */
+const catchFilter = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, filter, f, orElse) => catchCause(self, (cause) => {
+	const error = findRecoverableError(cause);
+	if (isFailure(error)) return failCause(error.failure);
+	const result = filter(error.success);
+	if (isFailure(result)) return orElse ? orElse(result.failure) : failCause(cause);
+	return f(result.success);
+}));
+/** @internal */
 const catchTag$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, k, f, orElse) => {
 	const pred = Array.isArray(k) ? (e) => hasProperty(e, "_tag") && k.includes(e._tag) : isTagged(k);
 	return catchIf(self, pred, f, orElse);
 });
 /** @internal */
+const catchTags$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, cases, orElse) => {
+	let keys;
+	return catchFilter(self, (e) => {
+		keys ??= Object.keys(cases);
+		return hasProperty(e, "_tag") && isString(e["_tag"]) && keys.includes(e["_tag"]) ? succeed$3(e) : fail$2(e);
+	}, (e) => cases[e["_tag"]](e), orElse);
+});
+/** @internal */
 const mapError$1 = /*#__PURE__*/ dual(2, (self, f) => catchCause(self, (cause) => failCause(causeMap(cause, f))));
 /** @internal */
-const option$1 = (self) => match$1(self, {
+const orElseSucceed$1 = /*#__PURE__*/ dual(2, (self, f) => catch_(self, (error) => sync$1(() => f(error))));
+/** @internal */
+const ignoreCauseLogger = (log) => log === "Unhandled" ? (...message) => withFiber((fiber) => {
+	const level = fiber.getRef(UnhandledLogLevel);
+	return level === void 0 ? void_ : logWithLevel(level)(...message);
+}) : logWithLevel(log === true ? void 0 : log);
+/** @internal */
+const ignore$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, options) => {
+	if (!options?.log) return matchEffect$1(self, {
+		onFailure: (_) => void_,
+		onSuccess: (_) => void_
+	});
+	const logEffect = ignoreCauseLogger(options.log);
+	return matchCauseEffect(self, {
+		onFailure(cause) {
+			const error = findRecoverableError(cause);
+			return isFailure(error) ? failCause(error.failure) : options.message === void 0 ? logEffect(cause) : logEffect(options.message, cause);
+		},
+		onSuccess: (_) => void_
+	});
+});
+/** @internal */
+const option$1 = (self) => match$2(self, {
 	onFailure: none,
 	onSuccess: some
 });
@@ -6341,7 +6475,7 @@ const matchEffect$1 = /*#__PURE__*/ dual(2, (self, options) => matchCauseEffect(
 	onSuccess: options.onSuccess
 }));
 /** @internal */
-const match$1 = /*#__PURE__*/ dual(2, (self, options) => new MatchImpl(self, options));
+const match$2 = /*#__PURE__*/ dual(2, (self, options) => new MatchImpl(self, options));
 /** @internal */
 const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 	if (effectIsExit(self)) {
@@ -6350,7 +6484,7 @@ const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 		if (isFailure(error)) return exitFailCause(error.failure);
 		return exitSucceed(options.onFailure(error.success));
 	}
-	return match$1(self, options);
+	return match$2(self, options);
 });
 /** @internal */
 const exit$1 = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
@@ -6486,7 +6620,7 @@ const OnExitImpl = /*#__PURE__*/ function() {
 			} catch (defect) {
 				eff = exitDie(defect);
 			}
-			return eff ? flatMap(eff, (_) => exit) : exit;
+			return eff ? flatMap$1(eff, (_) => exit) : exit;
 		},
 		[contE](cause, _, exit) {
 			exit ??= exitFailCause(cause);
@@ -6496,7 +6630,7 @@ const OnExitImpl = /*#__PURE__*/ function() {
 			} catch (defect) {
 				eff = exitDie(defect);
 			}
-			return eff ? flatMap(combineFinalizerCause(exit, eff), (_) => exit) : exit;
+			return eff ? flatMap$1(combineFinalizerCause(exit, eff), (_) => exit) : exit;
 		}
 	});
 	const OnExitImpl = function(effect, onExit, interruptible) {
@@ -6611,7 +6745,7 @@ const iterateConcurrentImpl = (options) => {
 			const defect = exitDie(error);
 			terminal = defect;
 			done = true;
-			return fibers && fibers.size > 0 ? flatMap(uninterruptible(fiberInterruptAll(Array.from(fibers))), () => terminal ?? defect) : defect;
+			return fibers && fibers.size > 0 ? flatMap$1(uninterruptible(fiberInterruptAll(Array.from(fibers))), () => terminal ?? defect) : defect;
 		};
 		const go = () => {
 			let paused = false;
@@ -6635,7 +6769,7 @@ const iterateConcurrentImpl = (options) => {
 					if (result) return cb(result);
 					return suspend(() => {
 						terminal ??= exitVoid;
-						return flatMap(fibers ? fiberInterruptAll(fibers) : void_, () => terminal?._tag === "Failure" ? terminal : void_);
+						return flatMap$1(fibers ? fiberInterruptAll(fibers) : void_, () => terminal?._tag === "Failure" ? terminal : void_);
 					});
 				});
 				else {
@@ -6706,7 +6840,7 @@ const forEachConcurrent = /*#__PURE__*/ iterateConcurrentImpl({
 	}
 });
 /** @internal */
-const filterOrElse = /*#__PURE__*/ dual(3, (self, predicate, orElse) => flatMap(self, (a) => predicate(a) ? succeed$2(a) : orElse(a)));
+const filterOrElse = /*#__PURE__*/ dual(3, (self, predicate, orElse) => flatMap$1(self, (a) => predicate(a) ? succeed$2(a) : orElse(a)));
 /** @internal */
 const forkUnsafe$1 = (parent, effect, immediate = false, daemon = false, uninterruptible = false) => {
 	const parentRuntime = parent;
@@ -6896,6 +7030,8 @@ var UnknownError = class extends (/*#__PURE__*/ TaggedError$1("UnknownError")) {
 	}
 };
 /** @internal */
+const ConsoleRef = /*#__PURE__*/ Reference("effect/Console", { defaultValue: () => globalThis.console });
+/** @internal */
 const logLevelToOrder = (level) => {
 	switch (level) {
 		case "All": return Number.MIN_SAFE_INTEGER;
@@ -6912,6 +7048,73 @@ const logLevelToOrder = (level) => {
 const LogLevelOrder = /*#__PURE__*/ mapInput(Number$1, logLevelToOrder);
 /** @internal */
 const isLogLevelGreaterThan = /*#__PURE__*/ isGreaterThan(LogLevelOrder);
+/** @internal */
+const CurrentLoggers = /*#__PURE__*/ Reference("effect/Logger/CurrentLoggers", { defaultValue: () => /* @__PURE__ */ new Set([defaultLogger, tracerLogger]) });
+/** @internal */
+const LogToStderr = /*#__PURE__*/ Reference("effect/Logger/LogToStderr", { defaultValue: constFalse });
+/** @internal */
+const LoggerTypeId = "~effect/Logger";
+const LoggerProto = {
+	[LoggerTypeId]: {
+		_Message: identity,
+		_Output: identity
+	},
+	pipe() {
+		return pipeArguments(this, arguments);
+	}
+};
+/** @internal */
+const loggerMake = (log) => {
+	const self = Object.create(LoggerProto);
+	self.log = log;
+	return self;
+};
+/**
+* Sanitize a given string by replacing spaces, equal signs, and double quotes
+* with underscores.
+*
+* @internal
+*/
+const formatLabel = (key) => key.replace(/[\s="]/g, "_");
+/**
+* Formats a log span into a `<label>=<value>ms` string.
+*
+* @internal
+*/
+const formatLogSpan = (self, now) => {
+	return `${formatLabel(self[0])}=${now - self[1]}ms`;
+};
+/** @internal */
+const logWithLevel = (level) => (...message) => {
+	let cause = void 0;
+	for (let i = 0, len = message.length; i < len; i++) {
+		const msg = message[i];
+		if (isCause(msg)) {
+			if (cause) message.splice(i, 1);
+			else message = message.slice(0, i).concat(message.slice(i + 1));
+			cause = cause ? causeFromReasons(cause.reasons.concat(msg.reasons)) : msg;
+			i--;
+		}
+	}
+	if (cause === void 0) cause = causeEmpty;
+	return withFiber((fiber) => {
+		const logLevel = level ?? fiber.cache.logLevel;
+		if (isLogLevelGreaterThan(fiber.cache.minimumLogLevel, logLevel)) return void_;
+		const clock = fiber.getRef(ClockRef);
+		const loggers = fiber.getRef(CurrentLoggers);
+		if (loggers.size > 0) {
+			const date = new Date(clock.currentTimeMillisUnsafe());
+			for (const logger of loggers) logger.log({
+				cause,
+				fiber,
+				date,
+				logLevel,
+				message
+			});
+		}
+		return void_;
+	});
+};
 const colors = {
 	bold: "1",
 	red: "31",
@@ -6934,6 +7137,33 @@ const logLevelColors = {
 	Error: [colors.red],
 	Fatal: [colors.bgBrightRed, colors.black]
 };
+const defaultDateFormat = (date) => `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}:${date.getSeconds().toString().padStart(2, "0")}.${date.getMilliseconds().toString().padStart(3, "0")}`;
+/** @internal */
+const defaultLogger = /*#__PURE__*/ loggerMake(({ cause, date, fiber, logLevel, message }) => {
+	const message_ = Array.isArray(message) ? message.slice() : [message];
+	if (cause.reasons.length > 0) message_.push(causePretty(cause));
+	const now = date.getTime();
+	const spans = fiber.getRef(CurrentLogSpans);
+	let spanString = "";
+	for (const span of spans) spanString += ` ${formatLogSpan(span, now)}`;
+	const annotations = fiber.getRef(CurrentLogAnnotations);
+	if (Object.keys(annotations).length > 0) message_.push(annotations);
+	const console = fiber.getRef(ConsoleRef);
+	(fiber.getRef(LogToStderr) ? console.error : console.log)(`[${defaultDateFormat(date)}] ${logLevel.toUpperCase()} (#${fiber.id})${spanString}:`, ...message_);
+});
+/** @internal */
+const tracerLogger = /*#__PURE__*/ loggerMake(({ cause, fiber, logLevel, message }) => {
+	const clock = fiber.getRef(ClockRef);
+	const annotations = fiber.getRef(CurrentLogAnnotations);
+	const span = fiber.cache.span;
+	if (span === void 0 || span._tag === "ExternalSpan" || span.status._tag === "Ended") return;
+	const attributes = {};
+	for (const [key, value] of Object.entries(annotations)) assignProperty(attributes, key, value);
+	attributes["effect.fiberId"] = fiber.id;
+	attributes["effect.logLevel"] = logLevel.toUpperCase();
+	if (cause.reasons.length > 0) attributes["effect.cause"] = causePretty(cause);
+	span.event(toStringUnknown(Array.isArray(message) && message.length === 1 ? message[0] : message), clock.currentTimeNanosUnsafe(), attributes);
+});
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Cause.js
 /**
@@ -7013,7 +7243,7 @@ const pretty = causePretty;
 * @category pattern matching
 * @since 2.0.0
 */
-const match = exitMatch;
+const match$1 = exitMatch;
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Deferred.js
 const TypeId$1 = "~effect/Deferred";
@@ -7704,7 +7934,7 @@ const mergeAllEffect = (layers, memoMap, scope) => {
 const mergeAll = (...layers) => fromBuildMemo((memoMap, scope) => mergeAllEffect(layers, memoMap, scope));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/internal/layer.js
-const provideLayer = (self, layer, options) => scopedWith((scope) => flatMap(options?.local ? buildWithMemoMap(layer, makeMemoMapUnsafe(), scope) : buildWithScope(layer, scope), (context) => provideContext(self, context)));
+const provideLayer = (self, layer, options) => scopedWith((scope) => flatMap$1(options?.local ? buildWithMemoMap(layer, makeMemoMapUnsafe(), scope) : buildWithScope(layer, scope), (context) => provideContext(self, context)));
 /** @internal */
 const provide$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, source, options) => isContext(source) ? provideContext(self, source) : provideLayer(self, Array.isArray(source) ? mergeAll(...source) : source, options));
 
@@ -7924,6 +8154,60 @@ const succeed = succeed$2;
 */
 const sync = sync$1;
 /**
+* Provides a way to write effectful code using generator functions, simplifying
+* control flow and error handling.
+*
+* **When to use**
+*
+* Use when you want to write effectful code that looks and behaves like
+* synchronous code, while still handling asynchronous tasks, errors, and complex
+* control flow such as loops and conditions.
+*
+* Generator functions work similarly to `async/await` but keep errors,
+* requirements, and interruption in the Effect type. You can `yield*` values
+* from effects and return the final result at the end.
+*
+* **Example** (Sequencing effects with generators)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect } from "effect"
+*
+* class DiscountRateError extends Data.TaggedError("DiscountRateError")<{}> {}
+*
+* const addServiceCharge = (amount: number) => amount + 1
+*
+* const applyDiscount = (
+*   total: number,
+*   discountRate: number
+* ): Effect.Effect<number, DiscountRateError> =>
+*   discountRate === 0
+*     ? Effect.fail(new DiscountRateError())
+*     : Effect.succeed(total - (total * discountRate) / 100)
+*
+* const fetchTransactionAmount = Effect.promise(() => Promise.resolve(100))
+*
+* const fetchDiscountRate = Effect.promise(() => Promise.resolve(5))
+*
+* export const program = Effect.gen(function*() {
+*   const transactionAmount = yield* fetchTransactionAmount
+*   const discountRate = yield* fetchDiscountRate
+*   const discountedAmount = yield* applyDiscount(
+*     transactionAmount,
+*     discountRate
+*   )
+*   const finalAmount = addServiceCharge(discountedAmount)
+*   return `Final amount to charge: ${finalAmount}`
+* })
+*
+* await Effect.runPromise(program) // => "Final amount to charge: 96"
+* ```
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+const gen = gen$1;
+/**
 * Creates an `Effect` that represents a recoverable error.
 *
 * **When to use**
@@ -7981,6 +8265,122 @@ const fail = fail$1;
 * @since 4.0.0
 */
 const fromResult = fromResult$1;
+/**
+* Converts an `Option` into an `Effect`.
+*
+* **When to use**
+*
+* Use when absence should become a typed `NoSuchElementError` in the effect error
+* channel.
+*
+* **Details**
+*
+* `Option.some` becomes a successful effect with the contained value, while
+* `Option.none` becomes a failed effect. By default the failure is a
+* `NoSuchElementError`, but you can provide an `onNone` callback to customize
+* the error value. For `Option.none`, `onNone` is evaluated on each execution,
+* not when the effect is constructed. It is never called for `Option.some`.
+* If `onNone` throws, the effect dies with the thrown value as a defect.
+*
+* **Example** (Converting an Option into an Effect)
+*
+* ```ts import.meta.vitest
+* import { Effect, Option } from "effect"
+* const output: Array<unknown> = []
+*
+* const some = Option.some(42)
+* const none = Option.none()
+*
+* const effect1 = Effect.fromOption(some)
+* const effect2 = Effect.fromOption(none)
+* const effect3 = Effect.fromOption(none, () => new Error("missing"))
+*
+* void output.push(Effect.runSync(effect1))
+* void output.push(Effect.runSync(Effect.flip(effect2))._tag)
+* void output.push(Effect.runSync(Effect.flip(effect3)).message)
+* output // => [42, "NoSuchElementError", "missing"]
+* ```
+*
+* @stability stable
+* @category converting
+* @since 4.0.0
+*/
+const fromOption = fromOption$1;
+/**
+* Chains effects to produce new `Effect` instances, useful for combining
+* operations that depend on previous results.
+*
+* **When to use**
+*
+* Use when you need to chain multiple effects, ensuring that each
+* step produces a new `Effect` while flattening any nested effects that may
+* occur.
+*
+* **Details**
+*
+* `flatMap` lets you sequence effects so that the result of one effect can be
+* used in the next step. It is similar to `flatMap` used with arrays but works
+* specifically with `Effect` instances, allowing you to avoid deeply nested
+* effect structures.
+*
+* Since effects are immutable, `flatMap` always returns a new effect instead of
+* changing the original one.
+*
+* **Example** (Choosing flatMap syntax variants)
+*
+* ```ts import.meta.vitest
+* import { Effect, pipe } from "effect"
+* const output: Array<unknown> = []
+*
+* const myEffect = Effect.succeed(1)
+* const transformation = (n: number) => Effect.succeed(n + 1)
+*
+* const flatMappedWithPipe = pipe(myEffect, Effect.flatMap(transformation))
+* const flatMappedWithDataFirst = Effect.flatMap(myEffect, transformation)
+* const flatMappedWithMethod = myEffect.pipe(Effect.flatMap(transformation))
+*
+* void output.push(Effect.runSync(Effect.all([
+*   flatMappedWithPipe,
+*   flatMappedWithDataFirst,
+*   flatMappedWithMethod
+* ])))
+* output // => [[2, 2, 2]]
+* ```
+*
+* **Example** (Sequencing dependent effects)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, pipe } from "effect"
+*
+* class DiscountRateError extends Data.TaggedError("DiscountRateError")<{}> {}
+*
+* // Function to apply a discount safely to a transaction amount
+* const applyDiscount = (
+*   total: number,
+*   discountRate: number
+* ): Effect.Effect<number, DiscountRateError> =>
+*   discountRate === 0
+*     ? Effect.fail(new DiscountRateError())
+*     : Effect.succeed(total - (total * discountRate) / 100)
+*
+* // Simulated asynchronous task to fetch a transaction amount from database
+* const fetchTransactionAmount = Effect.promise(() => Promise.resolve(100))
+*
+* // Chaining the fetch and discount application using `flatMap`
+* const finalAmount = pipe(
+*   fetchTransactionAmount,
+*   Effect.flatMap((amount) => applyDiscount(amount, 5))
+* )
+*
+* await Effect.runPromise(finalAmount) // => 95
+* ```
+*
+* @see {@link tap} for a version that ignores the result of the effect.
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const flatMap = flatMap$1;
 /**
 * Runs a side effect with the result of an effect without changing the original
 * value.
@@ -8316,6 +8716,61 @@ const asVoid = asVoid$1;
 */
 const catchTag = catchTag$1;
 /**
+* Handles multiple errors in a single block of code using their `_tag` field.
+*
+* **When to use**
+*
+* Use when one recovery step should handle several tagged error types by
+* matching their readonly `_tag` fields.
+*
+* **Details**
+*
+* Pass a handler table whose keys are tags, plus an optional fallback for
+* unmatched errors.
+*
+* The error type must have a readonly `_tag` field to use `catchTags`. This
+* field is used to identify and match errors.
+*
+* **Gotchas**
+*
+* If the cause contains a defect, the handler is skipped and every typed error
+* is converted to a defect, preserving reason order and interrupts. An
+* interruption alongside a typed error does not prevent recovery.
+*
+* **Example** (Handling multiple tagged errors)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect } from "effect"
+*
+* // Define tagged error types
+* class ValidationError extends Data.TaggedError("ValidationError")<{
+*   message: string
+* }> {}
+*
+* class NetworkError extends Data.TaggedError("NetworkError")<{
+*   statusCode: number
+* }> {}
+*
+* // An effect that might fail with multiple error types
+* const program: Effect.Effect<string, ValidationError | NetworkError> =
+*   Effect.fail(new NetworkError({ statusCode: 503 }))
+*
+* // Handle multiple error types at once
+* const handled = Effect.catchTags(program, {
+*   ValidationError: (error) =>
+*     Effect.succeed(`Validation failed: ${error.message}`),
+*   NetworkError: (error) => Effect.succeed(`Network error: ${error.statusCode}`)
+* })
+*
+* Effect.runSync(handled) // => "Network error: 503"
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const catchTags = catchTags$1;
+/**
 * Transforms the failure value of an effect without changing its success value.
 *
 * **When to use**
@@ -8360,6 +8815,103 @@ const catchTag = catchTag$1;
 */
 const mapError = mapError$1;
 /**
+* Discards both the success and failure values of an effect.
+*
+* **When to use**
+*
+* Use when an effect should run for its side effects while both success and
+* failure values are discarded.
+*
+* **Details**
+*
+* Use the `log` option to emit the full {@link Cause} when the effect fails,
+* and `message` to prepend a custom log message.
+* Set `log: "Unhandled"` to read `References.UnhandledLogLevel` when the
+* failure occurs; `undefined` disables logging. Minimum log level filtering
+* still applies.
+*
+* **Gotchas**
+*
+* Defects take precedence over typed errors. If the cause also contains a
+* defect, the failure is not ignored and is propagated with every typed error
+* converted to a defect. An interruption alongside a typed error does not
+* prevent the error from being ignored.
+*
+* **Example** (Discarding success and failure values)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* //      ┌─── Effect<number, string, never>
+* //      ▼
+* const task = Effect.fail("Uh oh!").pipe(Effect.as(5))
+*
+* //      ┌─── Effect<void, never, never>
+* //      ▼
+* const program = task.pipe(Effect.ignore)
+* Effect.runSync(program) // => undefined
+* ```
+*
+* **Example** (Logging failures while ignoring results)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+*
+* const task = Effect.fail("Uh oh!")
+*
+* const program = task.pipe(Effect.ignore)
+* Effect.runSync(program) // => undefined
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const ignore = ignore$1;
+/**
+* Recovers from a typed failure by producing a fallback success value.
+*
+* **Details**
+*
+* If the source effect succeeds, its value is preserved. If it fails in the
+* error channel, `orElseSucceed` evaluates the fallback with that error and
+* succeeds with the returned value, removing the typed error from the returned
+* effect.
+*
+* Defects and interruptions are not recovered by this operator.
+*
+* **Gotchas**
+*
+* If the cause contains a defect, the handler is skipped and every typed error
+* is converted to a defect, preserving reason order and interrupts. An
+* interruption alongside a typed error does not prevent recovery.
+*
+* **Example** (Replacing failures with a value)
+*
+* ```ts import.meta.vitest
+* import { Effect, Exit } from "effect"
+*
+* const validate = (age: number): Effect.Effect<number, string> => {
+*   if (age < 0) {
+*     return Effect.fail("NegativeAgeError")
+*   } else if (age < 18) {
+*     return Effect.fail("IllegalAgeError")
+*   } else {
+*     return Effect.succeed(age)
+*   }
+* }
+*
+* const program = Effect.orElseSucceed(validate(-1), (error) => error === "IllegalAgeError" ? 18 : 0)
+*
+* Effect.runSyncExit(program) // => Exit.succeed(0)
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const orElseSucceed = orElseSucceed$1;
+/**
 * Filters an effect, failing with a custom error if the predicate fails.
 *
 * **Details**
@@ -8391,6 +8943,64 @@ const mapError = mapError$1;
 * @since 2.0.0
 */
 const filterOrFail = filterOrFail$1;
+/**
+* Handles both success and failure cases of an effect without performing side
+* effects.
+*
+* **When to use**
+*
+* Use when you need to fold an `Effect` into a value by handling success and
+* failure differently without triggering side effects.
+*
+* **Details**
+*
+* `match` lets you define custom handlers for both success and failure
+* scenarios. You provide separate functions to handle each case, allowing you
+* to process the result if the effect succeeds, or handle the error if the
+* effect fails.
+*
+* **Gotchas**
+*
+* If the cause contains a defect, the handler is skipped and every typed error
+* is converted to a defect, preserving reason order and interrupts. An
+* interruption alongside a typed error does not prevent recovery.
+*
+* **Example** (Matching success and failure values)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect } from "effect"
+*
+* class ExampleError extends Data.TaggedError("ExampleError")<{ readonly message: string }> {}
+*
+* const success: Effect.Effect<number, ExampleError> = Effect.succeed(42)
+*
+* const program1 = Effect.match(success, {
+*   onFailure: (error) => `failure: ${error.message}`,
+*   onSuccess: (value) => `success: ${value}`
+* })
+*
+* // Run and log the result of the successful effect
+* Effect.runSync(program1) // => "success: 42"
+*
+* const failure: Effect.Effect<number, ExampleError> = Effect.fail(
+*   new ExampleError({ message: "Uh oh!" })
+* )
+*
+* const program2 = Effect.match(failure, {
+*   onFailure: (error) => `failure: ${error.message}`,
+*   onSuccess: (value) => `success: ${value}`
+* })
+*
+* // Run and log the result of the failed effect
+* Effect.runSync(program2) // => "failure: Uh oh!"
+* ```
+*
+* @see {@link matchEffect} if you need to perform side effects in the handlers.
+* @stability stable
+* @category pattern matching
+* @since 2.0.0
+*/
+const match = match$2;
 /**
 * Handles both success and failure by running effectful handlers.
 *
@@ -8755,26 +9365,38 @@ const fields = (value) => isObject(value) ? value : {};
 const finite = (value) => isNumber(value) && Number.isFinite(value) ? some(value) : none();
 /** A string, else none. */
 const text = (value) => isString(value) ? some(value) : none();
+/** A boolean, else none. */
+const bool = (value) => isBoolean(value) ? some(value) : none();
+/** A list whose every item `read` accepts, else none. */
+const listOf$2 = (value, read) => Array.isArray(value) ? all(value.map(read)) : none();
+/** A string or null, else none. */
+const textOrNull = (value) => value === null ? some(null) : text(value);
 
 // src/settings.ts
 const DEFAULT_SETTINGS = {
 	folders: [],
 	depth: 4,
-	skip: ["node_modules", ".cache"]
+	skip: ["node_modules", ".cache"],
+	hidden: [],
+	noWrapper: false
 };
 const isFolderEntry = (value) => isObject(value) && isString(value.path) && (value.name === void 0 || isString(value.name));
 const listOf$1 = (value, item) => Array.isArray(value) && value.every(item);
 /** The file's shape, or what is wrong with it. A wrong shape is never half read. */
 const readSettingsFile = (value) => {
 	if (!isObject(value)) return fail$2("expected a JSON object");
-	const { folders, depth, skip } = value;
+	const { folders, depth, skip, hidden, noWrapper } = value;
 	if (folders !== void 0 && !listOf$1(folders, isFolderEntry)) return fail$2("\"folders\" must be a list of { \"name\", \"path\" }");
 	if (depth !== void 0 && isNone(finite(depth))) return fail$2("\"depth\" must be a number");
 	if (skip !== void 0 && !listOf$1(skip, isString)) return fail$2("\"skip\" must be a list of folder names");
+	if (hidden !== void 0 && !listOf$1(hidden, isString)) return fail$2("\"hidden\" must be a list of repo folders");
+	if (noWrapper !== void 0 && !isBoolean(noWrapper)) return fail$2("\"noWrapper\" must be true or false");
 	return succeed$3({
 		...folders === void 0 ? {} : { folders },
 		...isNumber(depth) ? { depth } : {},
-		...skip === void 0 ? {} : { skip }
+		...skip === void 0 ? {} : { skip },
+		...hidden === void 0 ? {} : { hidden },
+		...noWrapper === void 0 ? {} : { noWrapper }
 	});
 };
 /** A folder's last path segment, the name a folder gets when it has none. */
@@ -8792,7 +9414,9 @@ const normalize = (file) => ({
 		}];
 	}),
 	depth: file.depth === void 0 ? DEFAULT_SETTINGS.depth : clampDepth(file.depth),
-	skip: file.skip === void 0 ? DEFAULT_SETTINGS.skip : file.skip.map((name) => name.trim()).filter((name) => name !== "")
+	skip: file.skip === void 0 ? DEFAULT_SETTINGS.skip : file.skip.map((name) => name.trim()).filter((name) => name !== ""),
+	hidden: (file.hidden ?? DEFAULT_SETTINGS.hidden).filter((root) => root !== ""),
+	noWrapper: file.noWrapper ?? DEFAULT_SETTINGS.noWrapper
 });
 /**
 * The settings in `text` (the file's contents, null when there is none). A file that
@@ -8804,7 +9428,7 @@ const parseSettings = (text, fileName) => {
 		settings: DEFAULT_SETTINGS,
 		error: none()
 	};
-	return match$3(flatMap$1(parseJson(text), readSettingsFile), {
+	return match$4(flatMap$2(parseJson(text), readSettingsFile), {
 		onSuccess: (file) => ({
 			settings: normalize(file),
 			error: none()
@@ -8816,14 +9440,16 @@ const parseSettings = (text, fileName) => {
 	});
 };
 /** What the file holds: a stable key order and two-space indent, so it reads and diffs well. */
-const serializeSettings = ({ folders, depth, skip }) => {
+const serializeSettings = ({ folders, depth, skip, hidden, noWrapper }) => {
 	const ordered = {
 		folders: folders.map(({ name, path }) => ({
 			name,
 			path
 		})),
 		depth,
-		skip
+		skip,
+		hidden,
+		noWrapper
 	};
 	return `${JSON.stringify(ordered, null, 2)}\n`;
 };
@@ -8845,6 +9471,21 @@ const planImport = (current, legacy, settled) => {
 		write: some(serializeSettings(old.settings)),
 		settled: true
 	};
+};
+/**
+* The settings file's text with the repo at `root` hidden, from its text now (null when
+* there is none). A file that doesn't parse is never replaced: the result is its error
+* instead, so a hand edit in progress is never lost to the defaults. A repo already
+* hidden leaves the text as it is.
+*/
+const hideRepo = (current, root, fileName) => {
+	const { settings, error } = parseSettings(current, fileName);
+	if (isSome(error)) return fail$2(error.value);
+	if (current !== null && settings.hidden.includes(root)) return succeed$3(current);
+	return succeed$3(serializeSettings({
+		...settings,
+		hidden: [...settings.hidden, root]
+	}));
 };
 
 // src/repos.ts
@@ -8888,6 +9529,8 @@ const reposFrom = (scanned, owners, folders, home) => Array.from(new Map([...sca
 	count: n,
 	group: groupOf(root, folders, home)
 })).sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
+/** `repos` without the hidden ones (by main checkout folder), in their order. */
+const withoutHidden = (repos, hidden) => repos.filter((repo) => !hidden.includes(repo.root));
 
 // src/commands.ts
 /** The scan's arguments for these settings. */
@@ -8951,6 +9594,120 @@ done | sort -u`;
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
 /** Lists the worktrees of the repo at $1 with their CI. */
 const CI_SCRIPT = `${LIST_SCRIPT} --full`;
+/** `word` as one literal shell word: single-quoted, with each `'` closed, escaped and reopened. */
+const quote = (word) => `'${word.replaceAll("'", "'\\''")}'`;
+const wt = ({ noWrapper }) => noWrapper ? "command wt" : "wt";
+/** Removes `branches` (names or worktree paths) of the repo whose main checkout is `main`. */
+const removeScript = (main, branches, options) => [
+	wt(options),
+	"-C",
+	quote(main),
+	"remove",
+	"--foreground",
+	...branches.map(quote)
+].join(" ");
+/**
+* Merges the worktree into the default branch, then removes it. The merge runs inside
+* the worktree; the removal runs from the main checkout and waits until it is done, so
+* the worktree's folder is gone when the job ends.
+*/
+const mergeScript = (target, mode, options) => [[
+	wt(options),
+	"-C",
+	quote(target.path),
+	"merge",
+	"--no-remove"
+].concat(mode === "keep" ? ["--no-squash"] : []).join(" "), removeScript(target.main, [target.branch], options)].join(" && ");
+/**
+* Removes every batch, each repo's name in bold first. A repo that fails doesn't stop the rest; the script fails at the
+* end if any did. Needs an sh-compatible shell.
+*/
+const cleanupScript = (batches, options) => [
+	"fail=0",
+	...batches.flatMap((batch) => [`printf '\\033[1m%s\\033[0m\\n' ${quote(batch.main)}`, `${removeScript(batch.main, batch.branches, options)} || fail=1`]),
+	"[ \"$fail\" -eq 0 ]"
+].join("\n");
+/** wt's own names for a branch: `^`, `-`, `@`, `pr:N`, `mr:N` or a PR/MR link. */
+const isShortcut = (name) => /^([\^@-]|(pr|mr):\d+|https?:\/\/\S+)$/.test(name);
+/**
+* Switches to the worktree for `name`, creating the branch and worktree when needed,
+* and writes wt's JSON answer to `out`. A branch that exists locally or on origin is
+* switched to; any other name is created from the base. Shortcuts go to wt unchanged.
+*/
+const newScript = ({ main, name, base, out }) => {
+	const switchTo = (args) => [
+		"wt",
+		"-C",
+		quote(main),
+		"switch",
+		...args,
+		"--no-cd",
+		"--format=json",
+		">",
+		quote(out)
+	].join(" ");
+	if (isShortcut(name)) return switchTo([quote(name)]);
+	const exists = ["heads", "remotes/origin"].map((refs) => `git -C ${quote(main)} show-ref --verify --quiet ${quote(`refs/${refs}/${name}`)}`).join(" || ");
+	const create = [
+		"--create",
+		quote(name),
+		...match$5(base, {
+			onNone: () => [],
+			onSome: (b) => ["--base", quote(b)]
+		})
+	];
+	return `if ${exists}; then\n  ${switchTo([quote(name)])}\nelse\n  ${switchTo(create)}\nfi`;
+};
+/**
+* Runs a job under `sh`. $1: the person's shell; $2: the job's script, run in that shell
+* as a login, interactive shell so its own `wt` and environment apply. On success it says
+* Done and ends a second later; on failure it shows the exit code and waits for Enter, so
+* the job's window stays open to be read. It exits with the job's code.
+*/
+const JOB_SCRIPT = `"$1" -l -i -c "$2"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  printf '\\n\\033[32mDone.\\033[0m\\n'
+  sleep 1
+else
+  printf '\\n\\033[31mFailed (exit %s). Press Enter to close.\\033[0m\\n' "$rc"
+  read -r _
+fi
+exit "$rc"`;
+/** Prints each folder argument that no longer exists, one per line. */
+const GONE_SCRIPT = `for dir in "$@"; do [ -e "$dir" ] || printf '%s\\n' "$dir"; done`;
+/** `hc` arguments that start `job` as a background terminal, printing its address as JSON. */
+const jobArgs = ({ cwd, shell, body }) => [
+	"run",
+	"--json",
+	"--bg",
+	"--no-parent",
+	"--cwd",
+	cwd,
+	"--",
+	"sh",
+	"-c",
+	JOB_SCRIPT,
+	SCRIPT_NAME,
+	shell,
+	body
+];
+const json = (output) => getSuccess(parseJson(output));
+/** The terminal address `hc run --json` printed for a started job. */
+const startedAddress = (output) => flatMap$3(json(output), (value) => text(at(value, "address")));
+/** `hc wait --json` output read. A job ended by a signal has no exit code: it counts as 1. */
+const waitResult = (output) => match$5(filter(json(output), isObject), {
+	onNone: () => ({ _tag: "Lost" }),
+	onSome: (value) => value.ended === true ? {
+		_tag: "Ended",
+		code: getOrElse(finite(value.exit_code), () => 1)
+	} : { _tag: "Running" }
+});
+/** The worktree `wt switch --format=json` switched to or made. */
+const switchedTo = (output) => flatMap$3(json(output), (value) => all({
+	branch: text(at(value, "branch")),
+	path: text(at(value, "path"))
+}));
 
 // src/files.ts
 /** There is no file at `path`. */
@@ -8978,9 +9735,17 @@ var Files = class Files extends Service()("iangregsondev-worktrunk/Files") {
 			onSuccess: () => fail(new WriteConflict({ path })),
 			onFailure: () => fail(failed)
 		}))));
+		const replace = (path, text, expected) => tryPromise({
+			try: () => api.writeTextFile(path, text, expected),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(asVoid, catchTag("FileError", (failed) => option(read(path)).pipe(flatMap((now) => contains(now, expected) ? fail(failed) : fail(new WriteConflict({ path }))))));
 		return succeed$1(Files, Files.of({
 			read,
-			create
+			create,
+			replace
 		}));
 	};
 };
@@ -8988,39 +9753,47 @@ var Files = class Files extends Service()("iangregsondev-worktrunk/Files") {
 // src/layout.ts
 /**
 * Every role a copy of the worktrunk mod plays, as its props' `role` names it. One mod
-* folder serves them all: a layout block with no role shows the side `panel`, and one
-* with `{ role: "toggle" }` the tab-bar button that shows and hides it.
+* folder serves them all: layout blocks show the side `panel` (no role) and the tab-bar
+* `toggle` that shows and hides it; overlays are a `menu`, a `confirm` dialog, the `new`
+* worktree dialog, and a job window's `titlebar`.
 */
-const ROLES = ["panel", "toggle"];
+const ROLES = [
+	"panel",
+	"toggle",
+	"menu",
+	"confirm",
+	"new",
+	"titlebar"
+];
 /** The role a copy plays when its props give none: the side panel. */
 const PANEL_ROLE = "panel";
-/** The tab-bar button that shows and hides the panel. */
-const TOGGLE_ROLE = "toggle";
 /**
-* The role a copy of the mod plays, from the props its layout block gave
-* (`{ role: "toggle" }`): no role means the panel.
+* The role a copy of the mod plays, from the props its layout block or overlay gave
+* (`{ role: "toggle" }`): no role means the panel, and a name that isn't a role is none.
 */
-const roleOf = (props) => match$4(text(at(props, "role")), {
+const roleOf = (props) => match$5(text(at(props, "role")), {
 	onNone: () => some(PANEL_ROLE),
 	onSome: (role) => fromNullishOr(ROLES.find((known) => known === role))
 });
-const findIn = (node, mod, hiddenAbove) => {
+const findIn = (node, mod, role, hiddenAbove) => {
 	const hidden = hiddenAbove || at(node, "hidden") === true;
-	if (at(node, "content", "mod") === mod && contains(roleOf(at(node, "content", "props")), "panel")) return map$3(text(at(node, "id")), (id) => ({
+	if (at(node, "content", "mod") === mod && contains(roleOf(at(node, "content", "props")), role)) return map$3(text(at(node, "id")), (id) => ({
 		id,
 		hidden
 	}));
 	const children = fields(node).children;
-	return (Array.isArray(children) ? children : []).reduce((found, child) => isSome(found) ? found : findIn(child, mod, hidden), none());
+	return (Array.isArray(children) ? children : []).reduce((found, child) => isSome(found) ? found : findIn(child, mod, role, hidden), none());
 };
 /**
 * The first block in `layout` that shows `mod` as the panel, with whether it is hidden.
 * Blocks showing the mod in another role (the tab-bar toggle) are skipped.
 */
-const findModBlock = (layout, mod) => findIn(layout, mod, false);
+const findModBlock = (layout, mod) => findRoleBlock(layout, mod, PANEL_ROLE);
+/** The first block in `layout` that shows `mod` in `role`, with whether it is hidden. */
+const findRoleBlock = (layout, mod, role) => findIn(layout, mod, role, false);
 
 // src/sync.ts
-const parseRecord = (raw) => flatMap$2(getSuccess(parseJson(raw)), (json) => all({
+const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all({
 	layout: text(at(json, "layout")),
 	version: text(at(json, "version"))
 }));
@@ -9030,7 +9803,7 @@ const parseRecord = (raw) => flatMap$2(getSuccess(parseJson(raw)), (json) => all
 * the panel last showed this toast for, so it shows once per version. None when there is
 * no readable record, the versions match, or the installed version is unknown.
 */
-const syncNotice = (record, installed, told) => record.pipe(flatMap$2(parseRecord), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
+const syncNotice = (record, installed, told) => record.pipe(flatMap$3(parseRecord), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
 	title: "Herdr updated: run herdr:sync",
 	body: `Your "${built.layout}" layout was built from Herdr ${built.version}; Herdr is now ${installed}. Run \`vp run herdr:sync\` in herdr-mods.`
 })));
@@ -9099,7 +9872,7 @@ const itemsOf = (list) => {
 	return Array.isArray(items) ? succeed$3(items) : fail$2("wt list printed no list of worktrees");
 };
 /** The worktrees in `wt list --format=json` output, in wt's order, or why it didn't parse. */
-const parseList = (output) => parseJson(output).pipe(flatMap$1((list) => map$2(itemsOf(list), (items) => {
+const parseList = (output) => parseJson(output).pipe(flatMap$2((list) => map$2(itemsOf(list), (items) => {
 	const asked = at(list, "collected", "ci") === true;
 	return items.flatMap((item) => toArray(toWorktree(item, asked)));
 })));
@@ -9126,9 +9899,11 @@ var Shell = class Shell extends Service()("iangregsondev-worktrunk/Shell") {
 			});
 			return run;
 		});
+		const hc = (args) => use((herdr) => herdr.hc([...args]));
 		return succeed$1(Shell, Shell.of({
 			use,
-			exec
+			exec,
+			hc
 		}));
 	};
 };
@@ -9184,6 +9959,68 @@ const failureText = (error) => {
 const causeText = (cause) => cause instanceof Error ? cause.message : String(cause);
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
+const loginShell = fn("loginShell")(function* () {
+	return (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""]).pipe(map((run) => run.stdout), orElseSucceed(() => ""))).trim() || "/bin/sh";
+});
+/** `hc run` printed no terminal address: the job never started. `reason` says why. */
+var JobNotStarted = class extends TaggedError("JobNotStarted") {};
+/** Starts `job` as a background terminal; its address, for waiting on and stopping it. */
+const startJob = fn("startJob")(function* (job) {
+	const run = yield* (yield* Shell).hc(jobArgs(job));
+	return yield* fromOption(startedAddress(run.stdout)).pipe(mapError(() => new JobNotStarted({ reason: lastLine(run.stderr) || "hc printed no terminal address" })));
+});
+/**
+* Waits for the job in terminal `addr` to end: its exit code; none when it was lost (its
+* terminal is gone, or hc gave no answer). Each wait is hc's own, a minute at most, so
+* nothing here waits on a clock Herdr doesn't have.
+*/
+const waitForJob = (addr) => gen(function* () {
+	const run = yield* (yield* Shell).hc([
+		"wait",
+		addr,
+		"--json",
+		"--timeout",
+		"60"
+	]);
+	const seen = waitResult(run.stdout);
+	switch (seen._tag) {
+		case "Ended": return some(seen.code);
+		case "Lost": return none();
+		case "Running": return yield* waitForJob(addr);
+	}
+});
+/** Which of `folders` no longer exist. */
+const goneFolders = fn("goneFolders")(function* (folders) {
+	if (folders.length === 0) return [];
+	return (yield* runScript("the removed folders' check", GONE_SCRIPT, folders)).stdout.split("\n").filter((line) => line !== "");
+});
+/** Stops the job in terminal `addr`. */
+const stopJob = fn("stopJob")(function* (addr) {
+	yield* (yield* Shell).hc(["kill", addr]);
+});
+/** Shows `path` in the Finder. */
+const reveal = fn("reveal")(function* (path) {
+	yield* (yield* Shell).exec("open", [path]);
+});
+/** A new private temp folder (`mktemp -d`), for a job's answer file. */
+const makeTempDir = fn("makeTempDir")(function* () {
+	const dir = (yield* (yield* Shell).exec("mktemp", ["-d"])).stdout.trim();
+	if (dir === "") return yield* new CommandFailed({
+		command: "mktemp",
+		code: 0,
+		stderr: "mktemp printed no folder"
+	});
+	return dir;
+});
+/** Removes the folder at `dir` and everything in it. */
+const removeDir = fn("removeDir")(function* (dir) {
+	yield* (yield* Shell).exec("rm", ["-rf", dir]);
+});
+/** Removes the ended job's terminal from herdr-core. */
+const removeTerminal = fn("removeTerminal")(function* (addr) {
+	yield* (yield* Shell).hc(["rm", addr]);
+});
 
 // src/load.ts
 /**
@@ -9220,14 +10057,16 @@ const defaultsBecause = (what, failed, settled) => ({
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
-* repos the open spaces are in (`places`). A failure is its one-line reason.
+* repos the open spaces are in (`places`), less the hidden ones. A failure is its
+* one-line reason.
 */
 const findRepos = fn("findRepos")(function* (settings, home, places, lastScan) {
 	const scanned = isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
 	const owners = yield* reposOf(places);
+	const repos = reposFrom(scanned, owners, settings.folders, home);
 	return {
 		scanned,
-		repos: reposFrom(scanned, owners, settings.folders, home)
+		repos: withoutHidden(repos, settings.hidden)
 	};
 }, asReason);
 /** The worktrees of the repo at `root`, or the one-line reason the read failed. */
@@ -9256,10 +10095,281 @@ const syncToast = fn("syncToast")(function* (path, installed, told) {
 	const record = yield* option(disk.read(path));
 	return syncNotice(record, installed, told);
 });
+/** The settings file doesn't parse, so it is never written over; `reason` says why. */
+var SettingsBroken = class extends TaggedError("SettingsBroken") {};
+/**
+* Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
+* made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
+*/
+const hideInSettings = fn("hideInSettings")(function* (files, root) {
+	const disk = yield* Files;
+	const current = yield* disk.read(files.path).pipe(catchTag("FileMissing", () => succeed(null)));
+	const next = yield* fromResult(hideRepo(current, root, files.name)).pipe(mapError((reason) => new SettingsBroken({ reason })));
+	if (next === current) return succeed$3(void 0);
+	yield* current === null ? disk.create(files.path, next) : disk.replace(files.path, next, current);
+	return succeed$3(void 0);
+}, (effect, files) => effect.pipe(catchTags({
+	SettingsBroken: (broken) => succeed(fail$2(broken.reason)),
+	WriteConflict: () => succeed(fail$2(`${files.name} changed while hiding the repo: try again.`)),
+	FileError: (failed) => succeed(fail$2(`${files.name}: couldn't save it (${causeText(failed.cause)})`))
+})));
+/**
+* Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
+* gets its address as soon as it starts (to open its window), then this waits for it to
+* end, removes its terminal and checks which of its folders are gone.
+*/
+const runJob = fn("runJob")(function* (spec, shown) {
+	const shell = yield* loginShell();
+	const addr = yield* startJob({
+		cwd: spec.cwd,
+		shell,
+		body: spec.body
+	});
+	yield* sync(() => shown(addr));
+	const code = yield* waitForJob(addr).pipe(orElseSucceed(() => none()));
+	yield* ignore(removeTerminal(addr));
+	return {
+		_tag: "Ended",
+		code,
+		gone: yield* goneFolders(spec.gone).pipe(orElseSucceed(() => []))
+	};
+}, catchTags({
+	JobNotStarted: (failed) => succeed({
+		_tag: "NotStarted",
+		reason: failed.reason
+	}),
+	ShellError: (failed) => succeed({
+		_tag: "NotStarted",
+		reason: failureText(failed)
+	})
+}));
+/**
+* Switches to or creates the worktree for `name` in the repo at `main` as a job (see
+* `runJob`), its JSON answer written to a private temp folder that is removed after.
+*/
+const newWorktree = fn("newWorktree")(function* (target, shown) {
+	const disk = yield* Files;
+	const dir = yield* makeTempDir().pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
+	const out = `${dir}/switch.json`;
+	const spec = {
+		title: `New worktree ${target.name}`,
+		cwd: target.main,
+		body: newScript({
+			...target,
+			base: fromNullishOr(target.base),
+			out
+		}),
+		gone: []
+	};
+	const outcome = yield* runJob(spec, shown);
+	const text = outcome._tag === "Ended" && contains(outcome.code, 0) ? yield* option(disk.read(out)) : none();
+	yield* ignore(removeDir(dir));
+	return {
+		outcome,
+		switched: flatMap$3(text, switchedTo)
+	};
+}, catchTag("JobNotStarted", (failed) => succeed({
+	outcome: {
+		_tag: "NotStarted",
+		reason: failed.reason
+	},
+	switched: none()
+})));
+
+// src/menus.ts
+const item = (label, action, danger = false) => ({
+	label,
+	danger,
+	action
+});
+const mergeOf = (root, worktree, branch, mode) => ({
+	_tag: "Merge",
+	target: {
+		main: root,
+		path: worktree.path,
+		branch
+	},
+	mode,
+	dirty: worktree.dirty
+});
+/** Removing a linked worktree: by its branch, or by its folder when it has none. */
+const removeOf = (root, worktree) => ({
+	_tag: "Remove",
+	target: {
+		main: root,
+		path: worktree.path,
+		branch: getOrElse(worktree.branch, () => worktree.path)
+	},
+	dirty: worktree.dirty
+});
+/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
+const rowMenu = (root, worktree, click) => {
+	const remove = item("Remove…", removeOf(root, worktree), true);
+	const linked = worktree.state._tag === "Main" ? [] : match$5(worktree.branch, {
+		onNone: () => [remove],
+		onSome: (branch) => [
+			item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
+			item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
+			remove
+		]
+	});
+	return [
+		item("Open", {
+			_tag: "Open",
+			click
+		}),
+		...linked,
+		item("Copy path", {
+			_tag: "CopyPath",
+			path: worktree.path
+		}),
+		item("Reveal in Finder", {
+			_tag: "Reveal",
+			path: worktree.path
+		})
+	];
+};
+/** One menu row's height, in px. */
+const ITEM_HEIGHT = 30;
+/** The menu's title line plus its padding, in px. */
+const MENU_CHROME = 40;
+/** A menu's height for `items` rows. */
+const menuHeight = (items) => 40 + items * 30;
+/** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
+const cleanupAction = (repos) => {
+	const found = repos.flatMap(({ root, worktrees }) => {
+		const merged = worktrees.filter((w) => w.state._tag === "Merged");
+		return merged.length === 0 ? [] : [{
+			root,
+			merged
+		}];
+	});
+	if (found.length === 0) return none();
+	const all = found.flatMap(({ merged }) => merged);
+	return some({
+		_tag: "Cleanup",
+		batches: found.map(({ root, merged }) => ({
+			main: root,
+			branches: merged.map((w) => getOrElse(w.branch, () => w.path))
+		})),
+		paths: all.map((w) => w.path),
+		dirty: all.filter((w) => w.dirty).length
+	});
+};
+/** The right-click menu of the repo whose main checkout is `root`. */
+const repoMenu = (root, worktrees) => [
+	item("New worktree…", {
+		_tag: "New",
+		main: root
+	}),
+	...toArray(cleanupAction([{
+		root,
+		worktrees
+	}])).map((action) => item(`Clean up ${action.paths.length} merged…`, action, true)),
+	item("Refresh", { _tag: "Refresh" }),
+	item("Reveal in Finder", {
+		_tag: "Reveal",
+		path: root
+	}),
+	item("Hide this repo", {
+		_tag: "Hide",
+		root
+	})
+];
+/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
+const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([root, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
+	root,
+	worktree
+})))[0]);
+/**
+* Removing the merged worktrees among those at `paths`, batched by repo in the order
+* their repos first appear; none when none of them is merged.
+*/
+const cleanupFor = (lists, paths) => {
+	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
+	const roots = Array.from(new Set(found.map(({ root }) => root)));
+	return cleanupAction(roots.map((root) => ({
+		root,
+		worktrees: found.filter((f) => f.root === root).map((f) => f.worktree)
+	})));
+};
+const DIRTY_LINE = "It has uncommitted changes: wt stops rather than lose them.";
+const SPACES_LINE = "Spaces open on a removed worktree close.";
+/** What to ask before `action`; none for actions that remove or merge nothing. */
+const confirmFor = (action) => {
+	switch (action._tag) {
+		case "Merge": return some({
+			title: `Merge ${action.target.branch} into main?`,
+			lines: [
+				action.mode === "squash" ? "Its commits become one commit on main." : "Every commit is kept, rebased onto main.",
+				"Then the worktree is removed, and its branch with it.",
+				...action.dirty ? ["Its uncommitted changes are committed first."] : [],
+				SPACES_LINE
+			],
+			go: "Merge",
+			danger: false
+		});
+		case "Remove": return some({
+			title: `Remove ${action.target.branch === action.target.path ? lastSegment(action.target.path) : action.target.branch}?`,
+			lines: [
+				"The worktree's folder is removed; its branch too, if it is merged.",
+				...action.dirty ? [DIRTY_LINE] : [],
+				SPACES_LINE
+			],
+			go: "Remove",
+			danger: true
+		});
+		case "Cleanup": {
+			const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
+			return some({
+				title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
+				lines: [
+					...action.batches.map((b) => `${lastSegment(b.main)}: ${b.branches.join(", ")}`),
+					...action.dirty > 0 ? [`${action.dirty} with uncommitted changes: wt stops rather than lose them.`] : [],
+					SPACES_LINE
+				],
+				go: "Remove",
+				danger: true
+			});
+		}
+		default: return none();
+	}
+};
+/** The confirm dialog's height for `lines` lines of text, in px, never taller than 560. */
+const dialogHeight = (lines) => Math.min(560, 132 + lines * 22);
+/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
+const jobFor = (action, options) => {
+	switch (action._tag) {
+		case "Merge": return some({
+			title: `Merge ${action.target.branch} into main`,
+			cwd: action.target.main,
+			body: mergeScript(action.target, action.mode, options),
+			gone: [action.target.path]
+		});
+		case "Remove": return some({
+			title: `Remove ${action.target.branch}`,
+			cwd: action.target.main,
+			body: removeScript(action.target.main, [action.target.branch], options),
+			gone: [action.target.path]
+		});
+		case "Cleanup": return map$3(fromNullishOr(action.batches[0]), (first) => ({
+			title: `Clean up ${action.paths.length} merged`,
+			cwd: first.main,
+			body: cleanupScript(action.batches, options),
+			gone: action.paths
+		}));
+		default: return none();
+	}
+};
+/** What to say when a job is asked for while `running` (its title) still runs. */
+const busyNotice = (running) => ({
+	title: "worktrunk is busy",
+	body: `Wait for "${running}" to finish.`
+});
 
 // src/reads.ts
 /** A repo's list after a read: the new worktrees, or the old ones with the read's error. */
-const foldList = (old, read) => match$3(read, {
+const foldList = (old, read) => match$4(read, {
 	onSuccess: (worktrees) => ({
 		_tag: "Read",
 		worktrees,
@@ -9267,7 +10377,7 @@ const foldList = (old, read) => match$3(read, {
 	}),
 	onFailure: (error) => ({
 		_tag: "Read",
-		worktrees: match$4(old, {
+		worktrees: match$5(old, {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		}),
@@ -9275,13 +10385,13 @@ const foldList = (old, read) => match$3(read, {
 	})
 });
 /** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
-const foldCi = (old, read) => match$3(read, {
+const foldCi = (old, read) => match$4(read, {
 	onSuccess: (worktrees) => ({
 		byPath: new Map(worktrees.map((w) => [w.path, w.ci])),
 		error: none()
 	}),
 	onFailure: (error) => ({
-		byPath: match$4(old, {
+		byPath: match$5(old, {
 			onNone: () => /* @__PURE__ */ new Map(),
 			onSome: (ci) => ci.byPath
 		}),
@@ -9293,7 +10403,7 @@ const foldCi = (old, read) => match$3(read, {
 * when the settings change what to scan (`key`), and once the last scan is older than
 * `every` ms.
 */
-const scanDue = (last, now) => match$4(last, {
+const scanDue = (last, now) => match$5(last, {
 	onNone: () => true,
 	onSome: (scan) => now.forced || now.key !== scan.key || now.now - scan.at > now.every
 });
@@ -9302,7 +10412,7 @@ const scanDue = (last, now) => match$4(last, {
 * in ms; none before the first, or once something asks for fresh CI), and once the last
 * is older than `every` ms.
 */
-const ciDue = (last, { now, every }) => match$4(last, {
+const ciDue = (last, { now, every }) => match$5(last, {
 	onNone: () => true,
 	onSome: (at) => now - at > every
 });
@@ -9390,7 +10500,7 @@ const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
 */
 const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) => {
 	const longest = paths.filter((path) => isUnder(place, path)).reduce((best, path) => isSome(best) && best.value.length >= path.length ? best : some(path), none());
-	return match$4(longest, {
+	return match$5(longest, {
 		onNone: () => [],
 		onSome: (path) => [{
 			path,
@@ -9402,6 +10512,17 @@ const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) =
 	if (held && (held.active || !space.active)) return on;
 	return new Map([...on, [path, space]]);
 }, /* @__PURE__ */ new Map());
+/**
+* The ids of the spaces on this machine whose folder (where the space was made) or
+* place (where its first terminal is now) is one of the `gone` folders, or inside one.
+* Both count because wt moves a removed worktree into a trash folder and a shell inside
+* it moves too, so the place alone can point somewhere that still exists.
+*/
+const spacesInGone = (spaces, panes, gone) => {
+	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
+	const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+	return spaces.filter((space) => space.machine === null).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
+};
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -9440,7 +10561,7 @@ const age = (at, now) => {
 	return `${Math.round(seconds / 86400 / 30)}mo`;
 };
 const mainParts = (worktree) => {
-	const sync = match$4(worktree.upstream, {
+	const sync = match$5(worktree.upstream, {
 		onNone: () => [],
 		onSome: (up) => [...up.behind > 0 ? [`↓${up.behind} behind remote`] : [], ...up.ahead > 0 ? [`↑${up.ahead} to push`] : []]
 	});
@@ -9464,7 +10585,7 @@ const stateParts = (worktree) => {
 	const { state } = worktree;
 	switch (state._tag) {
 		case "Main": return mainParts(worktree);
-		case "Merged": return [getOrElse(flatMap$2(state.reason, (r) => fromNullishOr(MERGE_REASONS[r])), () => "merged")];
+		case "Merged": return [getOrElse(flatMap$3(state.reason, (r) => fromNullishOr(MERGE_REASONS[r])), () => "merged")];
 		default: return workParts(worktree);
 	}
 };
@@ -9505,7 +10626,7 @@ const rowView = (snapshot, repo, worktree, space) => ({
 	current: exists(space, (s) => s.active),
 	subline: subline(worktree, snapshot.now),
 	ci: badgeOf(ciOf(snapshot, repo, worktree)),
-	click: match$4(space, {
+	click: match$5(space, {
 		onNone: () => ({
 			_tag: "New",
 			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse(worktree.branch, () => lastSegment(worktree.path)),
@@ -9518,9 +10639,9 @@ const rowView = (snapshot, repo, worktree, space) => ({
 	})
 });
 const newestFirst = (a, b) => getOrElse(b.committedAt, () => 0) - getOrElse(a.committedAt, () => 0);
-const statusOf = (list) => match$4(list, {
+const statusOf = (list) => match$5(list, {
 	onNone: () => ({ _tag: "Reading" }),
-	onSome: (l) => match$4(l.error, {
+	onSome: (l) => match$5(l.error, {
 		onNone: () => ({ _tag: "Ok" }),
 		onSome: (text) => ({
 			_tag: "Error",
@@ -9530,25 +10651,25 @@ const statusOf = (list) => match$4(list, {
 });
 const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repo.root));
 /** How many worktrees: wt list's answer once read, else the scan's. */
-const countOf = (repo, list) => match$4(list, {
+const countOf = (repo, list) => match$5(list, {
 	onNone: () => repo.count,
 	onSome: (l) => l.worktrees.length > 0 ? l.worktrees.length : repo.count
 });
 /** The search, lowercased; none when the box is empty. */
 const queryOf = (snapshot) => liftPredicate(snapshot.search.trim().toLowerCase(), (q) => q !== "");
 /** Does the search let this worktree through: its branch or its repo's name holds the text. */
-const matches = (query, repo, worktree) => match$4(query, {
+const matches = (query, repo, worktree) => match$5(query, {
 	onNone: () => true,
 	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q) || exists(worktree.branch, (branch) => branch.toLowerCase().includes(q))
 });
-const nameMatches = (query, repo) => match$4(query, {
+const nameMatches = (query, repo) => match$5(query, {
 	onNone: () => true,
 	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q)
 });
 const noMatch = (query) => `Nothing matches "${query}".`;
 const repoView = (repo, snapshot, places) => {
 	const list = listOf(snapshot, repo);
-	const all = match$4(list, {
+	const all = match$5(list, {
 		onNone: () => [],
 		onSome: (l) => l.worktrees
 	});
@@ -9565,7 +10686,7 @@ const repoView = (repo, snapshot, places) => {
 		group: repo.group === "Other" ? none() : some(repo.group),
 		count: map$3(list, () => countOf(repo, list)),
 		status: statusOf(list),
-		ciNote: map$3(flatMap$2(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
+		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
 		folded,
 		main: folded ? [] : worktrees.filter((w) => isNone(kindOf(w))).map(toRow),
 		sections: folded ? [] : SECTIONS.flatMap(([kind, label]) => {
@@ -9605,7 +10726,7 @@ const orderGroups = (names, settings) => {
 */
 const selectedGroup = ({ repos, discovered, view }) => filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
 /** The repos the selected group chip lets through, in order: the ones worth reading. */
-const reposInGroup = (scope) => match$4(selectedGroup(scope), {
+const reposInGroup = (scope) => match$5(selectedGroup(scope), {
 	onNone: () => scope.repos,
 	onSome: (group) => scope.repos.filter((repo) => repo.group === group)
 });
@@ -9634,7 +10755,7 @@ const treeBody = (snapshot, places) => {
 	const repos = reposInGroup(snapshot).filter((repo) => !snapshot.view.only || countOf(repo, listOf(snapshot, repo)) > 1).filter((repo) => nameMatches(query, repo) || exists(listOf(snapshot, repo), (l) => l.worktrees.some((w) => matches(query, repo, w))));
 	if (repos.length === 0) return {
 		_tag: "Message",
-		text: match$4(query, {
+		text: match$5(query, {
 			onSome: noMatch,
 			onNone: () => "No repos with worktrees here. Choose All repos to see the rest."
 		})
@@ -9648,7 +10769,7 @@ const flatBody = (snapshot, places, show) => {
 	const repos = reposInGroup(snapshot);
 	const query = queryOf(snapshot);
 	const found = repos.flatMap((repo) => {
-		const worktrees = match$4(listOf(snapshot, repo), {
+		const worktrees = match$5(listOf(snapshot, repo), {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		});
@@ -9661,7 +10782,7 @@ const flatBody = (snapshot, places, show) => {
 	});
 	if (found.length === 0) {
 		const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
-		const empty = match$4(query, {
+		const empty = match$5(query, {
 			onSome: noMatch,
 			onNone: () => FLAT_EMPTY[show]
 		});
@@ -9726,6 +10847,165 @@ const readViewState = (value) => {
 };
 /** The folded repos and groups record; entries that aren't true or false are left out. */
 const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).flatMap(([key, folded]) => isBoolean(folded) ? [[key, folded]] : []));
+const oneOf = (options) => (value) => fromNullishOr(options.find((option) => option === value));
+const readMode = oneOf(["squash", "keep"]);
+const readClick = (value) => {
+	const f = fields(value);
+	switch (f._tag) {
+		case "Select": return map$3(text(f.space), (space) => ({
+			_tag: "Select",
+			space
+		}));
+		case "New": return map$3(all({
+			name: text(f.name),
+			folder: text(f.folder)
+		}), (click) => ({
+			_tag: "New",
+			...click
+		}));
+		default: return none();
+	}
+};
+const readLinked = (value) => {
+	const f = fields(value);
+	return all({
+		main: text(f.main),
+		path: text(f.path),
+		branch: text(f.branch)
+	});
+};
+const readBatch = (value) => {
+	const f = fields(value);
+	return all({
+		main: text(f.main),
+		branches: listOf$2(f.branches, text)
+	});
+};
+/** An Action, as `send` posts it or a menu item carries it; none for anything else. */
+const readAction = (value) => {
+	const f = fields(value);
+	switch (f._tag) {
+		case "Open": return map$3(readClick(f.click), (click) => ({
+			_tag: "Open",
+			click
+		}));
+		case "Merge": return map$3(all({
+			target: readLinked(f.target),
+			mode: readMode(f.mode),
+			dirty: bool(f.dirty)
+		}), (merge) => ({
+			_tag: "Merge",
+			...merge
+		}));
+		case "Remove": return map$3(all({
+			target: readLinked(f.target),
+			dirty: bool(f.dirty)
+		}), (remove) => ({
+			_tag: "Remove",
+			...remove
+		}));
+		case "Cleanup": return map$3(all({
+			batches: listOf$2(f.batches, readBatch),
+			paths: listOf$2(f.paths, text),
+			dirty: finite(f.dirty)
+		}), (cleanup) => ({
+			_tag: "Cleanup",
+			...cleanup
+		}));
+		case "New": return map$3(text(f.main), (main) => ({
+			_tag: "New",
+			main
+		}));
+		case "Create": return map$3(all({
+			main: text(f.main),
+			name: text(f.name),
+			base: textOrNull(f.base)
+		}), (create) => ({
+			_tag: "Create",
+			...create
+		}));
+		case "CopyPath": return map$3(text(f.path), (path) => ({
+			_tag: "CopyPath",
+			path
+		}));
+		case "Reveal": return map$3(text(f.path), (path) => ({
+			_tag: "Reveal",
+			path
+		}));
+		case "Hide": return map$3(text(f.root), (root) => ({
+			_tag: "Hide",
+			root
+		}));
+		case "Refresh": return some({ _tag: "Refresh" });
+		default: return none();
+	}
+};
+/** The mailbox's request; none when it holds nothing the panel can run. */
+const readRequest = (value) => {
+	const f = fields(value);
+	return all({
+		id: finite(f.id),
+		action: readAction(f.action)
+	});
+};
+/** The overlay id Herdr adds to an overlay's props; none for a layout block. */
+const overlayOf = (props) => text(fields(props).overlay);
+const readMenuItem = (value) => {
+	const f = fields(value);
+	return all({
+		label: text(f.label),
+		danger: bool(f.danger),
+		action: readAction(f.action)
+	});
+};
+/** A menu's props read back; an item that can't be read is left out. */
+const readMenuProps = (props) => {
+	const f = fields(props);
+	return {
+		title: getOrElse(text(f.title), () => ""),
+		items: Array.isArray(f.items) ? f.items.flatMap((item) => toArray(readMenuItem(item))) : []
+	};
+};
+/**
+* The confirm dialog's question, from the Action in its props: the text is worked out
+* again from the Action, so it always matches what runs. None when there is no Action
+* that needs asking.
+*/
+const readConfirmProps = (props) => flatMap$3(readAction(fields(props).action), (action) => map$3(confirmFor(action), (confirm) => ({
+	confirm,
+	action
+})));
+const readTitlebarProps = (props) => {
+	const f = fields(props);
+	return {
+		title: getOrElse(text(f.title), () => "worktrunk"),
+		addr: text(f.addr)
+	};
+};
+/** The repo the New worktree dialog makes a worktree in: its main checkout. */
+const readNewProps = (props) => text(fields(props).main);
+/** A menu's props, for `openOverlay`; read back with `readMenuProps`. */
+const menuProps = (title, items) => ({
+	role: "menu",
+	title,
+	items
+});
+/** A confirm dialog's props: the Action it guards; read back with `readConfirmProps`. */
+const confirmProps = (action) => ({
+	role: "confirm",
+	action
+});
+/** A job window title bar's props; read back with `readTitlebarProps`. */
+const titlebarProps = (title, addr) => ({
+	role: "titlebar",
+	title,
+	addr
+});
+/** The New worktree dialog's props: the repo's main checkout; read back with `readNewProps`. */
+const newProps = (main) => ({
+	role: "new",
+	main
+});
 
 // src/main.ts
 const SETTINGS_FILE = `iangregsondev-worktrunk.json`;
@@ -9741,6 +11021,10 @@ const VIEW_KEY = `iangregsondev-worktrunk.view.v1`;
 const SYNC_RECORD = `iangregsondev-sync.json`;
 /** The installed Herdr version the "run herdr:sync" toast was last shown for. */
 const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
+/** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
+const REQUEST_KEY = `iangregsondev-worktrunk.request.v1`;
+/** The job window's key, so a new job's window takes the old one's place. */
+const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
 const SCAN_EVERY = 6e5;
 const CI_EVERY = 3e5;
@@ -9751,7 +11035,10 @@ const CI_EVERY = 3e5;
 const LIST_LIMIT = 6;
 const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
-const services = mergeAll(Shell.layer({ exec }), Files.layer({
+const services = mergeAll(Shell.layer({
+	exec,
+	hc
+}), Files.layer({
 	readTextFile,
 	writeTextFile
 }));
@@ -9760,7 +11047,7 @@ const services = mergeAll(Shell.layer({ exec }), Files.layer({
 * a value), so only a defect, a bug, is left: it becomes `onDefect`'s value, which the
 * panel shows like any other failure.
 */
-const runEdge = (program, onDefect) => runPromiseExit(program.pipe(provide(services))).then(match({
+const runEdge = (program, onDefect) => runPromiseExit(program.pipe(provide(services))).then(match$1({
 	onSuccess: (value) => value,
 	onFailure: (cause) => onDefect(pretty(cause))
 }));
@@ -9775,6 +11062,16 @@ const fontSizes = () => {
 };
 const icon = (name, size, color) => svg(`mods/iangregsondev-worktrunk/${name}.svg`).size(size).flex_none().text_color(color);
 const dot = (color, size, hollow) => hollow ? div().w(size).h(size).flex_none().rounded_full().border(1.5).border_color(color) : div().w(size).h(size).flex_none().rounded_full().bg(color);
+const BUTTON_COLORS = {
+	plain: (t) => [t.raised, t.foreground],
+	accent: (t) => [t.accent, t.accent_foreground],
+	danger: (t) => [t.ansi1, t.solid_foreground]
+};
+/** The dialogs' text buttons. */
+const button = (t, id, label, tone, onClick) => {
+	const [bg, fg] = BUTTON_COLORS[tone](t);
+	return div().id(id).flex_none().px(14).py(5).rounded(6).cursor_pointer().bg(bg).text_color(fg).when(tone === "plain", (el) => el.hover((s) => s.bg(t.hover))).on_click(onClick).child(label);
+};
 const toneColor = (t, tone) => ({
 	main: t.accent,
 	merged: t.done,
@@ -9796,7 +11093,7 @@ const toggleFold = (key) => {
 	});
 };
 /** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = (read) => exit(read).pipe(map(match({
+const defectAsFailure = (read) => exit(read).pipe(map(match$1({
 	onSuccess: (answer) => answer,
 	onFailure: (cause) => fail$2(pretty(cause))
 })));
@@ -9833,17 +11130,68 @@ const checkSync = async () => {
 		});
 	});
 };
-const copyOf = (props) => match$4(roleOf(props), {
-	onNone: () => "Unknown",
-	onSome: (role) => role === "toggle" ? "Toggle" : "Panel"
+/** This copy's props: the layout block's or the overlay's, `overlay` added for an overlay. */
+const ownProps = () => props();
+/** The request in the mailbox, if it holds one the panel can run. */
+const mailbox = () => readRequest(shared(REQUEST_KEY));
+/** Hands `action` to the panel; an overlay's own tasks end when it closes. */
+const send = (action) => setShared(REQUEST_KEY, {
+	id: Date.now() + Math.random(),
+	action
+});
+/** Runs `action` through the panel, after asking first when it removes or merges. */
+const ask = (action) => match$5(confirmFor(action), {
+	onNone: () => send(action),
+	onSome: ({ lines }) => openOverlay({
+		mod: "iangregsondev-worktrunk",
+		kind: "dialog",
+		width: 500,
+		height: dialogHeight(lines.length),
+		props: confirmProps(action)
+	})
+});
+/** A right-click menu; its height comes from its items. */
+const openMenu = (title, items) => openOverlay({
+	mod: "iangregsondev-worktrunk",
+	kind: "popup",
+	width: 250,
+	height: menuHeight(items.length),
+	props: menuProps(title, items)
+});
+/** Closes this copy's own overlay. */
+const closeSelf = () => map$3(overlayOf(ownProps()), closeOverlay);
+const settingsFile = () => ({
+	path: `${appHome()}/${SETTINGS_FILE}`,
+	name: SETTINGS_FILE
+});
+/** Shows the job's terminal in a floating window, under a title bar with a Stop button. */
+const openJobWindow = (title, addr) => openOverlay({
+	kind: "window",
+	key: JOB_WINDOW,
+	width: 820,
+	height: 460,
+	layout: {
+		type: "column",
+		children: [{
+			type: "block",
+			size: { px: 34 },
+			content: {
+				mod: "iangregsondev-worktrunk",
+				props: titlebarProps(title, addr)
+			}
+		}, {
+			type: "block",
+			content: { terminal: addr }
+		}]
+	}
 });
 /** The panel's block is shown; a copy with no block of its own (an overlay) counts as shown. */
-const shown = () => match$4(findModBlock(layout(), "iangregsondev-worktrunk"), {
+const shown = () => match$5(findModBlock(layout(), "iangregsondev-worktrunk"), {
 	onNone: () => true,
 	onSome: (block) => !block.hidden
 });
 var Worktrunk = class extends View {
-	copy = "Panel";
+	copy = { _tag: "Panel" };
 	settings = DEFAULT_SETTINGS;
 	settingsError = none();
 	/** The last folder scan's repos, and what and when it scanned. */
@@ -9861,9 +11209,24 @@ var Worktrunk = class extends View {
 	checking = false;
 	search = "";
 	searchBox = none();
-	init(props, cx) {
-		this.copy = copyOf(props);
-		if (this.copy !== "Panel") return;
+	/** The last mailbox request seen, so each runs once. */
+	handled = none();
+	/** The running job's title; one job at a time. */
+	job = none();
+	/** An overlay's keyboard. */
+	handle = none();
+	init(_props, cx) {
+		const role = roleOf(ownProps());
+		if (isNone(role)) {
+			this.copy = { _tag: "Unknown" };
+			return;
+		}
+		if (role.value === "toggle") {
+			this.copy = { _tag: "Toggle" };
+			return;
+		}
+		if (role.value !== "panel") return this.initOverlay(cx, role.value);
+		this.handled = map$3(mailbox(), (request) => request.id);
 		const box = InputState.new({ placeholder: "Branch or repo" });
 		box.on("change", (_event, cx) => {
 			this.search = box.value();
@@ -9872,7 +11235,181 @@ var Worktrunk = class extends View {
 		this.searchBox = some(box);
 		cx.spawn(checkSync);
 		cx.timer.every(LIST_EVERY, (cx) => {
-			if (shown()) this.refresh(cx, { scan: false });
+			if (shown() && isNone(this.job)) this.refresh(cx, { scan: false });
+		});
+	}
+	/** An overlay takes the keyboard, and keeps the state only its role needs. */
+	initOverlay(cx, role) {
+		const handle = cx.focus_handle();
+		handle.focus();
+		this.handle = some(handle);
+		switch (role) {
+			case "menu":
+				this.copy = {
+					_tag: "Menu",
+					menu: { selected: 0 }
+				};
+				return;
+			case "confirm":
+				this.copy = { _tag: "Confirm" };
+				return;
+			case "titlebar":
+				this.copy = { _tag: "Titlebar" };
+				return;
+			case "new": {
+				const input = InputState.new({ placeholder: "branch name, pr:123, or a PR link" });
+				input.on("submit", () => this.submitNew(input));
+				input.focus();
+				this.copy = {
+					_tag: "New",
+					input
+				};
+				return;
+			}
+		}
+	}
+	/** The New worktree dialog's Enter: asks the panel to switch to or create the branch. */
+	submitNew(input) {
+		const name = input.value().trim();
+		map$3(readNewProps(ownProps()), (main) => {
+			if (name === "") return;
+			closeSelf();
+			send({
+				_tag: "Create",
+				main,
+				name,
+				base: null
+			});
+		});
+	}
+	/** Runs a request from the mailbox. Jobs and the settings file are the panel's work. */
+	perform(cx, action) {
+		switch (action._tag) {
+			case "Open": return onClickRow(action.click);
+			case "CopyPath":
+				cx.write_to_clipboard(action.path);
+				notify({
+					title: "Copied",
+					body: action.path,
+					level: "info",
+					timeout: 2e3
+				});
+				return;
+			case "Reveal":
+				cx.spawn(async () => {
+					const shown = await runEdge(reveal(action.path).pipe(match({
+						onSuccess: () => none(),
+						onFailure: (failed) => some(failureText(failed))
+					})), some);
+					map$3(shown, (body) => notify({
+						title: "Couldn't reveal it in the Finder",
+						body,
+						level: "warning"
+					}));
+				});
+				return;
+			case "Refresh": return this.refreshWithCi(cx, { scan: true });
+			case "Hide":
+				cx.spawn(async (cx) => {
+					const hid = await runEdge(hideInSettings(settingsFile(), action.root), fail$2);
+					match$4(hid, {
+						onSuccess: () => void 0,
+						onFailure: (body) => notify({
+							title: "Couldn't hide the repo",
+							body,
+							level: "warning"
+						})
+					});
+					this.refresh(cx, { scan: false });
+				});
+				return;
+			case "New":
+				openOverlay({
+					mod: "iangregsondev-worktrunk",
+					kind: "dialog",
+					width: 460,
+					height: 170,
+					props: newProps(action.main)
+				});
+				return;
+			case "Create": return this.createWorktree(cx, action.main, action.name, action.base);
+			default: map$3(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
+		}
+	}
+	/** Busy with another job: says so and gives true. */
+	busy() {
+		return match$5(this.job, {
+			onNone: () => false,
+			onSome: (running) => {
+				notify({
+					...busyNotice(running),
+					level: "warning"
+				});
+				return true;
+			}
+		});
+	}
+	/** What every job does once it has ended: say why it never started, or close spaces. */
+	jobEnded(cx, title, outcome) {
+		if (outcome._tag === "NotStarted") notify({
+			title: `Couldn't start: ${title}`,
+			body: outcome.reason,
+			level: "error"
+		});
+		else spacesInGone(spaces(), panes(), outcome.gone).forEach((id) => run("space.close", {
+			id,
+			confirmed: true
+		}));
+		this.job = none();
+		cx.notify();
+		this.refresh(cx, { scan: false });
+	}
+	/**
+	* Runs `spec` as a terminal job in a floating window, one job at a time. The window
+	* closes when the job ends; a failed job waits for Enter first, so it stays open with
+	* its exit code. Then spaces on removed folders close and the list is read again.
+	*/
+	runJob(cx, spec) {
+		if (this.busy()) return;
+		this.job = some(spec.title);
+		cx.notify();
+		cx.spawn(async (cx) => {
+			const outcome = await runEdge(runJob(spec, (addr) => openJobWindow(spec.title, addr)), (defect) => ({
+				_tag: "NotStarted",
+				reason: defect
+			}));
+			this.jobEnded(cx, spec.title, outcome);
+		});
+	}
+	/**
+	* Switches to or creates the worktree for `name` as a job, then opens a space on it, or
+	* selects the one already there.
+	*/
+	createWorktree(cx, main, name, base) {
+		if (this.busy()) return;
+		const title = `New worktree ${name}`;
+		this.job = some(title);
+		cx.notify();
+		cx.spawn(async (cx) => {
+			const made = await runEdge(newWorktree({
+				main,
+				name,
+				base
+			}, (addr) => openJobWindow(title, addr)), (defect) => ({
+				outcome: {
+					_tag: "NotStarted",
+					reason: defect
+				},
+				switched: none()
+			}));
+			map$3(made.switched, ({ branch, path }) => match$5(fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)), {
+				onSome: (on) => run("space.select", { id: on.id }),
+				onNone: () => run("space.new", {
+					name: branch,
+					folder: path
+				})
+			}));
+			this.jobEnded(cx, title, made.outcome);
 		});
 	}
 	/** The repos the selected group chip shows: the only ones worth reading. */
@@ -9970,9 +11507,15 @@ var Worktrunk = class extends View {
 			t: theme(),
 			sizes: fontSizes()
 		};
-		if (this.copy === "Toggle") return this.renderToggle(style);
-		if (this.copy === "Unknown") return div();
+		const copy = this.copy;
+		if (copy._tag === "Toggle") return this.renderToggle(style);
+		if (copy._tag === "Unknown") return div();
+		if (copy._tag !== "Panel") return this.renderOverlay(style, copy);
 		const { t, sizes } = style;
+		map$3(filter(mailbox(), (request) => !contains(this.handled, request.id)), (request) => {
+			this.handled = some(request.id);
+			later(cx, (cx) => this.perform(cx, request.action));
+		});
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
 		const state = viewState();
 		const group = getOrElse(state.group, () => "");
@@ -10002,7 +11545,84 @@ var Worktrunk = class extends View {
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
 		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
-		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body)));
+		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body))).children(this.renderFooter(style));
+	}
+	worktreesOf(root) {
+		return match$5(fromNullishOr(this.lists.get(root)), {
+			onNone: () => [],
+			onSome: (list) => list.worktrees
+		});
+	}
+	/** "Running: <job>" while a job runs. */
+	renderFooter({ t, sizes }) {
+		return toArray(this.job).map((title) => h_flex().id("footer").h(36).flex_none().px(12).gap(8).items_center().border_t(1).border_color(t.border).text_size(sizes.label).child(icon("ring", 13, t.working).spin(900)).child(div().min_w(0).truncate().text_color(t.muted).child(`Running: ${title}`)));
+	}
+	openRowMenu(row) {
+		map$3(findWorktree(this.lists, row.key), ({ root, worktree }) => openMenu(row.label, rowMenu(root, worktree, row.click)));
+	}
+	openRepoMenu(root) {
+		openMenu(lastSegment(root), repoMenu(root, this.worktreesOf(root)));
+	}
+	renderOverlay(style, copy) {
+		const p = ownProps();
+		switch (copy._tag) {
+			case "Titlebar": return this.renderTitlebar(style, readTitlebarProps(p));
+			case "Confirm": return match$5(readConfirmProps(p), {
+				onNone: () => div(),
+				onSome: (asked) => this.renderConfirm(style, asked)
+			});
+			case "New": return this.renderNew(style, copy.input, getOrElse(readNewProps(p), () => ""));
+			case "Menu": return this.renderMenu(style, readMenuProps(p), copy.menu);
+		}
+	}
+	/** The overlay's root takes the keyboard its handle was given. */
+	focused(el) {
+		return match$5(this.handle, {
+			onNone: () => el,
+			onSome: (h) => el.track_focus(h)
+		});
+	}
+	renderMenu({ t, sizes }, { title, items }, menu) {
+		const choose = (item) => map$3(fromNullishOr(item), (chosen) => {
+			closeSelf();
+			ask(chosen.action);
+		});
+		return this.focused(v_flex().id("menu").size_full().p(6).bg(t.popover).text_color(t.foreground).text_size(sizes.body).on_key_down((e, cx) => {
+			if (e.key === "down" || e.key === "up") {
+				const step = e.key === "down" ? 1 : items.length - 1;
+				menu.selected = (menu.selected + step) % Math.max(1, items.length);
+				cx.notify();
+			} else if (e.key === "enter") choose(items[menu.selected]);
+			else if (e.key === "escape") closeSelf();
+		}).child(div().h(28).px(8).flex().items_center().truncate().text_size(sizes.label).text_color(t.muted).child(title)).children(items.map((item, i) => h_flex().id(`item-${i}`).h(30).flex_none().px(8).items_center().rounded(6).cursor_pointer().text_color(item.danger ? t.ansi1 : t.foreground).when(i === menu.selected, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click(() => choose(item)).child(item.label))));
+	}
+	renderConfirm({ t, sizes }, { confirm, action }) {
+		const go = () => {
+			closeSelf();
+			send(action);
+		};
+		return this.focused(v_flex().id("confirm").size_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(sizes.body).on_key_down((e) => {
+			if (e.key === "enter") go();
+			else if (e.key === "escape") closeSelf();
+		}).child(div().text_size(sizes.title).font_semibold().child(confirm.title)).child(v_flex().flex_1().min_h(0).gap(4).text_color(t.muted).children(confirm.lines.map((line) => div().child(line)))).child(h_flex().justify_end().gap(8).child(button(t, "cancel", "Cancel", "plain", closeSelf)).child(button(t, "go", confirm.go, confirm.danger ? "danger" : "accent", go))));
+	}
+	/** The New worktree dialog: a branch name or a wt shortcut, Enter to go. */
+	renderNew({ t, sizes }, input, main) {
+		return this.focused(v_flex().id("new").size_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(sizes.body).on_key_down((e) => {
+			if (e.key === "escape") closeSelf();
+		}).child(div().text_size(sizes.title).font_semibold().child(`New worktree in ${lastSegment(main)}`)).child(div().h(32).px(10).flex().items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(input).h_full().text_color(t.foreground))).child(div().text_size(sizes.label).text_color(t.muted).child("Enter creates it from the default branch, or switches to it if it exists.")));
+	}
+	/** The job window's title bar: what runs, and a Stop button. */
+	renderTitlebar({ t, sizes }, { title, addr }) {
+		const stop = (terminal) => runEdge(stopJob(terminal).pipe(match({
+			onSuccess: () => none(),
+			onFailure: (failed) => some(failureText(failed))
+		})), some).then((failed) => map$3(failed, (body) => notify({
+			title: "Couldn't stop the job",
+			body,
+			level: "warning"
+		})));
+		return h_flex().id("titlebar").size_full().px(12).gap(8).items_center().bg(t.chrome).border_b(1).border_color(t.border).text_size(sizes.label).child(icon("git", 14, t.accent)).child(div().flex_1().min_w(0).truncate().font_semibold().child(title)).child(div().text_color(t.dim).child("drag to move")).child(div().id("stop").px(10).py(3).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(addr, stop)).child("Stop"));
 	}
 	/** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
 	renderControls({ t, sizes }, view) {
@@ -10028,7 +11648,7 @@ var Worktrunk = class extends View {
 		switch (body._tag) {
 			case "Message": return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
 			case "Tree": return v_flex().pb(16).children(body.repos.map((repo) => this.renderRepo(style, repo)));
-			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => div().px(14).pt(4).pb(4).text_size(sizes.label).font_semibold().text_color(t.done).child(summary))).children(body.rows.map((row) => this.renderRow(style, row)));
+			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${action.paths.length}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
 		}
 	}
 	/** The tab-bar button: shows and hides the panel's block. */
@@ -10038,7 +11658,13 @@ var Worktrunk = class extends View {
 		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("worktrunk"));
 	}
 	renderRepo({ t, sizes }, repo) {
-		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).child(div().flex_none().text_size(sizes.label).text_color(t.muted).child(match$4(repo.count, {
+		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key)).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
+			root: repo.key,
+			worktrees: this.worktreesOf(repo.key)
+		}])).map((action) => div().id(`cleanup-${repo.key}`).flex_none().px(6).rounded(4).text_size(sizes.label).text_color(t.done).hover((s) => s.bg(t.raised)).on_click((_event, cx) => {
+			cx.stop_propagation();
+			ask(action);
+		}).child("Clean up"))).child(div().flex_none().text_size(sizes.label).text_color(t.muted).child(match$5(repo.count, {
 			onNone: () => "…",
 			onSome: String
 		})));
@@ -10057,7 +11683,7 @@ var Worktrunk = class extends View {
 		return v_flex().child(h_flex().id(`group-${section.key}`).min_h(26).pl(18).pr(10).pt(6).gap(6).items_center().cursor_pointer().on_click(() => toggleFold(section.key)).child(icon(section.folded ? "chevron-right" : "chevron-down", 12, color)).child(div().flex_1().text_size(sizes.label).font_semibold().text_color(color).child(`${section.label} · ${section.count}`))).children(section.rows.map((row) => this.renderRow(style, row)));
 	}
 	renderRow({ t, sizes }, row) {
-		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
+		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
 			const [name, color] = ciIcon(t, badge);
 			const drawn = icon(name, 13, badge.stale ? t.dim : color);
 			return badge.status === "running" ? drawn.spin(1200) : drawn;
