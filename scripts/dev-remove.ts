@@ -4,7 +4,8 @@
 //
 //   vp run dev:remove <name>
 import { Effect } from "effect";
-import { HerdrHost, type HostUnreachable, type TransportError } from "./herdr-host.ts";
+import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { HerdrHost, hostLayer, type HostUnreachable, type TransportError } from "./herdr-host.ts";
 import { herdrHome, removeSlotsOnHost } from "./herdr-slots.ts";
 
 export interface DevRemoveResult {
@@ -59,6 +60,15 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
         err: [`dev-remove: could not read these layouts, so left them alone: ${quoted(skipped)}`],
       }
     : { code: 0, out: [files, panel], err: [] };
+});
+
+/** Removes the dev build named in `args` from the dev target's Herdr host. */
+export const runDevRemove = Effect.fn("runDevRemove")(function* (
+  args: readonly string[],
+  options: LoadOptions = {},
+) {
+  const target = yield* loadDevTarget(options);
+  return yield* devRemoveOnHost(args).pipe(Effect.provide(hostLayer(target)));
 });
 
 /** `devRemoveOnHost` against the Herdr app on this machine, at `home`. */

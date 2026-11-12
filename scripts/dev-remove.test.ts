@@ -2,10 +2,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vite-plus/test";
-import { devRemove } from "./dev-remove.ts";
+import { assert, describe, expect, it, test } from "@effect/vitest";
+import { Effect } from "effect";
+import { devRemove, runDevRemove } from "./dev-remove.ts";
 import { DEV_MARKER, hasSlot, type LayoutNode } from "./herdr-slots.ts";
-import { readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import { fakeHerdrHost, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const usage = "usage: vp run dev:remove <name>";
@@ -140,5 +141,95 @@ describe("dev-remove CLI", () => {
     expect(result.status).toBe(2);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(`${usage}\n`);
+  });
+});
+
+describe("runDevRemove, remote target", () => {
+  it.effect("removes a dev build's folder on the Herdr host and says so", () => {
+    const fake = fakeHerdrHost();
+    const dir = writeDevBuild(fake.home, "hello");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 0,
+        out: [
+          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/hello",
+          "dev-remove: no hello panel in your layouts",
+        ],
+        err: [],
+      });
+      assert.isFalse(existsSync(dir));
+    });
+  });
+
+  it.effect("leaves an installed mod and its slots alone on the Herdr host, with code 1", () => {
+    const fake = fakeHerdrHost();
+    writeFile(fake.home, "mods/hello/main.js", "export default {};\n");
+    const layout = writeLayout(fake.home, "work", ["hello"]);
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [],
+        err: [
+          "dev-remove: ann@herdr-host:~/.config/herdr-app/mods/hello is an installed mod, " +
+            "not a dev build; left alone",
+        ],
+      });
+      assert.isTrue(existsSync(join(fake.home, "mods/hello/main.js")));
+      assert.isTrue(hasSlot(readLayout(layout), "hello"));
+    });
+  });
+
+  it.effect("removes the mod's slots from the host's layouts and names each one it changed", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, "hello");
+    const work = writeLayout(fake.home, "work", ["tabs", "hello"]);
+    const play = writeLayout(fake.home, "play", ["hello"]);
+    const other = writeLayout(fake.home, "other", ["tabs"]);
+    const otherBefore = readFileSync(other, "utf8");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.strictEqual(result.code, 0);
+      assert.strictEqual(result.out[1], 'dev-remove: removed the hello panel from "play", "work"');
+      assert.isFalse(hasSlot(readLayout(work), "hello"));
+      assert.isTrue(hasSlot(readLayout(work), "tabs"));
+      assert.isFalse(hasSlot(readLayout(play), "hello"));
+      assert.strictEqual(readFileSync(other, "utf8"), otherBefore);
+    });
+  });
+
+  it.effect("never edits a layout that ships with Herdr", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, "hello");
+    writeFile(fake.home, "installed.json", JSON.stringify({ "layout:default": {} }));
+    const shipped = writeLayout(fake.home, "default", ["hello"]);
+    const shippedBefore = readFileSync(shipped, "utf8");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.strictEqual(result.code, 0);
+      assert.strictEqual(result.out[1], "dev-remove: no hello panel in your layouts");
+      assert.strictEqual(readFileSync(shipped, "utf8"), shippedBefore);
+    });
+  });
+
+  it.effect("skips and names a layout it can't read, cleans the rest, with code 1", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, "hello");
+    const work = writeLayout(fake.home, "work", ["tabs", "hello"]);
+    const bad = writeFile(fake.home, "layouts/bad.json", "{");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [
+          "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/hello",
+          'dev-remove: removed the hello panel from "work"',
+        ],
+        err: ['dev-remove: could not read these layouts, so left them alone: "bad"'],
+      });
+      assert.isFalse(hasSlot(readLayout(work), "hello"));
+      assert.strictEqual(readFileSync(bad, "utf8"), "{");
+    });
   });
 });
