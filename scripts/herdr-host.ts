@@ -64,6 +64,8 @@ export class InstalledModInTheWay extends Data.TaggedError("InstalledModInTheWay
 export class HerdrHost extends Context.Service<
   HerdrHost,
   {
+    /** Where `relPath` in the Herdr home is, for messages to people. Does no IO. */
+    readonly location: (relPath: string) => string;
     readonly readFile: (relPath: string) => Effect.Effect<string, FileMissing | TransportError>;
     readonly writeFile: (relPath: string, content: string) => Effect.Effect<void, TransportError>;
     readonly listDir: (
@@ -104,6 +106,7 @@ export class HerdrHost extends Context.Service<
     return Layer.succeed(
       HerdrHost,
       HerdrHost.of({
+        location: (relPath) => join(home, relPath),
         readFile: (relPath) => {
           const path = join(home, relPath);
           return fsCall(`read ${path}`, path, () => readFileSync(path, "utf8"));

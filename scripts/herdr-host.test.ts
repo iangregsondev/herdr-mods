@@ -16,6 +16,16 @@ import { fakeBin, fakeLoggingBin, loggedLines, tempDir, writeFile } from "./test
 const textOf = (path: string): string | undefined =>
   existsSync(path) ? readFileSync(path, "utf8") : undefined;
 
+describe("HerdrHost.location, local layer", () => {
+  it.effect("is the path inside the Herdr home", () => {
+    const home = tempDir();
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      assert.strictEqual(host.location("mods/hello"), join(home, "mods/hello"));
+    }).pipe(Effect.provide(HerdrHost.local(home)));
+  });
+});
+
 describe("HerdrHost, local layer", () => {
   it.effect("reads a file in the Herdr home", () => {
     const home = tempDir();
@@ -59,6 +69,23 @@ describe("HerdrHost.writeFile, local layer", () => {
       assert.strictEqual(textOf(join(home, "mods/hello/.marker")), "dev\n");
     }).pipe(Effect.provide(HerdrHost.local(home)));
   });
+});
+
+describe("HerdrHost.writeFile, failure", () => {
+  it.effect(
+    "fails with TransportError, naming the operation, when the file can't be written",
+    () => {
+      const home = tempDir();
+      writeFile(home, "mods", "a file where a folder should be");
+      return Effect.gen(function* () {
+        const host = yield* HerdrHost;
+        // The error or the success value, so a wrong success fails on the assertion.
+        const outcome = Result.merge(yield* Effect.result(host.writeFile("mods/hello/x", "")));
+        const error = outcome instanceof TransportError ? outcome : undefined;
+        assert.strictEqual(error?.operation, `write ${join(home, "mods/hello/x")}`);
+      }).pipe(Effect.provide(HerdrHost.local(home)));
+    },
+  );
 });
 
 describe("HerdrHost.listDir, local layer", () => {
