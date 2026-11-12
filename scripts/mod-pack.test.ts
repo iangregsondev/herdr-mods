@@ -7,6 +7,7 @@ import {
   type ModPackOptions,
   watchFromArgv,
 } from "../mod-pack.ts";
+import { DevTarget } from "./dev-config.ts";
 import { DEV_MARKER, type ModJson } from "./herdr-slots.ts";
 import { tempDir, writeFile } from "./test-support.ts";
 
@@ -54,6 +55,27 @@ function herdrHomeWithMods(): string {
   return home;
 }
 
+/**
+ * Points the dev config at a `local` target whose Herdr home is `home`, for the
+ * current test, and returns that target.
+ */
+function useLocalTarget(home: string): DevTarget {
+  const config = writeFile(tempDir(), "herdr-dev.json", JSON.stringify({ target: "local" }));
+  vi.stubEnv("HERDR_DEV_CONFIG", config);
+  vi.stubEnv("HERDR_APP_HOME", home);
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  return DevTarget.Local({ herdrHome: home, file: config, found: true });
+}
+
+/** A temp Herdr home with an empty mods/ folder, made the local dev target. */
+function localHerdrHome(): string {
+  const home = herdrHomeWithMods();
+  useLocalTarget(home);
+  return home;
+}
+
 /** A temp mod source folder whose assets/mod.json holds `modJson`. */
 function modSource(modJson: object): string {
   const dir = tempDir();
@@ -84,7 +106,7 @@ describe("watchFromArgv", () => {
 });
 
 describe("modPack, build mode", () => {
-  const config = () => modPack("hello", { watch: false, home: herdrHomeWithMods() });
+  const config = () => modPack("hello", { watch: false });
 
   test("builds into the repo's mods/<name> and cleans it first", () => {
     expect(config().outDir).toBe("../../mods/hello");
@@ -111,16 +133,16 @@ describe("modPack, build mode", () => {
   });
 
   test("never touches the Herdr home", () => {
-    const home = herdrHomeWithMods();
-    modPack("hello", { watch: false, home });
+    const home = localHerdrHome();
+    modPack("hello", { watch: false });
     expect(readdirSync(join(home, "mods"))).toEqual([]);
   });
 });
 
 describe("modPack, watch mode", () => {
   test("builds into <home>/mods/<name> and marks it as a dev build", () => {
-    const home = herdrHomeWithMods();
-    const config = modPack("hello", { watch: true, home });
+    const home = localHerdrHome();
+    const config = modPack("hello", { watch: true });
     const dir = join(home, "mods", "hello");
     expect(config.outDir).toBe(dir);
     expect(existsSync(join(dir, DEV_MARKER))).toBe(true);
@@ -128,67 +150,68 @@ describe("modPack, watch mode", () => {
   });
 
   test("never cleans the out dir", () => {
-    const config = modPack("hello", { watch: true, home: herdrHomeWithMods() });
+    const config = (localHerdrHome(), modPack("hello", { watch: true }));
     expect(config.clean).toBe(false);
   });
 
   test("throws, naming the home, when the home has no mods/ folder", () => {
     const home = tempDir();
-    expect(() => modPack("hello", { watch: true, home })).toThrow(home);
+    useLocalTarget(home);
+    expect(() => modPack("hello", { watch: true })).toThrow(home);
     expect(existsSync(join(home, "mods"))).toBe(false);
   });
 
   test("refuses an installed mod folder and leaves it untouched", () => {
-    const home = herdrHomeWithMods();
+    const home = localHerdrHome();
     const dir = join(home, "mods", "hello");
     writeFile(dir, "main.js", "installed");
-    expect(() => modPack("hello", { watch: true, home })).toThrow(/installed mod/);
+    expect(() => modPack("hello", { watch: true })).toThrow(/installed mod/);
     expect(readdirSync(dir)).toEqual(["main.js"]);
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("installed");
   });
 
   test("throws, naming what it couldn't do, when the dev marker can't be written", () => {
-    const home = herdrHomeWithMods();
+    const home = localHerdrHome();
     writeFile(home, `mods/hello/${DEV_MARKER}/inner`, "");
-    expect(() => modPack("hello", { watch: true, home })).toThrow(
+    expect(() => modPack("hello", { watch: true })).toThrow(
       `mod-pack: couldn't write ${join(home, "mods", "hello", DEV_MARKER)}`,
     );
   });
 
   test("reuses an existing dev build, keeping its files", () => {
-    const home = herdrHomeWithMods();
+    const home = localHerdrHome();
     const dir = join(home, "mods", "hello");
     writeFile(dir, DEV_MARKER, "old marker");
     writeFile(dir, "main.js", "previous build");
-    const config = modPack("hello", { watch: true, home });
+    const config = modPack("hello", { watch: true });
     expect(config.outDir).toBe(dir);
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("previous build");
   });
 
   test("puts the slot back once, from the mod's own mod.json, after the first build", async () => {
-    const home = herdrHomeWithMods();
+    const target = useLocalTarget(herdrHomeWithMods());
     const modJson: ModJson = { place: "left", size: 240 };
     const modDir = modSource(modJson);
     const { ensureSlot, calls } = recordingEnsureSlot("slot line");
     const log = silencedLog();
-    const config = modPack("hello", { watch: true, home, modDir, ensureSlot });
+    const config = modPack("hello", { watch: true, modDir, ensureSlot });
     expect(calls).toEqual([]);
 
     await runOnSuccess(config);
     await runOnSuccess(config);
     await runOnSuccess(config);
 
-    expect(calls).toEqual([["hello", modJson, { home }]]);
+    expect(calls).toEqual([["hello", modJson, target]]);
     expect(log).toHaveBeenCalledWith("slot line");
   });
 
   test("retries the slot on the next build when mod.json can't be read", async () => {
-    const home = herdrHomeWithMods();
+    const target = useLocalTarget(herdrHomeWithMods());
     const modDir = tempDir();
     writeFile(modDir, "assets/mod.json", "{ not json");
     const { ensureSlot, calls } = recordingEnsureSlot("slot line");
     silencedLog();
-    const config = modPack("hello", { watch: true, home, modDir, ensureSlot });
+    const config = modPack("hello", { watch: true, modDir, ensureSlot });
 
     await expect(runOnSuccess(config)).rejects.toThrow();
     expect(calls).toEqual([]);
@@ -198,6 +221,6 @@ describe("modPack, watch mode", () => {
     await runOnSuccess(config);
     await runOnSuccess(config);
 
-    expect(calls).toEqual([["hello", modJson, { home }]]);
+    expect(calls).toEqual([["hello", modJson, target]]);
   });
 });

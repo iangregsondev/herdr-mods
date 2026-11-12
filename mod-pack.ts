@@ -12,8 +12,9 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Effect, Result } from "effect";
 import type { UserConfig } from "vite-plus";
-import { DEV_MARKER, HerdrHost, InstalledModInTheWay } from "./scripts/herdr-host.ts";
-import { ensureSlot, herdrHome, type ModJson } from "./scripts/herdr-slots.ts";
+import { type DevTarget, loadDevTarget } from "./scripts/dev-config.ts";
+import { DEV_MARKER, HerdrHost, hostLayer, InstalledModInTheWay } from "./scripts/herdr-host.ts";
+import { ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
 
@@ -39,14 +40,20 @@ export function watchFromArgv(argv: readonly string[]): boolean {
   return argv.includes("--watch") || argv.includes("-w");
 }
 
-/** Puts `mod`'s slot back in the shown layout; returns a line for the person. */
-export type EnsureSlot = (mod: string, modJson: ModJson, options: { home: string }) => string;
+/** Puts `mod`'s slot back in the dev target's shown layout; gives a line for the person. */
+export type EnsureSlot = (
+  mod: string,
+  modJson: ModJson,
+  target: DevTarget,
+) => string | Promise<string>;
+
+/** The slot step on the dev target's Herdr host. Rejects when the host can't be used. */
+const ensureSlotOnTarget: EnsureSlot = (mod, modJson, target) =>
+  Effect.runPromise(ensureSlotOnHost(mod, modJson).pipe(Effect.provide(hostLayer(target))));
 
 export interface ModPackOptions {
   /** Build into the Herdr app (watch mode). Defaults to `--watch` or `-w` in argv. */
   watch?: boolean;
-  /** The Herdr app home a watch build goes into. Defaults to `herdrHome()`. */
-  home?: string;
   /**
    * The folder whose `assets/mod.json` the first watch build reads. Only that file is
    * read from it: the entry, the copied assets and the out dir stay relative to the
@@ -55,7 +62,7 @@ export interface ModPackOptions {
   modDir?: string;
   /**
    * Puts the mod's slot back in the shown layout after the first watch build.
-   * Defaults to `ensureSlot` from `scripts/herdr-slots.ts`.
+   * Defaults to `ensureSlotOnHost` from `scripts/herdr-slots.ts`, on the dev target.
    */
   ensureSlot?: EnsureSlot;
 }
@@ -109,30 +116,55 @@ function devOutDir(name: string, home: string): string {
  */
 function slotOnFirstBuild(
   name: string,
-  { home, modDir, slot }: { home: string; modDir: string; slot: EnsureSlot },
-): () => void {
+  { target, modDir, slot }: { target: DevTarget; modDir: string; slot: EnsureSlot },
+): () => Promise<void> {
   let done = false;
-  return () => {
+  return async () => {
     if (done) return;
     // `modDir/assets/mod.json` is the mod's own committed file, trusted unchecked.
     // An unknown `place` gets a "by hand" message from ensureSlot, not a guess.
     const modJson = JSON.parse(readFileSync(resolve(modDir, "assets/mod.json"), "utf8")) as ModJson;
-    const line = slot(name, modJson, { home });
+    const line = await slot(name, modJson, target);
     done = true;
     console.log(line);
   };
+}
+
+/** The dev target from herdr-dev.json (or HERDR_DEV_CONFIG); throws, naming the problem. */
+function devTarget(): DevTarget {
+  const loaded = Effect.runSync(Effect.result(loadDevTarget()));
+  if (Result.isSuccess(loaded)) return loaded.success;
+  const error = loaded.failure;
+  switch (error._tag) {
+    case "DevConfigInvalid":
+      throw new Error(`mod-pack: ${error.file}: ${error.field}: ${error.message}`);
+    case "DevConfigUnreadable":
+      throw new Error(`mod-pack: couldn't read ${error.file}`, { cause: error.cause });
+  }
 }
 
 export function modPack(
   name: string,
   {
     watch = watchFromArgv(process.argv),
-    home = herdrHome(),
     modDir = process.cwd(),
-    ensureSlot: slot = ensureSlot,
+    ensureSlot: slot = ensureSlotOnTarget,
   }: ModPackOptions = {},
 ): PackConfig {
-  const outDir = watch ? devOutDir(name, home) : `../../mods/${name}`;
+  if (!watch) return packConfig(`../../mods/${name}`);
+  const target = devTarget();
+  return packConfig(
+    devOutDir(name, target.herdrHome),
+    slotOnFirstBuild(name, { target, modDir, slot }),
+  );
+}
+
+/**
+ * The pack settings for building into `outDir`. A watch build passes `onSuccess`,
+ * run after each good build; the out dir is then never cleaned.
+ */
+function packConfig(outDir: string, onSuccess?: () => Promise<void>): PackConfig {
+  const watch = onSuccess !== undefined;
   return {
     entry: { main: "src/main.ts" },
     outDir,
@@ -144,10 +176,10 @@ export function modPack(
     dts: false,
     // Installers and users read every file, so keep the output readable.
     minify: false,
-    // Never clean the Herdr app's folder: it holds the marker and files Herdr writes.
+    // Never clean a watch build's folder: it holds the marker and files Herdr writes.
     clean: !watch,
     deps: { neverBundle: HERDR_BUILTINS },
     copy: [{ from: "assets/*", to: outDir }],
-    ...(watch ? { onSuccess: slotOnFirstBuild(name, { home, modDir, slot }) } : {}),
+    ...(watch ? { onSuccess } : {}),
   };
 }
