@@ -226,6 +226,37 @@ const succeeded = (
         new TransportError({ operation, cause: new CommandFailed({ code, stdout, stderr }) }),
       );
 
+/** A rectangle of an image in pixels: its top-left corner and its size. */
+export interface Crop {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** `sips` arguments that crop to `crop`: height and width, then the y and x offset. */
+const sipsCropArgs = (crop: Crop): ReadonlyArray<string> => [
+  "-c",
+  ...[crop.height, crop.width].map(String),
+  "--cropOffset",
+  ...[crop.y, crop.x].map(String),
+];
+
+/** Runs `command` from PATH on this machine; exiting non-zero is CommandFailed. */
+const runLocal = Effect.fn("runLocal")(function* (command: string, args: ReadonlyArray<string>) {
+  const result = spawnSync(command, [...args], { encoding: "utf8" });
+  if (result.error !== undefined) {
+    const operation = [`run ${command}`, ...args].join(" ");
+    return yield* new TransportError({ operation, cause: result.error });
+  }
+  const { stdout, stderr } = result;
+  if (result.status !== 0) {
+    // A null status means a signal ended it: no exit code, so -1.
+    return yield* new CommandFailed({ code: result.status ?? -1, stdout, stderr });
+  }
+  return { stdout, stderr };
+});
+
 export class HerdrHost extends Context.Service<
   HerdrHost,
   {
@@ -269,6 +300,11 @@ export class HerdrHost extends Context.Service<
     readonly makeTempDir: Effect.Effect<string, TransportError | HostUnreachable>;
     /** Removes the folder at the absolute `path` on the host, and everything in it. */
     readonly removeTempDir: (path: string) => Effect.Effect<void, TransportError | HostUnreachable>;
+    /** Crops the image at the absolute `path` on the host to `crop`, in place, with `sips`. */
+    readonly cropImage: (
+      path: string,
+      crop: Crop,
+    ) => Effect.Effect<void, CommandFailed | TransportError | HostUnreachable>;
   }
 >()("herdr-mods/HerdrHost") {
   /**
@@ -362,6 +398,13 @@ export class HerdrHost extends Context.Service<
           const result = yield* ssh(`rm -rf -- ${shQuote(path)}`);
           yield* succeeded(`remove ${target.user}@${target.host}:${path}`, result);
         }),
+        // sips is in /usr/bin on macOS, so it is on PATH even in a non-login SSH shell.
+        cropImage: Effect.fn("HerdrHost.cropImage")(function* (path: string, crop: Crop) {
+          const { code, stdout, stderr } = yield* ssh(
+            ["sips", ...sipsCropArgs(crop), path].map(shQuote).join(" "),
+          );
+          if (code !== 0) return yield* new CommandFailed({ code, stdout, stderr });
+        }),
       }),
     );
   };
@@ -413,19 +456,7 @@ export class HerdrHost extends Context.Service<
         },
         modState,
         removeDevBuild,
-        herdrApp: Effect.fn("HerdrHost.herdrApp")(function* (args: ReadonlyArray<string>) {
-          const result = spawnSync("herdr-app", [...args], { encoding: "utf8" });
-          if (result.error !== undefined) {
-            const operation = ["run herdr-app", ...args].join(" ");
-            return yield* new TransportError({ operation, cause: result.error });
-          }
-          const { stdout, stderr } = result;
-          if (result.status !== 0) {
-            // A null status means a signal ended it: no exit code, so -1.
-            return yield* new CommandFailed({ code: result.status ?? -1, stdout, stderr });
-          }
-          return { stdout, stderr };
-        }),
+        herdrApp: (args) => runLocal("herdr-app", args),
         syncInto: (localDir, path) => {
           const target = resolve(home, path);
           return Effect.try({
@@ -451,6 +482,8 @@ export class HerdrHost extends Context.Service<
             try: () => rmSync(path, { recursive: true, force: true }),
             catch: (cause) => new TransportError({ operation: `remove ${path}`, cause }),
           }),
+        cropImage: (path, crop) =>
+          runLocal("sips", [...sipsCropArgs(crop), path]).pipe(Effect.asVoid),
       }),
     );
   };
