@@ -22,7 +22,7 @@
     // Effect's language service, for the editor (TypeScript patched by `prepare`).
     // Its diagnostics come from `vp lint` instead, so they aren't shown twice.
     "plugins": [{ "name": "@effect/language-service", "diagnostics": false }],
-    // The Herdr app's types, linked by `vp run types` (scripts/link-herdr-types.sh).
+    // The Herdr app's types, put there by `vp run types` (scripts/herdr-types.ts).
     // gpui-kit.d.ts declares its modules itself; herdr.d.ts is a plain module file.
     "paths": {
       "herdr": ["./.herdr-types/herdr.d.ts"]
