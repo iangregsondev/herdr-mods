@@ -13,7 +13,7 @@ import {
   type HerdrStatus,
   type LayoutNode,
 } from "./herdr-slots.ts";
-import { readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import { fakeBin, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 /** A node's children; empty when it has none, so a missing list fails on the assertion. */
 const childrenOf = (node: LayoutNode | null): LayoutNode[] => node?.children ?? [];
@@ -326,6 +326,48 @@ describe("ensureSlot", () => {
     expect(children).toHaveLength(3);
     expect(children[0]).toMatchObject({ type: "block", content: { mod: "hello" } });
     expect(children[0]).not.toHaveProperty("size");
+  });
+});
+
+describe("ensureSlot, with herdr-app from PATH", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
+
+  /** Puts a folder first on PATH holding a `herdr-app` that runs `body`, or none when undefined. */
+  const herdrApp = (body: string | undefined): void => {
+    const bin = join(tempDir(), "bin");
+    if (body !== undefined) fakeBin(bin, "herdr-app", body);
+    vi.stubEnv("PATH", body === undefined ? bin : `${bin}:${process.env.PATH ?? ""}`);
+  };
+
+  test("reads the shown layout from herdr-app status and adds the slot", () => {
+    const home = tempDir();
+    const work = writeFile(home, "layouts/work.json", json(bare()));
+    herdrApp(`[ "$1" = status ] && echo '{"layout":"work","errors":[]}'`);
+
+    expect(ensureSlot("hello", {}, { home })).toBe('herdr-slots: added hello to "work" (right).');
+    expect(hasSlot(readLayout(work), "hello")).toBe(true);
+  });
+
+  test("says Herdr isn't running when herdr-app status exits non-zero", () => {
+    const home = tempDir();
+    herdrApp("exit 1");
+
+    expect(ensureSlot("hello", {}, { home })).toBe(
+      "herdr-slots: Herdr isn't running; open it to see hello.",
+    );
+  });
+
+  test("says herdr-app isn't installed when it isn't on PATH", () => {
+    const home = tempDir();
+    herdrApp(undefined);
+
+    expect(ensureSlot("hello", {}, { home })).toBe(
+      "herdr-slots: herdr-app not found on PATH; install the Herdr app to see hello.",
+    );
   });
 });
 

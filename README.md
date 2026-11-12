@@ -19,10 +19,13 @@ Either way, the agent copies the folder into `~/.config/herdr-app/mods/` and run
 ## Develop
 
 ```bash
-vp install                # also links the Herdr app's types (docs/types.md)
-vp run <name>#dev         # live: builds into ~/.config/herdr-app/mods/<name>/ and shows its panel; Herdr reloads on every save
+vp install                # also puts the Herdr app's types in .herdr-types/ (docs/types.md)
+vp run <name>#dev         # live: builds into the Herdr app's mods/<name>/ and shows its panel; Herdr reloads on every save
+vp run herdr status       # herdr-app on the same Herdr; also `vp run herdr shot <file> --crop x,y,w,h`
 vp run dev:remove <name>  # done (stop the watch first): removes the dev build and its panel from Herdr
 ```
+
+Herdr on another machine? Copy `herdr-dev.example.json` to `herdr-dev.json` and fill in the Herdr host: every command above then works over SSH. See [docs/develop.md](docs/develop.md#remote-herdr-host).
 
 Before you commit:
 

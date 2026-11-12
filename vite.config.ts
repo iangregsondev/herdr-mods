@@ -60,6 +60,12 @@ export default defineConfig({
       { files: ["apps/*/src/**", "packages/*/src/**"], rules: pureRules("error") },
       // A mod's View is a class Herdr mutates through init/render: exempt it.
       { files: ["apps/*/src/main.ts"], rules: pureRules("off") },
+      // Effect code is tested with @effect/vitest (.claude/rules/tests.md), which Effect marks
+      // unstable. The tests depend on it on purpose, so the warning would only be noise there.
+      {
+        files: ["scripts/*.test.ts", "apps/*/tests/**", "packages/*/tests/**"],
+        rules: { "effecttsgo/unstable-api-usage": "off" },
+      },
       // Every cast says why, main.ts, scripts and the shared pack config included.
       {
         files: ["apps/*/src/**", "packages/*/src/**", "scripts/**", "mod-pack.ts"],
@@ -73,12 +79,12 @@ export default defineConfig({
     // These act on the Herdr app's folder, outside the repo, where the cache can't see changes.
     // Cached, they would replay an old result without running.
     tasks: {
-      types: { command: "sh scripts/link-herdr-types.sh", cache: false },
-      "check:mods": {
-        command: 'for d in mods/*/; do herdr-app check "$d" || exit 1; done',
-        cache: false,
-      },
+      types: { command: "vpx scripts/herdr-types.ts", cache: false },
+      // herdr-app check on every built mod, on the dev target's Herdr host.
+      "check:mods": { command: "vpx scripts/check-mods.ts", cache: false },
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
+      // herdr-app on the dev target's Herdr host: here, or over SSH (herdr-dev.json).
+      herdr: { command: "vpx scripts/herdr.ts", cache: false },
       // Reads git's file list, which the cache doesn't track.
       "audit:config": { command: "vpx scripts/audit.ts", cache: false },
     },

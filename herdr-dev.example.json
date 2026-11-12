@@ -1,0 +1,10 @@
+{
+  "target": "remote",
+  "remote": {
+    "host": "herdr-host.example",
+    "user": "your-user",
+    "port": 22,
+    "herdrHome": "~/.config/herdr-app",
+    "herdrApp": "~/.local/bin/herdr-app"
+  }
+}
