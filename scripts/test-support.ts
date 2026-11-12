@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { onTestFinished } from "vite-plus/test";
+import { onTestFinished, vi } from "vite-plus/test";
 import type { LayoutNode } from "./herdr-slots.ts";
 
 /** A new empty folder, removed when the current test finishes. Call it inside a test. */
@@ -171,6 +171,96 @@ export function git(cwd: string, args: readonly string[]): string {
       GIT_COMMITTER_EMAIL: "test@example.com",
     }),
   });
+}
+
+/** A fake Herdr host for the Remote layer: see `fakeHerdrHost`. */
+export interface FakeHerdrHost {
+  /** The host's file system root; the remote shell's HOME, so `~/…` lands here. */
+  readonly root: string;
+  /** The Herdr home on the host: `<root>/.config/herdr-app`. */
+  readonly home: string;
+  /** Where the host's `herdr-app` goes: `<root>/.local/bin`. Add one with `fakeBin`. */
+  readonly appBin: string;
+  /** The dev target that reaches this host, with defaults for Herdr home and app path. */
+  readonly target: {
+    readonly host: string;
+    readonly user: string;
+    readonly port: number;
+    readonly herdrHome: string;
+    readonly herdrApp: string;
+    readonly file: string;
+  };
+  /** One line per `ssh` call: its arguments, space-joined. Read with `loggedLines`. */
+  readonly sshLog: string;
+  /** One line per `rsync` call: its arguments, space-joined. Read with `loggedLines`. */
+  readonly rsyncLog: string;
+}
+
+/**
+ * A temp folder acting as a Herdr host reached over SSH, with fake `ssh` and `rsync`
+ * put first on PATH for the current test. Fake `ssh` logs its arguments, skips its
+ * options and the host name, and runs the rest with `sh -c` in `root` (HOME=root,
+ * TMPDIR=root/tmp), reading its stdin. Fake `rsync` logs its arguments and copies the
+ * last two (source, destination) locally, dropping `user@host:` and reading a relative
+ * remote path from `root`; a source ending in `/` copies the folder's contents. With
+ * `unreachable`, both print an SSH connection error and exit 255, as they do when the
+ * host can't be reached. Call it inside a test.
+ */
+export function fakeHerdrHost(options: { readonly unreachable?: boolean } = {}): FakeHerdrHost {
+  const dir = tempDir();
+  const root = join(dir, "host");
+  const bin = join(dir, "bin");
+  const sshLog = join(dir, "ssh.log");
+  const rsyncLog = join(dir, "rsync.log");
+  mkdirSync(join(root, "tmp"), { recursive: true });
+  const unreachable = options.unreachable
+    ? "echo 'ssh: connect to host herdr-host port 2222: Connection refused' >&2\nexit 255"
+    : "";
+  fakeBin(
+    bin,
+    "ssh",
+    [
+      `printf '%s\\n' "$*" >> ${shQuote(sshLog)}`,
+      unreachable,
+      // Skip the options (and the values of those that take one), then the host name.
+      'while [ $# -gt 0 ]; do case "$1" in -p|-o|-l) shift 2 ;; -*) shift ;; *) break ;; esac; done',
+      "shift",
+      `cd ${shQuote(root)} && HOME=${shQuote(root)} TMPDIR=${shQuote(join(root, "tmp"))} exec sh -c "$*"`,
+    ].join("\n"),
+  );
+  fakeBin(
+    bin,
+    "rsync",
+    [
+      `printf '%s\\n' "$*" >> ${shQuote(rsyncLog)}`,
+      unreachable,
+      // A remote path (user@host:path) without the prefix; a relative one is under root.
+      'local_path() { case "$1" in *@*:*) p=${1#*:}; case "$p" in /*) printf \'%s\' "$p" ;;' +
+        ` *) printf '%s/%s' ${shQuote(root)} "$p" ;; esac ;; *) printf '%s' "$1" ;; esac; }`,
+      "for arg; do src=$dest; dest=$arg; done",
+      'src=$(local_path "$src"); dest=$(local_path "$dest")',
+      'case "$src" in */) mkdir -p "$dest" && cp -R "$src". "$dest" ;; *) cp "$src" "$dest" ;; esac',
+    ].join("\n"),
+  );
+  vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  return {
+    root,
+    home: join(root, ".config/herdr-app"),
+    appBin: join(root, ".local/bin"),
+    target: {
+      host: "herdr-host",
+      user: "ann",
+      port: 2222,
+      herdrHome: "~/.config/herdr-app",
+      herdrApp: "~/.local/bin/herdr-app",
+      file: "herdr-dev.json",
+    },
+    sshLog,
+    rsyncLog,
+  };
 }
 
 /** A layout block holding `mod`, with id `b-<mod>`. */
