@@ -11,7 +11,7 @@ vp run hello#dev          # 1. start: the iangregsondev-hello panel appears on t
 vp run dev:remove hello   # 4. clean up: the files and the panel go
 ```
 
-Swap `hello` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0001](adr/0001-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
+Swap `hello` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0002](adr/0002-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
 
 This works as it is when Herdr runs on the same machine as the repo. If Herdr runs on another machine, set that up first: [Remote Herdr host](#remote-herdr-host).
 
@@ -109,7 +109,7 @@ or, once it's pushed:
 - **It works on this machine's Herdr only.** Unlike the dev loop, it doesn't follow the dev target yet: with a `remote` target, run it on the Herdr host itself.
 - **The worktrunk mod must be installed** (or running as a dev build) for the panel and toggle to show in the layout.
 - **`vp run dev:remove` leaves this layout alone.** Its blocks belong to the sync, so they stay when a dev build goes: after `dev:remove worktrunk` the layout still names the panel and toggle, and they come back with the next `vp run worktrunk#dev`.
-- **Worktrunk items in Herdr's menus need the repo and the sync.** Herdr gives mods no way to add menu items, so the `menus` mod plays Herdr's own `tabs`, `spaces`, `new-menu` and `menu` from copies of Herdr's installed code, patched at run time ([ADR 0002](adr/0002-extend-herdr-menus.md)). Only a layout that names it uses it, and `herdr:sync` writes that layout. The sync swaps the tab bar and sidebar only when `menus` is installed (or running as a dev build), and says so when it isn't; the items also need the worktrunk mod. After `dev:remove menus` the layout still names it, so the window has no tab bar or sidebar until `vp run menus#dev` runs again or a sync with the mod gone puts Herdr's own back.
+- **Worktrunk items in Herdr's menus need the repo and the sync.** Herdr gives mods no way to add menu items, so the `menus` mod plays Herdr's own `tabs`, `spaces`, `new-menu` and `menu` from copies of Herdr's installed code, patched at run time ([ADR 0003](adr/0003-extend-herdr-menus.md)). Only a layout that names it uses it, and `herdr:sync` writes that layout. The sync swaps the tab bar and sidebar only when `menus` is installed (or running as a dev build), and says so when it isn't; the items also need the worktrunk mod. After `dev:remove menus` the layout still names it, so the window has no tab bar or sidebar until `vp run menus#dev` runs again or a sync with the mod gone puts Herdr's own back.
 - **The layout is generated.** Every run rebuilds it from `main`, so hand edits to `iangregsondev.json` are lost. Change the additions in `scripts/herdr-sync.ts` (`LAYOUT_EDITS`) instead.
 
 **When to re-run it:**

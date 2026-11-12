@@ -1,5 +1,5 @@
 // The copies of Herdr's mods this mod plays: Herdr's installed `main.js`, patched, written
-// into this mod's own folder and imported from there (docs/adr/0002). Pure: `herdr` is
+// into this mod's own folder and imported from there (docs/adr/0003). Pure: `herdr` is
 // imported as a type only, and main.ts hands the real API to the layers.
 import { Context, Data, Effect, Layer, Option, Predicate, Result } from "effect";
 import { at, fields, Files, type FileError, type WriteConflict } from "worktrunk-mailbox";

@@ -1,5 +1,5 @@
 // Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items added.
-// Herdr gives mods no way to add menu items (docs/adr/0002), so each copy of this mod
+// Herdr gives mods no way to add menu items (docs/adr/0003), so each copy of this mod
 // plays one of Herdr's own mods: it copies Herdr's installed `main.js` into this mod's
 // folder (patched where `wraps.ts` says), imports the copy and shows Herdr's view from it.
 // Herdr's new items and fixes arrive by themselves; no Herdr code is kept in this repo.

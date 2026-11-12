@@ -1,7 +1,7 @@
 // Shared `vp pack` settings for every mod in apps/.
 // A mod builds from apps/<name>/src/main.ts into the repo-root mods/<mod id>/,
 // the folder Herdr users install. That output is committed.
-// The mod id is the namespace, a hyphen and the short name (docs/adr/0001):
+// The mod id is the namespace, a hyphen and the short name (docs/adr/0002):
 // apps/hello/ installs as iangregsondev-hello. The source, package names and dev
 // commands keep the short name; only the installed folders carry the id.
 //
