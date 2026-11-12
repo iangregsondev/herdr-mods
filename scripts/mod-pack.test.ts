@@ -18,7 +18,6 @@ import {
   type ModPackOptions,
   stagingFolder,
   watchFromArgv,
-  watchStarted,
 } from "../mod-pack.ts";
 import { describeDevTarget, DevTarget } from "./dev-config.ts";
 import { DEV_MARKER, hasSlot, type ModJson } from "./herdr-slots.ts";
@@ -34,6 +33,7 @@ import {
 } from "./test-support.ts";
 
 type PackConfig = ReturnType<typeof modPackConfig>;
+type SinglePack = Exclude<PackConfig, readonly unknown[]>;
 
 /**
  * Where remote watches in these tests stage their builds, so no test writes into
@@ -41,28 +41,43 @@ type PackConfig = ReturnType<typeof modPackConfig>;
  */
 const testStagingRoot = mkdtempSync(join(tmpdir(), "herdr-mods-staging-"));
 afterAll(() => rmSync(testStagingRoot, { recursive: true, force: true }));
-type SinglePack = Exclude<PackConfig, readonly unknown[]>;
 
 /** An `ensureSlot` that fails the test if called: no test reaches the real Herdr app. */
 const unexpectedEnsureSlot: EnsureSlot = (mod) => {
   throw new Error(`ensureSlot called for ${mod} in a test that gave it no fake`);
 };
 
+/** A watch's config and the work its start began in the background. */
+interface StartedWatch {
+  readonly config: SinglePack;
+  /** Resolves when the work the watch started (the types refresh) is done. */
+  readonly started: Promise<void>;
+}
+
 /**
- * modPack's config, narrowed from vp's "one config or a list" type to the one it returns.
- * The test waits, when it finishes, for the work the watch started in the background,
- * so nothing still writes into its temp folders as they are removed. The finish
- * callbacks run newest first, so this runs before those folders go.
+ * modPack's config, narrowed from vp's "one config or a list" type to the one it returns,
+ * with what its `onStarted` was given. The test waits, when it finishes, for the work the
+ * watch started in the background, so nothing still writes into its temp folders as they
+ * are removed. The finish callbacks run newest first, so this runs before those folders go.
  */
-function startedPack(name: string, options: ModPackOptions): SinglePack {
-  const config = modPackConfig(name, options);
-  onTestFinished(() => watchStarted(config));
+function startedPack(name: string, options: ModPackOptions): StartedWatch {
+  const starts: Promise<void>[] = [];
+  onTestFinished(async () => {
+    await Promise.all(starts);
+  });
+  const config = modPackConfig(name, {
+    ...options,
+    onStarted: (start) => {
+      starts.push(start);
+      options.onStarted?.(start);
+    },
+  });
   if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
-  return config;
+  return { config, started: Promise.all(starts).then(() => undefined) };
 }
 
 /** `startedPack`, with `ensureSlot` defaulting to `unexpectedEnsureSlot`. */
-function modPack(name: string, options: ModPackOptions = {}): SinglePack {
+function startedModPack(name: string, options: ModPackOptions = {}): StartedWatch {
   return startedPack(name, {
     ensureSlot: unexpectedEnsureSlot,
     typesDir: join(tempDir(), "types"),
@@ -70,6 +85,10 @@ function modPack(name: string, options: ModPackOptions = {}): SinglePack {
     ...options,
   });
 }
+
+/** `startedModPack`'s config. */
+const modPack = (name: string, options: ModPackOptions = {}): SinglePack =>
+  startedModPack(name, options).config;
 
 type SlotCall = Parameters<EnsureSlot>;
 
@@ -337,10 +356,22 @@ describe("modPack, Herdr types on start", () => {
     writeTypeFiles(host.home);
     const typesDir = join(tempDir(), "types");
     silencedLog();
-    await watchStarted(modPack(stagedModName(), { watch: true, typesDir }));
+    await startedModPack(stagedModName(), { watch: true, typesDir }).started;
     expect(typeFiles.map((file) => contentOf(join(typesDir, file)))).toEqual(
       typeFiles.map((file) => `// ${file}\n`),
     );
+  });
+
+  test("a remote watch hands onStarted its start, which resolves once the types are in", async () => {
+    const host = remoteHerdrHost();
+    writeTypeFiles(host.home);
+    const typesDir = join(tempDir(), "types");
+    silencedLog();
+    const starts: Promise<void>[] = [];
+    modPack(stagedModName(), { watch: true, typesDir, onStarted: (start) => starts.push(start) });
+    expect(starts).toHaveLength(1);
+    await Promise.all(starts);
+    expect(contentOf(join(typesDir, "herdr.d.ts"))).toBe("// herdr.d.ts\n");
   });
 
   test("a local watch prints a types refresh that throws, and still starts", () => {
@@ -365,8 +396,8 @@ describe("modPack, Herdr types on start", () => {
       if (String(line).startsWith("herdr-types:")) throw new Error("stdout closed");
     });
     const error = silencedError();
-    const config = modPack(stagedModName(), { watch: true });
-    await expect(watchStarted(config)).resolves.toBeUndefined();
+    const { started } = startedModPack(stagedModName(), { watch: true });
+    await expect(started).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/types.*stdout closed/));
   });
 
@@ -375,9 +406,9 @@ describe("modPack, Herdr types on start", () => {
     const error = silencedError();
     silencedLog();
     const name = stagedModName();
-    const config = modPack(name, { watch: true });
+    const { config, started } = startedModPack(name, { watch: true });
     expect(config.outDir).toBe(staged(name));
-    await watchStarted(config);
+    await started;
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/^herdr-types: no Herdr app types/));
   });
 });
@@ -415,7 +446,7 @@ describe("modPack, local watch slot step", () => {
  * modPack's watch config for `name`, with the real slot step (on the fake host)
  * and a mod.json of `modJson` (default: none of its fields).
  */
-function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
+function remoteWatch(name: string, modJson: ModJson = {}): StartedWatch {
   return startedPack(name, {
     watch: true,
     modDir: modSource(modJson),
@@ -423,6 +454,10 @@ function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
     stagingRoot: testStagingRoot,
   });
 }
+
+/** `remoteWatch`'s config. */
+const remoteModPack = (name: string, modJson: ModJson = {}): SinglePack =>
+  remoteWatch(name, modJson).config;
 
 describe("modPack, remote watch", () => {
   test("builds into the staging folder, never the repo's mods/ or a local Herdr home", () => {
@@ -520,8 +555,8 @@ describe("modPack, remote watch", () => {
     const name = stagedModName();
     const log = silencedLog();
     const error = silencedError();
-    const config = remoteModPack(name);
-    await watchStarted(config);
+    const { config, started } = remoteWatch(name);
+    await started;
     // Printing the first "synced" line throws, as writing to a closed stdout does.
     log.mockImplementationOnce(() => {
       throw new Error("stdout closed");

@@ -96,6 +96,13 @@ export interface ModPackOptions {
    * them to the Herdr host. Defaults to the repo's `node_modules/.herdr-dev/`.
    */
   stagingRoot?: string;
+  /**
+   * Given, once a watch has started, the work it started in the background (the
+   * types refresh over SSH), which resolves when that is done and never rejects.
+   * The watch never waits on it; a caller that must not outlive it, such as a
+   * test, can. Defaults to doing nothing.
+   */
+  onStarted?: (started: Promise<void>) => void;
 }
 
 /** What the dev marker says, for anyone who finds it in a mod's folder. */
@@ -336,17 +343,6 @@ function startWatch(target: DevTarget, typesDir: string): Promise<void> {
   return Effect.runPromise(refresh);
 }
 
-/** The background work each watch config's start began, keyed by the config. */
-const startedWork = new WeakMap<PackConfig, Promise<void>>();
-
-/**
- * Resolves when the work `config`'s watch started in the background (the types
- * refresh over SSH) is done; at once for a config with none. The watch never
- * waits on it, but a caller that must not outlive it, such as a test, can.
- */
-export const watchStarted = (config: PackConfig): Promise<void> =>
-  startedWork.get(config) ?? Promise.resolve();
-
 export function modPack(
   name: string,
   {
@@ -355,20 +351,20 @@ export function modPack(
     ensureSlot: slot = ensureSlotOnTarget,
     typesDir = TYPES_DIR,
     stagingRoot = STAGING_ROOT,
+    onStarted = () => undefined,
   }: ModPackOptions = {},
 ): PackConfig {
   if (!watch) return packConfig(`../../mods/${name}`);
   const target = devTarget();
-  const started = startWatch(target, typesDir);
-  const config =
-    target._tag === "Remote"
-      ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
-      : packConfig(
-          devOutDir(name, target.herdrHome),
-          slotOnFirstBuild(name, { target, modDir, slot }),
-        );
-  startedWork.set(config, started);
-  return config;
+  // Handed on before the out dir is claimed, so a caller can wait on the start
+  // even when claiming it throws.
+  onStarted(startWatch(target, typesDir));
+  return target._tag === "Remote"
+    ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
+    : packConfig(
+        devOutDir(name, target.herdrHome),
+        slotOnFirstBuild(name, { target, modDir, slot }),
+      );
 }
 
 /** The watch config for a remote dev target: stage here, sync to the host. */
