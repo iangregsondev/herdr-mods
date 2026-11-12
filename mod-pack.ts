@@ -316,7 +316,16 @@ function printTypes(result: TypesResult): void {
  */
 function startWatch(target: DevTarget, typesDir: string): Promise<void> {
   console.log(describeDevTarget(target));
-  const refresh = refreshHerdrTypes(target, typesDir).pipe(Effect.map(printTypes));
+  // A defect (printing included) is printed too, so the refresh never stops the
+  // watch and never leaves a rejected promise that no one handles.
+  const refresh = refreshHerdrTypes(target, typesDir).pipe(
+    Effect.map(printTypes),
+    Effect.catchDefect((defect) =>
+      Effect.sync(() =>
+        console.error(`mod-pack: couldn't refresh Herdr's types (${causeText(defect)})`),
+      ),
+    ),
+  );
   if (target._tag === "Local") return Promise.resolve(Effect.runSync(refresh));
   return Effect.runPromise(refresh);
 }

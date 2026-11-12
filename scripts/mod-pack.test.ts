@@ -339,6 +339,33 @@ describe("modPack, Herdr types on start", () => {
     );
   });
 
+  test("a local watch prints a types refresh that throws, and still starts", () => {
+    const home = localHerdrHome();
+    writeTypeFiles(home);
+    const log = silencedLog();
+    // Printing the types line throws, as writing to a closed stdout does.
+    log.mockImplementation((line: unknown) => {
+      if (String(line).startsWith("herdr-types:")) throw new Error("stdout closed");
+    });
+    const error = silencedError();
+    expect(modPack("hello", { watch: true }).outDir).toBe(join(home, "mods", "hello"));
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/types.*stdout closed/));
+  });
+
+  test("a remote watch prints a types refresh that throws, and its start still resolves", async () => {
+    const host = remoteHerdrHost();
+    writeTypeFiles(host.home);
+    const log = silencedLog();
+    // Printing the types line throws, as writing to a closed stdout does.
+    log.mockImplementation((line: unknown) => {
+      if (String(line).startsWith("herdr-types:")) throw new Error("stdout closed");
+    });
+    const error = silencedError();
+    const config = modPack(stagedModName(), { watch: true });
+    await expect(watchStarted(config)).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/types.*stdout closed/));
+  });
+
   test("a watch with no type files on the host says so and still starts", async () => {
     remoteHerdrHost();
     const error = silencedError();
