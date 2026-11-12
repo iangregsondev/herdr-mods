@@ -1,9 +1,11 @@
 import { afterEach, assert, describe, it, vi } from "@effect/vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
 import { runCheckMods } from "./check-mods.ts";
-import { fakeBin, fakeHerdrHost, tempDir, writeFile } from "./test-support.ts";
+import { fakeBin, fakeHerdrHost, loggedLines, tempDir, writeFile } from "./test-support.ts";
 
 /** A repo `mods/` folder holding a built mod for each name. */
 const modsFolder = (names: ReadonlyArray<string>): string => {
@@ -80,6 +82,24 @@ describe("runCheckMods, remote target", () => {
   });
 });
 
+describe("runCheckMods, copy to the host fails", () => {
+  it.effect("exits 1 naming the failed copy and removes its temp folder", () => {
+    const fake = fakeHerdrHost();
+    hostCheck(fake.appBin);
+    const mods = modsFolder(["hello"]);
+    chmodSync(join(mods, "hello/main.js"), 0o000);
+    return Effect.gen(function* () {
+      const result = yield* runCheckMods(mods, { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.strictEqual(result.code, 1);
+      assert.match(
+        result.stderr,
+        /^check:mods: couldn't sync .*\(exit 1: .*Permission denied\)\n$/,
+      );
+      assert.deepStrictEqual(readdirSync(join(fake.root, "tmp")), []);
+    });
+  });
+});
+
 describe("runCheckMods, the host's own mods", () => {
   it.effect("leaves the Herdr host's mods folder as it was", () => {
     const fake = fakeHerdrHost();
@@ -134,5 +154,96 @@ describe("runCheckMods, no dev config", () => {
         stderr: "",
       });
     });
+  });
+});
+
+describe("runCheckMods, no dev config, no herdr-app", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.effect("exits 1 naming the command that couldn't run", () => {
+    vi.stubEnv("PATH", join(tempDir(), "empty-bin"));
+    const mods = modsFolder(["hello"]);
+    return Effect.gen(function* () {
+      const result = yield* runCheckMods(mods, { env: {}, repoRoot: tempDir() });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        stdout: "",
+        stderr: `check:mods: couldn't run herdr-app check ${mods}/hello/ (spawnSync herdr-app ENOENT)\n`,
+      });
+    });
+  });
+});
+
+describe("runCheckMods, bad dev config", () => {
+  it.effect("exits 1 naming the file and the field, and checks nothing", () => {
+    const fake = fakeHerdrHost();
+    const config = writeFile(
+      tempDir(),
+      "herdr-dev.json",
+      '{ "target": "remote", "remote": { "user": "ann" } }',
+    );
+    const mods = modsFolder(["hello"]);
+    return Effect.gen(function* () {
+      const result = yield* runCheckMods(mods, { env: { HERDR_DEV_CONFIG: config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        stdout: "",
+        stderr: `check:mods: ${config}: remote.host: Missing key\n`,
+      });
+      assert.deepStrictEqual(loggedLines(fake.sshLog), []);
+    });
+  });
+
+  it.effect("exits 1 naming a config file that can't be read", () => {
+    const config = join(tempDir(), "missing.json");
+    const mods = modsFolder(["hello"]);
+    return Effect.gen(function* () {
+      const result = yield* runCheckMods(mods, { env: { HERDR_DEV_CONFIG: config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        stdout: "",
+        stderr: `check:mods: couldn't read ${config} (ENOENT: no such file or directory, open '${config}')\n`,
+      });
+    });
+  });
+});
+
+describe("runCheckMods, nothing to check", () => {
+  it.effect("exits 1 when mods/ holds no mod, so an empty build never passes", () => {
+    const fake = fakeHerdrHost();
+    hostCheck(fake.appBin);
+    const mods = modsFolder([]);
+    return Effect.gen(function* () {
+      const result = yield* runCheckMods(mods, { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        stdout: "",
+        stderr: `check:mods: no mods in ${mods}\n`,
+      });
+      assert.deepStrictEqual(loggedLines(fake.sshLog), []);
+    });
+  });
+});
+
+describe("check-mods CLI", () => {
+  it("prints each check and exits 1 naming the mod that failed", () => {
+    const fake = fakeHerdrHost();
+    hostCheck(fake.appBin, ["world"]);
+    const mods = modsFolder(["hello", "world"]);
+    const result = spawnSync("vpx", ["scripts/check-mods.ts", mods], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      env: { ...process.env, HERDR_DEV_CONFIG: fake.config },
+      encoding: "utf8",
+    });
+    assert.deepStrictEqual(
+      { code: result.status, stdout: result.stdout, stderr: result.stderr },
+      {
+        code: 1,
+        stdout: "check passed: hello\n",
+        stderr: "check failed: world\ncheck:mods: failed: world\n",
+      },
+    );
   });
 });

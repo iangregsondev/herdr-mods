@@ -1,5 +1,11 @@
+// Runs `herdr-app check` on every built mod in the repo's mods/, on the dev target's
+// Herdr host. Local: on each mods/<name>/ in place. Remote: on a copy of mods/ in a
+// temp folder on the host, removed whatever the result. Every mod is checked, and
+// the run exits 1 naming each one that failed.
+//
+//   vp run check:mods
 import { readdirSync } from "node:fs";
-import { Effect, Predicate } from "effect";
+import { Effect, Predicate, Result } from "effect";
 import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import { CommandFailed, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
 
@@ -54,14 +60,25 @@ const summary = (checks: ReadonlyArray<ModCheck>): CheckModsResult => {
     : { code: 1, stdout, stderr: `${stderr}check:mods: failed: ${failed.join(", ")}\n` };
 };
 
+/** Checks every mod in `modsDir` on the dev target's Herdr host. Never fails: every failure is a result. */
 export const runCheckMods = Effect.fn("runCheckMods")(function* (
   modsDir: string,
   options: LoadOptions = {},
 ): Effect.fn.Return<CheckModsResult> {
-  const target = yield* loadDevTarget(options).pipe(Effect.orDie);
+  const loaded = yield* Effect.result(loadDevTarget(options));
+  if (Result.isFailure(loaded)) {
+    const error = loaded.failure;
+    return failure(
+      error._tag === "DevConfigInvalid"
+        ? `${error.file}: ${error.field}: ${error.message}`
+        : `couldn't read ${error.file} (${causeText(error.cause)})`,
+    );
+  }
+  const target = loaded.success;
   return yield* Effect.gen(function* () {
     const host = yield* HerdrHost;
     const names = yield* modNames(modsDir);
+    if (names.length === 0) return failure(`no mods in ${modsDir}`);
     // Every mod is checked, so one run names every mod that fails.
     const checkEach = (dir: string) =>
       Effect.forEach(names, (name) =>
@@ -91,3 +108,10 @@ export const runCheckMods = Effect.fn("runCheckMods")(function* (
     }),
   );
 });
+
+if (import.meta.main) {
+  const result = await Effect.runPromise(runCheckMods(process.argv[2] ?? "mods"));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exitCode = result.code;
+}
