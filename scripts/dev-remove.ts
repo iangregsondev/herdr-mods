@@ -6,7 +6,7 @@
 import { Effect } from "effect";
 import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import { HerdrHost, hostLayer, type HostUnreachable, type TransportError } from "./herdr-host.ts";
-import { herdrHome, removeSlotsOnHost } from "./herdr-slots.ts";
+import { applySlotRemoval, herdrHome, planSlotRemoval } from "./herdr-slots.ts";
 
 export interface DevRemoveResult {
   /**
@@ -22,6 +22,13 @@ export interface DevRemoveResult {
 
 const usage: DevRemoveResult = { code: 2, out: [], err: ["usage: vp run dev:remove <name>"] };
 
+/** Exit 1 with `message` on stderr. */
+const failed = (message: string): DevRemoveResult => ({
+  code: 1,
+  out: [],
+  err: [`dev-remove: ${message}`],
+});
+
 /** Removes the dev build named in `args` from the Herdr host. */
 export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   args: readonly string[],
@@ -31,6 +38,9 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
 
   const host = yield* HerdrHost;
   const dir = host.location(`mods/${name}`);
+  // Every layout is read before anything on the host changes, so a host that
+  // can't be reached, or drops while being read, leaves it all as it was.
+  const plan = yield* planSlotRemoval(name);
   const removed = yield* host
     .removeDevBuild(name)
     .pipe(Effect.catchTag("InstalledModInTheWay", () => Effect.succeed("Installed" as const)));
@@ -46,7 +56,7 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
 
   // A layout that can't be read is left as it is; every readable one is still cleaned,
   // so the lines above stay true and the skipped ones are named on stderr.
-  const { changed, skipped } = yield* removeSlotsOnHost(name);
+  const { changed, skipped } = yield* applySlotRemoval(plan);
   const quoted = (names: readonly string[]) => names.map((l) => `"${l}"`).join(", ");
   const panel =
     changed.length > 0
@@ -68,7 +78,10 @@ export const runDevRemove = Effect.fn("runDevRemove")(function* (
   options: LoadOptions = {},
 ) {
   const target = yield* loadDevTarget(options);
-  return yield* devRemoveOnHost(args).pipe(Effect.provide(hostLayer(target)));
+  return yield* devRemoveOnHost(args).pipe(
+    Effect.provide(hostLayer(target)),
+    Effect.catchTag("HostUnreachable", (error) => Effect.succeed(failed(error.message))),
+  );
 });
 
 /** `devRemoveOnHost` against the Herdr app on this machine, at `home`. */

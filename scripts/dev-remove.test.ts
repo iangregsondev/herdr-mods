@@ -2,11 +2,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assert, describe, expect, it, test } from "@effect/vitest";
+import { assert, describe, expect, it, test, vi } from "@effect/vitest";
 import { Effect } from "effect";
 import { devRemove, runDevRemove } from "./dev-remove.ts";
 import { DEV_MARKER, hasSlot, type LayoutNode } from "./herdr-slots.ts";
-import { fakeHerdrHost, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import { fakeBin, fakeHerdrHost, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const usage = "usage: vp run dev:remove <name>";
@@ -22,6 +22,25 @@ function writeDevBuild(home: string, mod: string): string {
   writeFile(home, `mods/${mod}/${DEV_MARKER}`, "");
   writeFile(home, `mods/${mod}/main.js`, "export default {};\n");
   return join(home, "mods", mod);
+}
+
+/**
+ * Puts an `ssh` first on PATH that fails as an unreachable host (exit 255) for any
+ * call naming `path`, and hands every other call to the `ssh` already on PATH. Call
+ * it after `fakeHerdrHost`, so that one is the fake host's.
+ */
+function dropWhenTouching(path: string): void {
+  const bin = join(tempDir(), "bin");
+  const quotedPath = `'${process.env.PATH ?? ""}'`;
+  fakeBin(
+    bin,
+    "ssh",
+    [
+      `case "$*" in *${path}*) echo 'ssh: dropped' >&2; exit 255 ;; esac`,
+      `PATH=${quotedPath} exec ssh "$@"`,
+    ].join("\n"),
+  );
+  vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
 }
 
 describe("devRemove", () => {
@@ -230,6 +249,49 @@ describe("runDevRemove, remote target", () => {
       });
       assert.isFalse(hasSlot(readLayout(work), "hello"));
       assert.strictEqual(readFileSync(bad, "utf8"), "{");
+    });
+  });
+});
+
+describe("runDevRemove, unreachable host", () => {
+  it.effect("exits 1 saying the Herdr host is unreachable, and changes nothing", () => {
+    const fake = fakeHerdrHost({ unreachable: true });
+    const dir = writeDevBuild(fake.home, "hello");
+    const layout = writeLayout(fake.home, "work", ["hello"]);
+    const layoutBefore = readFileSync(layout, "utf8");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [],
+        err: [
+          "dev-remove: Herdr host unreachable: ann@herdr-host:2222 " +
+            "(ssh: connect to host herdr-host port 2222: Connection refused)",
+        ],
+      });
+      assert.isTrue(existsSync(join(dir, "main.js")));
+      assert.strictEqual(readFileSync(layout, "utf8"), layoutBefore);
+    });
+  });
+
+  it.effect("exits 1 and changes nothing when the host drops while layouts are read", () => {
+    const fake = fakeHerdrHost();
+    dropWhenTouching("layouts/work.json");
+    const dir = writeDevBuild(fake.home, "hello");
+    const play = writeLayout(fake.home, "play", ["hello"]);
+    const work = writeLayout(fake.home, "work", ["hello"]);
+    const playBefore = readFileSync(play, "utf8");
+    const workBefore = readFileSync(work, "utf8");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [],
+        err: ["dev-remove: Herdr host unreachable: ann@herdr-host:2222 (ssh: dropped)"],
+      });
+      assert.isTrue(existsSync(join(dir, "main.js")));
+      assert.strictEqual(readFileSync(play, "utf8"), playBefore);
+      assert.strictEqual(readFileSync(work, "utf8"), workBefore);
     });
   });
 });
