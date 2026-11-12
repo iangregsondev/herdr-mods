@@ -1,12 +1,20 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assert, describe, expect, it, test, vi } from "@effect/vitest";
+import { assert, describe, expect, it, onTestFinished, test, vi } from "@effect/vitest";
 import { Effect } from "effect";
 import { devRemove, runDevRemove } from "./dev-remove.ts";
 import { DEV_MARKER, hasSlot, type LayoutNode } from "./herdr-slots.ts";
-import { fakeBin, fakeHerdrHost, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import {
+  fakeBin,
+  fakeHerdrHost,
+  loggedLines,
+  readLayout,
+  slot,
+  tempDir,
+  writeFile,
+} from "./test-support.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const usage = "usage: vp run dev:remove <name>";
@@ -131,14 +139,71 @@ describe("devRemove", () => {
   });
 });
 
+describe("runDevRemove, bad dev config", () => {
+  it.effect("exits 1 naming the file and the field, and changes nothing", () => {
+    const fake = fakeHerdrHost();
+    const dir = writeDevBuild(fake.home, "hello");
+    const config = writeFile(
+      tempDir(),
+      "herdr-dev.json",
+      '{ "target": "remote", "remote": { "user": "ann" } }',
+    );
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [],
+        err: [`dev-remove: ${config}: remote.host: Missing key`],
+      });
+      assert.isTrue(existsSync(dir));
+      assert.deepStrictEqual(loggedLines(fake.sshLog), []);
+    });
+  });
+
+  it.effect("exits 1 naming a config file that can't be read", () => {
+    const config = join(tempDir(), "missing.json");
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: config } });
+      assert.deepStrictEqual(result, {
+        code: 1,
+        out: [],
+        err: [
+          `dev-remove: couldn't read ${config} (ENOENT: no such file or directory, open '${config}')`,
+        ],
+      });
+    });
+  });
+});
+
 describe("dev-remove CLI", () => {
+  /** Runs the CLI against the Herdr app at `home`, with a dev config targeting `local`. */
   function run(args: readonly string[], home: string) {
+    const config = writeFile(tempDir(), "herdr-dev.json", '{ "target": "local" }\n');
+    return runWith(args, { HERDR_APP_HOME: home, HERDR_DEV_CONFIG: config });
+  }
+
+  function runWith(args: readonly string[], env: Record<string, string>) {
     return spawnSync("vpx", ["scripts/dev-remove.ts", ...args], {
       cwd: repoRoot,
-      env: { ...process.env, HERDR_APP_HOME: home },
+      env: { ...process.env, ...env },
       encoding: "utf8",
     });
   }
+
+  test("follows the dev config: exits 1 when its Herdr host can't be reached", () => {
+    const fake = fakeHerdrHost({ unreachable: true });
+    const home = tempDir();
+    const dir = writeDevBuild(home, "hello");
+
+    const result = runWith(["hello"], { HERDR_APP_HOME: home, HERDR_DEV_CONFIG: fake.config });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "dev-remove: Herdr host unreachable: ann@herdr-host:2222 " +
+        "(ssh: connect to host herdr-host port 2222: Connection refused)\n",
+    );
+    expect(existsSync(dir)).toBe(true);
+  });
 
   test("prints its lines to the shell and exits 0", () => {
     const home = tempDir();
@@ -249,6 +314,42 @@ describe("runDevRemove, remote target", () => {
       });
       assert.isFalse(hasSlot(readLayout(work), "hello"));
       assert.strictEqual(readFileSync(bad, "utf8"), "{");
+    });
+  });
+});
+
+describe("runDevRemove, host can't carry out a change", () => {
+  it.effect("exits 1 naming what it couldn't do, and writes no layout", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, "hello");
+    const layout = writeLayout(fake.home, "work", ["hello"]);
+    const layoutBefore = readFileSync(layout, "utf8");
+    // The folder can't be removed from a mods folder nobody may write to.
+    const mods = join(fake.home, "mods");
+    chmodSync(mods, 0o555);
+    onTestFinished(() => chmodSync(mods, 0o755));
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.strictEqual(result.code, 1);
+      assert.deepStrictEqual(result.out, []);
+      assert.lengthOf(result.err, 1);
+      assert.match(
+        result.err[0] ?? "",
+        /^dev-remove: couldn't remove ann@herdr-host:~\/\.config\/herdr-app\/mods\/hello /,
+      );
+      assert.strictEqual(readFileSync(layout, "utf8"), layoutBefore);
+    });
+  });
+
+  it.effect("names what the host said when a command on it fails", () => {
+    const fake = fakeHerdrHost();
+    writeDevBuild(fake.home, "hello");
+    const mods = join(fake.home, "mods");
+    chmodSync(mods, 0o555);
+    onTestFinished(() => chmodSync(mods, 0o755));
+    return Effect.gen(function* () {
+      const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
+      assert.match(result.err[0] ?? "", /\(rm: .*Permission denied\)$/);
     });
   });
 });

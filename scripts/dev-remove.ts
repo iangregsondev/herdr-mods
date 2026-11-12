@@ -1,17 +1,25 @@
 // Removes a mod's dev build from the Herdr app (made by `vp run <name>#dev`):
 // its folder, <app home>/mods/<name>/, and its slots in your layouts, so the panel goes too.
 // A folder without the dev marker is a real installed mod: it and its slots are left alone.
+// It acts on the dev target's Herdr host: this machine for `local`, over SSH for `remote`.
 //
 //   vp run dev:remove <name>
-import { Effect } from "effect";
+import { Effect, Predicate } from "effect";
 import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
-import { HerdrHost, hostLayer, type HostUnreachable, type TransportError } from "./herdr-host.ts";
-import { applySlotRemoval, herdrHome, planSlotRemoval } from "./herdr-slots.ts";
+import {
+  CommandFailed,
+  HerdrHost,
+  hostLayer,
+  type HostUnreachable,
+  type TransportError,
+} from "./herdr-host.ts";
+import { applySlotRemoval, planSlotRemoval } from "./herdr-slots.ts";
 
 export interface DevRemoveResult {
   /**
-   * The exit code: 2 for a usage error, 1 for an installed mod or a layout that
-   * couldn't be read, 0 otherwise.
+   * The exit code: 2 for a usage error; 1 for an installed mod, a layout that
+   * couldn't be read, a Herdr host that can't be reached or a command on it that
+   * failed, or a dev config that can't be read; 0 otherwise.
    */
   readonly code: 0 | 1 | 2;
   /** Lines for stdout. */
@@ -21,6 +29,17 @@ export interface DevRemoveResult {
 }
 
 const usage: DevRemoveResult = { code: 2, out: [], err: ["usage: vp run dev:remove <name>"] };
+
+/**
+ * A failure's cause as text: what a failed command printed to stderr, else the
+ * cause's message when it has one.
+ */
+const causeText = (cause: unknown): string =>
+  cause instanceof CommandFailed
+    ? cause.stderr.trim().split("\n").join("; ")
+    : Predicate.hasProperty(cause, "message")
+      ? String(cause.message)
+      : String(cause);
 
 /** Exit 1 with `message` on stderr. */
 const failed = (message: string): DevRemoveResult => ({
@@ -72,15 +91,26 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
     : { code: 0, out: [files, panel], err: [] };
 });
 
-/** Removes the dev build named in `args` from the dev target's Herdr host. */
+/**
+ * Removes the dev build named in `args` from the dev target's Herdr host. Never
+ * fails: a host that can't be reached, a command on it that fails, or a dev
+ * config that can't be read is exit 1 with a line saying so.
+ */
 export const runDevRemove = Effect.fn("runDevRemove")(function* (
   args: readonly string[],
   options: LoadOptions = {},
-) {
-  const target = yield* loadDevTarget(options);
-  return yield* devRemoveOnHost(args).pipe(
-    Effect.provide(hostLayer(target)),
-    Effect.catchTag("HostUnreachable", (error) => Effect.succeed(failed(error.message))),
+): Effect.fn.Return<DevRemoveResult> {
+  return yield* loadDevTarget(options).pipe(
+    Effect.flatMap((target) => devRemoveOnHost(args).pipe(Effect.provide(hostLayer(target)))),
+    Effect.catchTags({
+      HostUnreachable: (error) => Effect.succeed(failed(error.message)),
+      TransportError: ({ operation, cause }) =>
+        Effect.succeed(failed(`couldn't ${operation} (${causeText(cause)})`)),
+      DevConfigInvalid: ({ file, field, message }) =>
+        Effect.succeed(failed(`${file}: ${field}: ${message}`)),
+      DevConfigUnreadable: ({ file, cause }) =>
+        Effect.succeed(failed(`couldn't read ${file} (${causeText(cause)})`)),
+    }),
   );
 });
 
@@ -90,7 +120,7 @@ export function devRemove(args: readonly string[], home: string): DevRemoveResul
 }
 
 if (import.meta.main) {
-  const result = devRemove(process.argv.slice(2), herdrHome());
+  const result = await Effect.runPromise(runDevRemove(process.argv.slice(2)));
   result.out.forEach((line) => console.log(line));
   result.err.forEach((line) => console.error(line));
   process.exitCode = result.code;
