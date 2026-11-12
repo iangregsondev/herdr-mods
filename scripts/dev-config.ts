@@ -107,12 +107,16 @@ export class DevConfigUnreadable extends Data.TaggedError("DevConfigUnreadable")
 const CONFIG_NAME = "herdr-dev.json";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
+const readText = (path: string, file: string) =>
+  Effect.try({
+    try: () => readFileSync(path, "utf8"),
+    catch: (cause) => new DevConfigUnreadable({ file, cause }),
+  });
+
 /** The file's text, or none when there is no file at `path`. */
 const readIfPresent = (path: string, file: string) =>
-  Effect.try({
-    try: () => Option.some(readFileSync(path, "utf8")),
-    catch: (cause) => new DevConfigUnreadable({ file, cause }),
-  }).pipe(
+  readText(path, file).pipe(
+    Effect.asSome,
     Effect.catchIf(
       (error) => Predicate.hasProperty(error.cause, "code") && error.cause.code === "ENOENT",
       () => Effect.succeed(Option.none<string>()),
@@ -121,9 +125,10 @@ const readIfPresent = (path: string, file: string) =>
 
 /**
  * Loads the dev target from `herdr-dev.json` at the repo root, or from the file
- * `HERDR_DEV_CONFIG` names. No file means `local`, with the Herdr home from
- * `HERDR_APP_HOME` or the default. A file that can't be read or decoded fails;
- * it never falls back to `local`.
+ * `HERDR_DEV_CONFIG` names. No `herdr-dev.json` at the repo root means `local`,
+ * with the Herdr home from `HERDR_APP_HOME` or the default. A `HERDR_DEV_CONFIG`
+ * path is explicit, so a missing file there fails like any file that can't be
+ * read or decoded: it never falls back to `local`.
  */
 export const loadDevTarget = Effect.fn("loadDevTarget")(function* (options: LoadOptions = {}) {
   const env = options.env ?? process.env;
@@ -132,7 +137,9 @@ export const loadDevTarget = Effect.fn("loadDevTarget")(function* (options: Load
   const path =
     override === undefined ? join(options.repoRoot ?? REPO_ROOT, CONFIG_NAME) : resolve(override);
   const localHome = env.HERDR_APP_HOME ?? join(homedir(), ".config", "herdr-app");
-  const text = yield* readIfPresent(path, file);
+  const text = yield* override === undefined
+    ? readIfPresent(path, file)
+    : Effect.asSome(readText(path, file));
   return yield* Option.match(text, {
     onNone: () => Effect.succeed(DevTarget.Local({ herdrHome: localHome, file, found: false })),
     onSome: (text) => Effect.fromResult(decodeDevConfig(text, { file, localHome })),

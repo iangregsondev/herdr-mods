@@ -211,6 +211,19 @@ describe("loadDevTarget", () => {
       );
     }),
   );
+  it.effect(
+    "fails with DevConfigUnreadable naming the path when HERDR_DEV_CONFIG names no file",
+    () =>
+      Effect.gen(function* () {
+        const missing = join(tempDir(), "typo.json");
+        const result = yield* Effect.result(
+          loadDevTarget({ env: { HERDR_DEV_CONFIG: missing }, repoRoot: tempDir() }),
+        );
+        const error = Result.isFailure(result) ? result.failure : undefined;
+        assert.strictEqual(error?._tag, "DevConfigUnreadable");
+        assert.strictEqual(error?.file, missing);
+      }),
+  );
 });
 
 describe("describeDevTarget", () => {
