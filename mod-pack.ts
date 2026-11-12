@@ -9,6 +9,8 @@
 // - local: builds straight into <app home>/mods/<name>/.
 // - remote: builds into node_modules/.herdr-dev/<name>/ (git-ignored, never cleaned),
 //   then rsyncs that into the Herdr host's mods/<name>/ after each good build.
+// When it starts, a watch prints its dev target and puts Herdr's type files from
+// that target into .herdr-types/ (scripts/herdr-types.ts).
 // Every read and write of the Herdr home goes through HerdrHost; the one file read
 // here directly is the mod's own assets/mod.json, in the repo.
 import { readFileSync } from "node:fs";
@@ -27,6 +29,7 @@ import {
   type TransportError,
 } from "./scripts/herdr-host.ts";
 import { ensureSlot, ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
+import { refreshHerdrTypes, TYPES_DIR, type TypesResult } from "./scripts/herdr-types.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
 
@@ -83,6 +86,11 @@ export interface ModPackOptions {
    * Defaults to `ensureSlotOnHost` from `scripts/herdr-slots.ts`, on the dev target.
    */
   ensureSlot?: EnsureSlot;
+  /**
+   * Where a watch puts Herdr's type files when it starts (see `scripts/herdr-types.ts`).
+   * Defaults to the repo's `.herdr-types/`.
+   */
+  typesDir?: string;
 }
 
 /** What the dev marker says, for anyone who finds it in a mod's folder. */
@@ -285,9 +293,23 @@ function devTarget(): DevTarget {
   }
 }
 
-/** What a watch does once, when it starts: says where its builds go. */
-function startWatch(target: DevTarget): void {
+/** Prints what the types refresh said, to stdout or stderr as it gave it. */
+function printTypes(result: TypesResult): void {
+  if (result.stdout !== "") console.log(result.stdout.trimEnd());
+  if (result.stderr !== "") console.error(result.stderr.trimEnd());
+}
+
+/**
+ * What a watch does once, when it starts: says where its builds go, and puts
+ * Herdr's type files from the dev target into `typesDir`. The refresh never
+ * fails (a problem is printed), so the watch always starts. On this machine it
+ * is done before this returns; over SSH it runs alongside the first build.
+ */
+function startWatch(target: DevTarget, typesDir: string): void {
   console.log(describeDevTarget(target));
+  const refresh = refreshHerdrTypes(target, typesDir).pipe(Effect.map(printTypes));
+  if (target._tag === "Local") Effect.runSync(refresh);
+  else void Effect.runPromise(refresh);
 }
 
 export function modPack(
@@ -296,11 +318,12 @@ export function modPack(
     watch = watchFromArgv(process.argv),
     modDir = process.cwd(),
     ensureSlot: slot = ensureSlotOnTarget,
+    typesDir = TYPES_DIR,
   }: ModPackOptions = {},
 ): PackConfig {
   if (!watch) return packConfig(`../../mods/${name}`);
   const target = devTarget();
-  startWatch(target);
+  startWatch(target, typesDir);
   if (target._tag === "Remote") {
     const staging = stageDevBuild(name);
     const slotStep = slotOnFirstBuild(name, { target, modDir, slot });

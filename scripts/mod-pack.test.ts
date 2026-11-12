@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vite-plus/test";
 import {
@@ -34,7 +42,11 @@ const unexpectedEnsureSlot: EnsureSlot = (mod) => {
  * `ensureSlot` defaults to `unexpectedEnsureSlot`.
  */
 function modPack(name: string, options: ModPackOptions = {}): SinglePack {
-  const config = modPackConfig(name, { ensureSlot: unexpectedEnsureSlot, ...options });
+  const config = modPackConfig(name, {
+    ensureSlot: unexpectedEnsureSlot,
+    typesDir: join(tempDir(), "types"),
+    ...options,
+  });
   if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
   return config;
 }
@@ -279,6 +291,59 @@ function remoteHerdrHost(options: { readonly unreachable?: boolean } = {}) {
   return { ...fake, localHome };
 }
 
+/** Herdr's type files, written into the Herdr home `home`. */
+const typeFiles = ["herdr.d.ts", "gpui-kit.d.ts"] as const;
+function writeTypeFiles(home: string): void {
+  typeFiles.forEach((file) => writeFile(home, file, `// ${file}\n`));
+}
+
+/** Where the link at `path` points, or "not a link". */
+const linkTarget = (path: string): string =>
+  lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true
+    ? readlinkSync(path)
+    : "not a link";
+
+/** What the file at `path` holds, or "missing". */
+const contentOf = (path: string): string =>
+  existsSync(path) ? readFileSync(path, "utf8") : "missing";
+
+describe("modPack, Herdr types on start", () => {
+  test("a local watch links Herdr's type files into the types folder", () => {
+    const home = localHerdrHome();
+    writeTypeFiles(home);
+    const typesDir = join(tempDir(), "types");
+    silencedLog();
+    modPack("hello", { watch: true, typesDir });
+    expect(typeFiles.map((file) => linkTarget(join(typesDir, file)))).toEqual(
+      typeFiles.map((file) => join(home, file)),
+    );
+  });
+
+  test("a remote watch copies Herdr's type files from the host into the types folder", async () => {
+    const host = remoteHerdrHost();
+    writeTypeFiles(host.home);
+    const typesDir = join(tempDir(), "types");
+    silencedLog();
+    modPack(stagedModName(), { watch: true, typesDir });
+    await vi.waitFor(() =>
+      expect(typeFiles.map((file) => contentOf(join(typesDir, file)))).toEqual(
+        typeFiles.map((file) => `// ${file}\n`),
+      ),
+    );
+  });
+
+  test("a watch with no type files on the host says so and still starts", async () => {
+    remoteHerdrHost();
+    const error = silencedError();
+    silencedLog();
+    const name = stagedModName();
+    expect(modPack(name, { watch: true }).outDir).toBe(stagingFolder(name));
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/^herdr-types: no Herdr app types/)),
+    );
+  });
+});
+
 describe("modPack, dev config", () => {
   test("a watch throws, naming the field, when the dev config is invalid", () => {
     const config = writeFile(
@@ -313,7 +378,11 @@ describe("modPack, local watch slot step", () => {
  * and a mod.json of `modJson` (default: none of its fields).
  */
 function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
-  const config = modPackConfig(name, { watch: true, modDir: modSource(modJson) });
+  const config = modPackConfig(name, {
+    watch: true,
+    modDir: modSource(modJson),
+    typesDir: join(tempDir(), "types"),
+  });
   if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
   return config;
 }
