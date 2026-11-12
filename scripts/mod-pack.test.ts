@@ -147,6 +147,14 @@ describe("modPack, watch mode", () => {
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("installed");
   });
 
+  test("throws, naming what it couldn't do, when the dev marker can't be written", () => {
+    const home = herdrHomeWithMods();
+    writeFile(home, `mods/hello/${DEV_MARKER}/inner`, "");
+    expect(() => modPack("hello", { watch: true, home })).toThrow(
+      `mod-pack: couldn't write ${join(home, "mods", "hello", DEV_MARKER)}`,
+    );
+  });
+
   test("reuses an existing dev build, keeping its files", () => {
     const home = herdrHomeWithMods();
     const dir = join(home, "mods", "hello");

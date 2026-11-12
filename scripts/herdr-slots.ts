@@ -3,11 +3,12 @@
 // Herdr adds a slot only the first time it ever sees a mod, and remembers that
 // in memory, so a dev build that comes back needs its slot put back by us.
 // Layout files are live: Herdr applies an edit at once.
+// Every read and write of the Herdr home, and every herdr-app call, goes through HerdrHost.
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Data, Effect, Predicate } from "effect";
+import { HerdrHost, type TransportError } from "./herdr-host.ts";
 
 export interface LayoutNode {
   id?: string;
@@ -20,11 +21,7 @@ export interface LayoutNode {
 
 export type Place = "left" | "right" | "top" | "bottom" | "none";
 
-/**
- * Marks a folder in the Herdr app as a dev build from this repo. Hidden, so
- * Herdr ignores it. A folder without it is a real install and is never touched.
- */
-export const DEV_MARKER = ".herdr-mods-dev";
+export { DEV_MARKER } from "./herdr-host.ts";
 
 export function herdrHome(): string {
   return process.env.HERDR_APP_HOME ?? join(homedir(), ".config", "herdr-app");
@@ -77,22 +74,23 @@ export function withSlot(
   return { ...root, children };
 }
 
-function readLayout(file: string): LayoutNode {
+/** A layout file's text as a tree; throws when it isn't JSON. */
+function parseLayout(text: string): LayoutNode {
   // Herdr writes layout files; this script trusts their shape rather than parsing it.
-  return JSON.parse(readFileSync(file, "utf8")) as LayoutNode;
+  return JSON.parse(text) as LayoutNode;
 }
 
-function writeLayout(file: string, layout: LayoutNode): void {
-  writeFileSync(file, `${JSON.stringify(layout, null, 2)}\n`);
-}
+const layoutText = (layout: LayoutNode): string => `${JSON.stringify(layout, null, 2)}\n`;
 
-/** Layouts that ship with Herdr: their structure can't be edited, only cloned. */
-function shippedLayouts(home: string): Set<string> {
+const layoutFile = (name: string): string => `layouts/${name}.json`;
+
+/** The `layout:` names in installed.json's text; none when it isn't a JSON object. */
+function shippedFrom(text: string): Set<string> {
   try {
     // Only the keys are read, so a non-object can't add a layout: JSON `null` makes
     // Object.keys throw (caught below: an empty set), and a string, number or array
     // gives only index keys or none, never a "layout:" key.
-    const installed = JSON.parse(readFileSync(join(home, "installed.json"), "utf8")) as object;
+    const installed = JSON.parse(text) as object;
     return new Set(
       Object.keys(installed)
         .filter((key) => key.startsWith("layout:"))
@@ -102,6 +100,20 @@ function shippedLayouts(home: string): Set<string> {
     return new Set();
   }
 }
+
+/**
+ * Layouts that ship with Herdr: their structure can't be edited, only cloned.
+ * None when installed.json is missing or isn't a JSON object.
+ */
+const shippedLayouts: Effect.Effect<Set<string>, TransportError, HerdrHost> = Effect.gen(
+  function* () {
+    const host = yield* HerdrHost;
+    return yield* host.readFile("installed.json").pipe(
+      Effect.map(shippedFrom),
+      Effect.catchTag("FileMissing", () => Effect.succeed(new Set<string>())),
+    );
+  },
+);
 
 /**
  * The shown layout's name from `herdr-app status` JSON. Null unless the text is
@@ -130,33 +142,57 @@ export type HerdrStatus =
   | { readonly _tag: "NotRunning" }
   | { readonly _tag: "Running"; readonly text: string };
 
-/** Runs `herdr-app status`. */
-function herdrStatus(): HerdrStatus {
-  try {
-    return { _tag: "Running", text: execFileSync("herdr-app", ["status"], { encoding: "utf8" }) };
-  } catch (error) {
-    // A failed spawn carries an errno code; ENOENT means the binary isn't on PATH.
-    // Any other failure (a non-zero exit included) means the app isn't answering.
-    const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-    return missing ? { _tag: "NotInstalled" } : { _tag: "NotRunning" };
-  }
-}
+/** Whether a failure to start a command says it isn't there. */
+const notFound = (cause: unknown): boolean =>
+  Predicate.hasProperty(cause, "code") && cause.code === "ENOENT";
+
+/** Runs `herdr-app status` on the Herdr host. */
+const herdrStatus: Effect.Effect<HerdrStatus, never, HerdrHost> = Effect.gen(function* () {
+  const host = yield* HerdrHost;
+  return yield* host.herdrApp(["status"]).pipe(
+    Effect.map(({ stdout }): HerdrStatus => ({ _tag: "Running", text: stdout })),
+    Effect.catchTags({
+      // It ran and failed, which is what it does while the app is closed.
+      CommandFailed: () => Effect.succeed<HerdrStatus>({ _tag: "NotRunning" }),
+      // It couldn't start: not installed when it isn't there, else not answering.
+      TransportError: ({ cause }) =>
+        Effect.succeed<HerdrStatus>(
+          notFound(cause) ? { _tag: "NotInstalled" } : { _tag: "NotRunning" },
+        ),
+    }),
+  );
+});
+
+/** A layout file isn't JSON, or its tree can't be walked. */
+class LayoutUnreadable extends Data.TaggedError("LayoutUnreadable")<{
+  readonly layout: string;
+  readonly cause: unknown;
+}> {}
 
 /** What reading and cleaning one layout gave: its tree without the slots, or null. */
 type Cleaned = {
   readonly name: string;
-  readonly path: string;
   readonly result: { node: LayoutNode; removed: number } | null;
 };
 
 /** The layout without `mod`'s slots; null when the file can't be read, parsed or walked. */
-function cleanLayout(path: string, mod: string): { node: LayoutNode; removed: number } | null {
-  try {
-    return withoutSlots(readLayout(path), mod);
-  } catch {
-    return null;
-  }
-}
+const cleanLayout = (
+  name: string,
+  mod: string,
+): Effect.Effect<{ node: LayoutNode; removed: number } | null, never, HerdrHost> =>
+  Effect.gen(function* () {
+    const host = yield* HerdrHost;
+    return yield* host.readFile(layoutFile(name)).pipe(
+      Effect.flatMap((text) =>
+        Effect.try({
+          try: () => withoutSlots(parseLayout(text), mod),
+          catch: (cause) => new LayoutUnreadable({ layout: name, cause }),
+        }),
+      ),
+      // A layout that can't be read, parsed or walked is named in `skipped`, not lost.
+      Effect.orElseSucceed(() => null),
+    );
+  });
 
 /**
  * Removes every slot for `mod` from the person's own layouts (not the shipped
@@ -165,61 +201,92 @@ function cleanLayout(path: string, mod: string): { node: LayoutNode; removed: nu
  * before any is written, and a skipped one never stops the rest being cleaned.
  * Both lists are sorted by name.
  */
-export function removeSlots(
-  mod: string,
-  home = herdrHome(),
-): { changed: string[]; skipped: string[] } {
-  const dir = join(home, "layouts");
-  if (!existsSync(dir)) return { changed: [], skipped: [] };
-  const shipped = shippedLayouts(home);
-  const cleaned: Cleaned[] = readdirSync(dir)
+export const removeSlotsOnHost = Effect.fn("removeSlotsOnHost")(function* (mod: string) {
+  const host = yield* HerdrHost;
+  const files = yield* host
+    .listDir("layouts")
+    .pipe(Effect.catchTag("FileMissing", () => Effect.succeed<ReadonlyArray<string>>([])));
+  if (files.length === 0) return { changed: [], skipped: [] };
+  const shipped = yield* shippedLayouts;
+  const names = files
     .filter((file) => file.endsWith(".json"))
-    .map((file) => ({ name: file.slice(0, -".json".length), path: join(dir, file) }))
-    .filter(({ name }) => !shipped.has(name))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .map(({ name, path }) => ({ name, path, result: cleanLayout(path, mod) }));
-  const toWrite = cleaned.flatMap(({ name, path, result }) =>
-    result !== null && result.removed > 0 ? [{ name, path, node: result.node }] : [],
+    .map((file) => file.slice(0, -".json".length))
+    .filter((name) => !shipped.has(name))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const cleaned: ReadonlyArray<Cleaned> = yield* Effect.forEach(names, (name) =>
+    Effect.map(cleanLayout(name, mod), (result) => ({ name, result })),
   );
-  toWrite.forEach(({ path, node }) => writeLayout(path, node));
+  const toWrite = cleaned.flatMap(({ name, result }) =>
+    result !== null && result.removed > 0 ? [{ name, node: result.node }] : [],
+  );
+  yield* Effect.forEach(toWrite, ({ name, node }) =>
+    host.writeFile(layoutFile(name), layoutText(node)),
+  );
   return {
     changed: toWrite.map(({ name }) => name),
     skipped: cleaned.filter(({ result }) => result === null).map(({ name }) => name),
   };
+});
+
+/** `removeSlotsOnHost` against the Herdr app on this machine, at `home`. */
+export function removeSlots(
+  mod: string,
+  home = herdrHome(),
+): { changed: string[]; skipped: string[] } {
+  return Effect.runSync(removeSlotsOnHost(mod).pipe(Effect.provide(HerdrHost.local(home))));
 }
 
 /**
  * Makes sure the shown layout has a slot for `mod`, adding one from its
  * mod.json `place` (default "right") and `size` if not. Returns a line for the
- * person. `home` is the Herdr app's home (default `herdrHome()`); `status`
- * runs `herdr-app status` (default: the real command), and tests pass a fake.
+ * person. `status` gives `herdr-app status` (default: running it on the host).
  */
-export function ensureSlot(
+export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
   mod: string,
   modJson: ModJson,
-  {
-    home = herdrHome(),
-    status = herdrStatus,
-  }: { readonly home?: string; readonly status?: () => HerdrStatus } = {},
-): string {
-  const shown = status();
+  status: Effect.Effect<HerdrStatus, never, HerdrHost> = herdrStatus,
+) {
+  const host = yield* HerdrHost;
+  const shown = yield* status;
   if (shown._tag === "NotInstalled") {
     return `herdr-slots: herdr-app not found on PATH; install the Herdr app to see ${mod}.`;
   }
   const layout = shown._tag === "Running" ? layoutFromStatus(shown.text) : null;
   if (!layout) return `herdr-slots: Herdr isn't running; open it to see ${mod}.`;
-  if (shippedLayouts(home).has(layout)) {
+  if ((yield* shippedLayouts).has(layout)) {
     return `herdr-slots: "${layout}" ships with Herdr and can't take new slots; clone it, or add ${mod} by hand.`;
   }
-  const path = join(home, "layouts", `${layout}.json`);
-  if (!existsSync(path)) return `herdr-slots: no file for layout "${layout}"; add ${mod} by hand.`;
-  const root = readLayout(path);
+  const text = yield* host.readFile(layoutFile(layout)).pipe(
+    Effect.map((found): string | null => found),
+    Effect.catchTag("FileMissing", () => Effect.succeed(null)),
+  );
+  if (text === null) return `herdr-slots: no file for layout "${layout}"; add ${mod} by hand.`;
+  const root = parseLayout(text);
   if (hasSlot(root, mod)) return `herdr-slots: ${mod} already has a slot in "${layout}".`;
   const place = modJson.place ?? "right";
   const next = withSlot(root, mod, place, modJson.size);
   if (!next) {
     return `herdr-slots: can't dock ${mod} at "${place}" automatically; add it to "${layout}" by hand.`;
   }
-  writeLayout(path, next);
+  yield* host.writeFile(layoutFile(layout), layoutText(next));
   return `herdr-slots: added ${mod} to "${layout}" (${place}).`;
+});
+
+/**
+ * `ensureSlotOnHost` against the Herdr app on this machine. `home` is the Herdr
+ * app's home (default `herdrHome()`); `status` stands in for `herdr-app status`
+ * (default: the real command), and tests pass a fake.
+ */
+export function ensureSlot(
+  mod: string,
+  modJson: ModJson,
+  {
+    home = herdrHome(),
+    status,
+  }: { readonly home?: string; readonly status?: () => HerdrStatus } = {},
+): string {
+  const shown = status === undefined ? herdrStatus : Effect.sync(status);
+  return Effect.runSync(
+    ensureSlotOnHost(mod, modJson, shown).pipe(Effect.provide(HerdrHost.local(home))),
+  );
 }

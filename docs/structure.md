@@ -17,6 +17,7 @@ mods/<name>/              BUILD OUTPUT, committed: the folder Herdr users instal
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod (watch mode builds into Herdr)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from Herdr
+scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
 scripts/require-vp.sh     preinstall guard: installs must go through vp
 scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, run sh

@@ -60,6 +60,12 @@ export default defineConfig({
       { files: ["apps/*/src/**", "packages/*/src/**"], rules: pureRules("error") },
       // A mod's View is a class Herdr mutates through init/render: exempt it.
       { files: ["apps/*/src/main.ts"], rules: pureRules("off") },
+      // Effect code is tested with @effect/vitest (.claude/rules/tests.md), which Effect marks
+      // unstable. The tests depend on it on purpose, so the warning would only be noise there.
+      {
+        files: ["scripts/*.test.ts", "apps/*/tests/**", "packages/*/tests/**"],
+        rules: { "effecttsgo/unstable-api-usage": "off" },
+      },
       // Every cast says why, main.ts, scripts and the shared pack config included.
       {
         files: ["apps/*/src/**", "packages/*/src/**", "scripts/**", "mod-pack.ts"],
