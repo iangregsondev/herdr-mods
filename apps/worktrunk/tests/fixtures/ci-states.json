@@ -1,0 +1,445 @@
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main",
+    "forge": {
+      "url": "https://github.com/owner/app",
+      "provider": "github",
+      "host": "github.com",
+      "owner": "owner",
+      "name": "app",
+      "remote": "origin"
+    }
+  },
+  "collected": {
+    "ci": true,
+    "summary": false
+  },
+  "items": [
+    {
+      "branch": "running",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.running",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "running",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/app/pull/1",
+        "mergeable": true,
+        "repo": {
+          "url": "https://github.com/owner/app",
+          "provider": "github",
+          "host": "github.com",
+          "owner": "owner",
+          "name": "app"
+        }
+      },
+      "checks": {
+        "status": "running",
+        "source": "pr",
+        "stale": false
+      }
+    },
+    {
+      "branch": "failed",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.failed",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "failed",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/app/pull/1",
+        "mergeable": true,
+        "repo": {
+          "url": "https://github.com/owner/app",
+          "provider": "github",
+          "host": "github.com",
+          "owner": "owner",
+          "name": "app"
+        }
+      },
+      "checks": {
+        "status": "failed",
+        "source": "pr",
+        "stale": false
+      }
+    },
+    {
+      "branch": "stale",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.stale",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "stale",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "checks": {
+        "status": "passed",
+        "source": "branch",
+        "stale": true
+      }
+    },
+    {
+      "branch": "conflicts",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.conflicts",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "conflicts",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/app/pull/1",
+        "mergeable": false,
+        "repo": {
+          "url": "https://github.com/owner/app",
+          "provider": "github",
+          "host": "github.com",
+          "owner": "owner",
+          "name": "app"
+        }
+      },
+      "checks": {
+        "status": null,
+        "source": "pr",
+        "stale": false
+      }
+    },
+    {
+      "branch": "undetermined",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.undetermined",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "undetermined",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/app/pull/1",
+        "mergeable": true,
+        "repo": {
+          "url": "https://github.com/owner/app",
+          "provider": "github",
+          "host": "github.com",
+          "owner": "owner",
+          "name": "app"
+        }
+      },
+      "checks": {
+        "status": null,
+        "source": "pr",
+        "stale": false
+      }
+    },
+    {
+      "branch": "error",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.error",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "error",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      },
+      "pr": null,
+      "checks": null
+    },
+    {
+      "branch": "nopr",
+      "head": {
+        "sha": "fc1434a18d30886b6147c0442463f3a4c4582fa0",
+        "short_sha": "fc1434a",
+        "subject": "docs: add glossary and ADRs for the worktrunk mod",
+        "committed_at": "2026-11-09T15:27:22Z"
+      },
+      "worktree": {
+        "path": "/work4/app.nopr",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 60,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "nopr",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑|"
+      }
+    }
+  ]
+}

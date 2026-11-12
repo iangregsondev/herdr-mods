@@ -182,6 +182,9 @@ catalogs:
     vite-plus:
       specifier: 1.5.0
       version: 1.5.0
+    worktrunk-mailbox:
+      specifier: workspace:*
+      version: workspace:*
 
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.5.0
@@ -211,6 +214,48 @@ importers:
 
   apps/hello:
     devDependencies:
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.5.0(@types/node@24.19.2)(@vitest/ui@5.1.0)(typescript@7.0.2)
+
+  apps/menus:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.2(effect@4.1.2)(vitest@5.1.0)
+      effect:
+        specifier: 'catalog:'
+        version: 4.1.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.5.0(@types/node@24.19.2)(@vitest/ui@5.1.0)(typescript@7.0.2)
+      worktrunk-mailbox:
+        specifier: 'catalog:'
+        version: link:../../packages/worktrunk-mailbox
+
+  apps/worktrunk:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.2(effect@4.1.2)(vitest@5.1.0)
+      effect:
+        specifier: 'catalog:'
+        version: 4.1.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.5.0(@types/node@24.19.2)(@vitest/ui@5.1.0)(typescript@7.0.2)
+      worktrunk-mailbox:
+        specifier: 'catalog:'
+        version: link:../../packages/worktrunk-mailbox
+
+  packages/worktrunk-mailbox:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.2(effect@4.1.2)(vitest@5.1.0)
+      effect:
+        specifier: 'catalog:'
+        version: 4.1.2
       vite-plus:
         specifier: 'catalog:'
         version: 1.5.0(@types/node@24.19.2)(@vitest/ui@5.1.0)(typescript@7.0.2)

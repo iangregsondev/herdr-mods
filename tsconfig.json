@@ -28,5 +28,12 @@
       "herdr": ["./.herdr-types/herdr.d.ts"]
     }
   },
-  "include": ["apps/*/src", "apps/*/tests", "packages/*/src", "packages/*/tests", "herdr-env.d.ts"]
+  "include": [
+    "apps/*/src",
+    "apps/*/tests",
+    "packages/*/src",
+    "packages/*/tests",
+    "herdr-env.d.ts",
+    "mod-env.d.ts"
+  ]
 }

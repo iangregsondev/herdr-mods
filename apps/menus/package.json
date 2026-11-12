@@ -1,0 +1,18 @@
+{
+  "name": "menus",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Herdr mod: worktrunk items in Herdr's \"+\" and space menus, by wrapping Herdr's own menu, tab bar and sidebar mods at run time.",
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:",
+    "vite-plus": "catalog:",
+    "worktrunk-mailbox": "catalog:"
+  }
+}

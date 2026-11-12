@@ -1,0 +1,18 @@
+{
+  "name": "worktrunk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Herdr mod: your repos and their worktrunk worktrees in a side panel.",
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:",
+    "vite-plus": "catalog:",
+    "worktrunk-mailbox": "catalog:"
+  }
+}

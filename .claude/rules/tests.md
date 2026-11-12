@@ -14,7 +14,7 @@ paths:
 
 ## Testing scripts and hooks
 
-Root scripts, `mod-pack.ts` and `.claude/hooks/*.sh` are tested from `scripts/*.test.ts` (what `vp test scripts` runs), with the helpers in `scripts/test-support.ts`.
+Root scripts, `mod-pack.ts`, `.claude/hooks/*.sh`, and a mod's shell scripts run for real (a mod's own tests have no Node types), are tested from `scripts/*.test.ts` (what `vp test scripts` runs), with the helpers in `scripts/test-support.ts`.
 
 - **Seams are parameters with defaults.** A script that touches the Herdr home, runs `herdr-app` or reads argv takes those as parameters (`home`, `status`, `watch`, ...) whose defaults do the real thing. Tests pass a temp folder and a fake. A script's CLI part stays thin: it reads argv and the disk, calls the exported function, prints and exits.
 - **Shell scripts run under `sh`** with `runSh`, against temp folders, with `PATH` built from `toolPath` (or `linkTools`) plus `fakeBin` stand-ins for the commands the script calls (such as `vp`). Leave a tool out of `PATH` to test its missing path.

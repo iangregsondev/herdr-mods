@@ -7,8 +7,9 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 ## Herdr app
 
 - `~/.config/herdr-app/AGENTS.md` is the source of truth for mods, layouts, keys and the `herdr` API. The app rewrites it to match the installed version. Read it before writing mod code. With a remote dev target it is on the Herdr host, not this machine.
-- Check every built mod with `vp run check:mods` (`herdr-app check` on each `mods/<name>/`). A mod isn't done without a pass.
+- Check every built mod with `vp run check:mods` (`herdr-app check` on each `mods/iangregsondev-<name>/`). A mod isn't done without a pass.
 - Never hand-edit `mods/`. It is build output: edit `apps/<name>/` and run `vp run -r build`, and commit `mods/` with the source change.
+- Installed mods carry the `iangregsondev-` namespace: `apps/<name>/` builds to `mods/iangregsondev-<name>/` (ADR 0002). Commands take the short name. In mod code, use the build constant `__MOD_ID__` wherever the mod names itself (shared-state keys, settings file, layouts).
 - To see a mod running, use the dev loop: `vp run <name>#dev` builds into the Herdr app, shows its panel and reloads on save; `vp run dev:remove <name>` (watch stopped first) removes the files and the panel. Both act on the dev target: this machine's Herdr, or a remote Herdr host over SSH when `herdr-dev.json` says `remote`. Run `herdr-app` as `vp run herdr <args…>` in both modes, and prove a change with `vp run herdr status` and `vp run herdr shot <file> --crop x,y,w,h`. Steps and never-dos: `.claude/rules/dev-loop.md`; human guide and remote setup: `docs/develop.md`. Never symlink a mod into Herdr: it doesn't hot-reload.
 - Every mod ships `assets/RECIPE.md` and `assets/preview.png` (`.claude/rules/mod-sharing.md`).
 

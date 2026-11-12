@@ -1,10 +1,14 @@
 // Removes a mod's dev build from the Herdr app (made by `vp run <name>#dev`):
-// its folder, <app home>/mods/<name>/, and its slots in your layouts, so the panel goes too.
+// its folder, <app home>/mods/<mod id>/, and its slots in your layouts, so the panel goes too.
+// It takes the short name, as `#dev` does, and adds the namespace (mod-pack.ts).
 // A folder without the dev marker is a real installed mod: it and its slots are left alone.
 // It acts on the dev target's Herdr host: this machine for `local`, over SSH for `remote`.
+// The layout `vp run herdr:sync` built (named in its record) is left alone too: its slots
+// belong to the sync, which rebuilds it.
 //
 //   vp run dev:remove <name>
 import { Effect } from "effect";
+import { modId } from "../mod-pack.ts";
 import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import {
   causeText,
@@ -14,6 +18,7 @@ import {
   type TransportError,
 } from "./herdr-host.ts";
 import { applySlotRemoval, planSlotRemoval } from "./herdr-slots.ts";
+import { layoutFromRecord, RECORD_FILE } from "./herdr-sync.ts";
 
 export interface DevRemoveResult {
   /**
@@ -37,20 +42,26 @@ const failed = (message: string): DevRemoveResult => ({
   err: [`dev-remove: ${message}`],
 });
 
-/** Removes the dev build named in `args` from the Herdr host. */
+/** Removes the dev build whose short name is in `args` from the Herdr host. */
 export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   args: readonly string[],
 ): Effect.fn.Return<DevRemoveResult, TransportError | HostUnreachable, HerdrHost> {
   const name = args[0];
   if (!name || args.length > 1 || name.includes("/") || name.startsWith(".")) return usage;
 
+  const id = modId(name);
   const host = yield* HerdrHost;
-  const dir = host.location(`mods/${name}`);
+  const dir = host.location(`mods/${id}`);
   // Every layout is read before anything on the host changes, so a host that
   // can't be reached, or drops while being read, leaves it all as it was.
-  const plan = yield* planSlotRemoval(name);
+  // The layout the sync built is kept: a record that's missing or names no layout keeps none.
+  const synced = yield* host.readFile(RECORD_FILE).pipe(
+    Effect.map(layoutFromRecord),
+    Effect.catchTag("FileMissing", () => Effect.succeed(null)),
+  );
+  const plan = yield* planSlotRemoval(id, synced === null ? [] : [synced]);
   const removed = yield* host
-    .removeDevBuild(name)
+    .removeDevBuild(id)
     .pipe(Effect.catchTag("InstalledModInTheWay", () => Effect.succeed("Installed" as const)));
   if (removed === "Installed") {
     return {
@@ -64,20 +75,25 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
 
   // A layout that can't be read is left as it is; every readable one is still cleaned,
   // so the lines above stay true and the skipped ones are named on stderr.
-  const { changed, skipped } = yield* applySlotRemoval(plan);
+  const { changed, kept, skipped } = yield* applySlotRemoval(plan);
   const quoted = (names: readonly string[]) => names.map((l) => `"${l}"`).join(", ");
   const panel =
     changed.length > 0
-      ? `dev-remove: removed the ${name} panel from ${quoted(changed)}`
-      : `dev-remove: no ${name} panel in your layouts`;
+      ? `dev-remove: removed the ${id} panel from ${quoted(changed)}`
+      : `dev-remove: no ${id} panel in your layouts`;
+  const left = kept.map(
+    (name) =>
+      `dev-remove: left "${name}" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)`,
+  );
+  const out = [files, panel, ...left];
 
   return skipped.length > 0
     ? {
         code: 1,
-        out: [files, panel],
+        out,
         err: [`dev-remove: could not read these layouts, so left them alone: ${quoted(skipped)}`],
       }
-    : { code: 0, out: [files, panel], err: [] };
+    : { code: 0, out, err: [] };
 });
 
 /**

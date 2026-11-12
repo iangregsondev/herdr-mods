@@ -14,8 +14,10 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, onTestFinished, test, vi } from "vite-plus/test";
 import {
   type EnsureSlot,
+  modId,
   modPack as modPackConfig,
   type ModPackOptions,
+  NAMESPACE,
   stagingFolder,
   watchFromArgv,
 } from "../mod-pack.ts";
@@ -173,11 +175,32 @@ describe("watchFromArgv", () => {
   });
 });
 
+describe("modId", () => {
+  test("is the namespace and the mod name joined by a hyphen", () => {
+    expect(NAMESPACE).toBe("iangregsondev");
+    expect(modId("hello")).toBe("iangregsondev-hello");
+  });
+});
+
+describe("modPack, either mode", () => {
+  test.each([
+    ["build", false],
+    ["watch", true],
+  ])("gives the mod its full mod id and the namespace as constants in %s mode", (_mode, watch) => {
+    localHerdrHome();
+    const config = modPack("hello", { watch });
+    expect(config.define).toEqual({
+      __MOD_ID__: '"iangregsondev-hello"',
+      __NAMESPACE__: '"iangregsondev"',
+    });
+  });
+});
+
 describe("modPack, build mode", () => {
   const config = () => modPack("hello", { watch: false });
 
-  test("builds into the repo's mods/<name> and cleans it first", () => {
-    expect(config().outDir).toBe("../../mods/hello");
+  test("builds into the repo's mods/<mod id> and cleans it first", () => {
+    expect(config().outDir).toBe("../../mods/iangregsondev-hello");
     expect(config().clean).toBe(true);
   });
 
@@ -190,7 +213,7 @@ describe("modPack, build mode", () => {
   });
 
   test("copies the assets into the out dir", () => {
-    expect(config().copy).toEqual([{ from: "assets/*", to: "../../mods/hello" }]);
+    expect(config().copy).toEqual([{ from: "assets/*", to: "../../mods/iangregsondev-hello" }]);
   });
 
   test("builds src/main.ts as readable ESM", () => {
@@ -215,13 +238,24 @@ describe("modPack, watch mode", () => {
     expect(log).toHaveBeenCalledWith(describeDevTarget(target));
   });
 
-  test("builds into <home>/mods/<name> and marks it as a dev build", () => {
+  test("builds into <home>/mods/<mod id> and marks it as a dev build", () => {
     const home = localHerdrHome();
     const config = modPack("hello", { watch: true });
-    const dir = join(home, "mods", "hello");
+    const dir = join(home, "mods", "iangregsondev-hello");
     expect(config.outDir).toBe(dir);
     expect(existsSync(join(dir, DEV_MARKER))).toBe(true);
     expect(config.copy).toEqual([{ from: "assets/*", to: dir }]);
+    expect(readdirSync(join(home, "mods"))).toEqual(["iangregsondev-hello"]);
+  });
+
+  test("names the mod id and its short-name commands in the dev marker", () => {
+    const home = localHerdrHome();
+    modPack("hello", { watch: true });
+    const marker = readFileSync(join(home, "mods", "iangregsondev-hello", DEV_MARKER), "utf8");
+    expect(marker).toBe(
+      'Dev build of "iangregsondev-hello" from herdr-mods (vp run hello#dev).\n' +
+        "Remove it with: vp run dev:remove hello\n",
+    );
   });
 
   test("never cleans the out dir", () => {
@@ -238,7 +272,7 @@ describe("modPack, watch mode", () => {
 
   test("refuses an installed mod folder and leaves it untouched", () => {
     const home = localHerdrHome();
-    const dir = join(home, "mods", "hello");
+    const dir = join(home, "mods", "iangregsondev-hello");
     writeFile(dir, "main.js", "installed");
     expect(() => modPack("hello", { watch: true })).toThrow(/installed mod/);
     expect(readdirSync(dir)).toEqual(["main.js"]);
@@ -247,15 +281,15 @@ describe("modPack, watch mode", () => {
 
   test("throws, naming what it couldn't do, when the dev marker can't be written", () => {
     const home = localHerdrHome();
-    writeFile(home, `mods/hello/${DEV_MARKER}/inner`, "");
+    writeFile(home, `mods/iangregsondev-hello/${DEV_MARKER}/inner`, "");
     expect(() => modPack("hello", { watch: true })).toThrow(
-      `mod-pack: couldn't write ${join(home, "mods", "hello", DEV_MARKER)}`,
+      `mod-pack: couldn't write ${join(home, "mods", "iangregsondev-hello", DEV_MARKER)}`,
     );
   });
 
   test("reuses an existing dev build, keeping its files", () => {
     const home = localHerdrHome();
-    const dir = join(home, "mods", "hello");
+    const dir = join(home, "mods", "iangregsondev-hello");
     writeFile(dir, DEV_MARKER, "old marker");
     writeFile(dir, "main.js", "previous build");
     const config = modPack("hello", { watch: true });
@@ -263,7 +297,7 @@ describe("modPack, watch mode", () => {
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("previous build");
   });
 
-  test("puts the slot back once, from the mod's own mod.json, after the first build", async () => {
+  test("puts the mod id's slot back once, from the mod's own mod.json, after the first build", async () => {
     const target = useLocalTarget(herdrHomeWithMods());
     const modJson: ModJson = { place: "left", size: 240 };
     const modDir = modSource(modJson);
@@ -276,7 +310,7 @@ describe("modPack, watch mode", () => {
     await runOnSuccess(config);
     await runOnSuccess(config);
 
-    expect(calls).toEqual([["hello", modJson, target]]);
+    expect(calls).toEqual([["iangregsondev-hello", modJson, target]]);
     expect(log).toHaveBeenCalledWith("slot line");
   });
 
@@ -296,7 +330,7 @@ describe("modPack, watch mode", () => {
     await runOnSuccess(config);
     await runOnSuccess(config);
 
-    expect(calls).toEqual([["hello", modJson, target]]);
+    expect(calls).toEqual([["iangregsondev-hello", modJson, target]]);
   });
 });
 
@@ -306,8 +340,11 @@ const REPO_ROOT = resolve(import.meta.dirname, "..");
 /** A mod name no other test uses. */
 const stagedModName = (): string => `test-${randomUUID().slice(0, 8)}`;
 
-/** Where a remote watch in these tests stages `name`'s build: under `testStagingRoot`. */
-const staged = (name: string): string => stagingFolder(name, testStagingRoot);
+/** Where a remote watch in these tests stages `name`'s build: its mod id, under `testStagingRoot`. */
+const staged = (name: string): string => stagingFolder(modId(name), testStagingRoot);
+
+/** `name`'s folder on the fake Herdr host at `home`: its mod id, under mods/. */
+const onHost = (home: string, name: string): string => join(home, "mods", modId(name));
 
 /**
  * A fake Herdr host with a `mods/` folder, made the remote dev target for the
@@ -383,7 +420,9 @@ describe("modPack, Herdr types on start", () => {
       if (String(line).startsWith("herdr-types:")) throw new Error("stdout closed");
     });
     const error = silencedError();
-    expect(modPack("hello", { watch: true }).outDir).toBe(join(home, "mods", "hello"));
+    expect(modPack("hello", { watch: true }).outDir).toBe(
+      join(home, "mods", "iangregsondev-hello"),
+    );
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/types.*stdout closed/));
   });
 
@@ -468,7 +507,7 @@ describe("modPack, remote watch", () => {
     expect(config.outDir).toBe(staged(name));
     expect(config.copy).toEqual([{ from: "assets/*", to: staged(name) }]);
     expect(config.clean).toBe(false);
-    expect(existsSync(join(REPO_ROOT, "mods", name))).toBe(false);
+    expect(existsSync(join(REPO_ROOT, "mods", modId(name)))).toBe(false);
     expect(readdirSync(join(host.localHome, "mods"))).toEqual([]);
   });
 
@@ -478,9 +517,9 @@ describe("modPack, remote watch", () => {
     const stagingRoot = tempDir();
     silencedLog();
     const config = modPack(name, { watch: true, stagingRoot });
-    expect(config.outDir).toBe(join(stagingRoot, name));
-    expect(existsSync(join(stagingRoot, name, DEV_MARKER))).toBe(true);
-    expect(existsSync(stagingFolder(name))).toBe(false);
+    expect(config.outDir).toBe(join(stagingRoot, modId(name)));
+    expect(existsSync(join(stagingRoot, modId(name), DEV_MARKER))).toBe(true);
+    expect(existsSync(stagingFolder(modId(name)))).toBe(false);
   });
 
   test("prints the dev target line on start", () => {
@@ -508,7 +547,7 @@ describe("modPack, remote watch", () => {
 
     await runOnSuccess(config);
 
-    const dir = join(host.home, "mods", name);
+    const dir = onHost(host.home, name);
     expect(existsSync(join(dir, DEV_MARKER))).toBe(true);
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("first build");
   });
@@ -516,7 +555,7 @@ describe("modPack, remote watch", () => {
   test("refuses to sync over an installed mod on the host, and leaves it untouched", async () => {
     const host = remoteHerdrHost();
     const name = stagedModName();
-    const dir = join(host.home, "mods", name);
+    const dir = onHost(host.home, name);
     writeFile(dir, "main.js", "installed");
     silencedLog();
     const error = silencedError();
@@ -542,12 +581,12 @@ describe("modPack, remote watch", () => {
 
     await runOnSuccess(config);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/Herdr host unreachable/));
-    expect(existsSync(join(host.home, "mods", name))).toBe(false);
+    expect(existsSync(onHost(host.home, name))).toBe(false);
 
     vi.stubEnv("PATH", reachablePath);
     writeFile(staged(name), "main.js", "second build");
     await runOnSuccess(config);
-    expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
+    expect(readFileSync(join(onHost(host.home, name), "main.js"), "utf8")).toBe("second build");
   });
 
   test("prints a build whose sync throws, and still syncs the next build", async () => {
@@ -568,7 +607,7 @@ describe("modPack, remote watch", () => {
 
     writeFile(staged(name), "main.js", "second build");
     await runOnSuccess(config).catch(() => undefined);
-    expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
+    expect(readFileSync(join(onHost(host.home, name), "main.js"), "utf8")).toBe("second build");
   });
 
   test("adds the slot to the host's shown layout once, after the first good sync", async () => {
@@ -590,8 +629,8 @@ describe("modPack, remote watch", () => {
 
     expect(loggedLines(appLog)).toEqual(["status"]);
     const children = readLayout(work).children ?? [];
-    expect(children.map((child) => child.content?.mod)).toEqual([name, "other"]);
-    expect(log).toHaveBeenCalledWith(`herdr-slots: added ${name} to "work" (left).`);
+    expect(children.map((child) => child.content?.mod)).toEqual([modId(name), "other"]);
+    expect(log).toHaveBeenCalledWith(`herdr-slots: added ${modId(name)} to "work" (left).`);
   });
 
   test("prints a failed slot step, keeps going, and tries the slot again on the next build", async () => {
@@ -613,12 +652,14 @@ describe("modPack, remote watch", () => {
     const config = modPack(name, { watch: true, modDir, ensureSlot: undefined });
 
     await expect(runOnSuccess(config)).resolves.toBeUndefined();
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(`couldn't put ${name}'s slot back`));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(`couldn't put ${modId(name)}'s slot back`),
+    );
     expect(readLayout(work).children).toEqual([]);
 
     writeFile(modDir, "assets/mod.json", "{}");
     await runOnSuccess(config);
-    expect(hasSlot(readLayout(work), name)).toBe(true);
+    expect(hasSlot(readLayout(work), modId(name))).toBe(true);
   });
 
   test("runs one build's sync and slot step at a time when builds overlap", async () => {
@@ -637,7 +678,7 @@ describe("modPack, remote watch", () => {
     await Promise.all([runOnSuccess(config), runOnSuccess(config)]);
 
     expect(loggedLines(appLog)).toEqual(["status"]);
-    expect(readLayout(work).children?.map((child) => child.content?.mod)).toEqual([name]);
+    expect(readLayout(work).children?.map((child) => child.content?.mod)).toEqual([modId(name)]);
   });
 
   test("stages in a folder git ignores", () => {

@@ -8,7 +8,9 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -278,4 +280,11 @@ export function readLayout(path: string): LayoutNode {
   // Tests read only layouts they or the code under test wrote as a LayoutNode; the
   // assertions check the shape.
   return JSON.parse(readFileSync(path, "utf8")) as LayoutNode;
+}
+
+/** Sets `path`'s mtime well in the past and returns it, so a later write shows. */
+export function age(path: string): number {
+  const past = new Date("2020-01-01T00:00:00Z");
+  utimesSync(path, past, past);
+  return statSync(path).mtimeMs;
 }

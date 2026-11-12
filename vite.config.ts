@@ -1,7 +1,8 @@
 import { recommended as effectRecommended } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// CI has no Herdr app, so no gpui-kit/herdr types (docs/types.md): type-check locally only.
+// CI has no Herdr app, so no gpui-kit/herdr types (docs/types.md): type-check and run the
+// type-aware lint rules locally only. Without the types those rules see `any` and warn.
 const typeCheck = !process.env.CI;
 
 // mods/ is build output (committed for installs) and .herdr-types/ links the app's own files.
@@ -20,7 +21,10 @@ export default defineConfig({
     "*": "vp check --fix --deny-warnings",
   },
   // .claude/skills/ holds upstream skills (skills-lock.json); reformatting them would drift from upstream.
-  fmt: { ignorePatterns: [...ignorePatterns, ".claude/skills/**"] },
+  // The menus mod's stand-ins hold Herdr's patch points exactly as Herdr writes them; reformatting would move them.
+  fmt: {
+    ignorePatterns: [...ignorePatterns, ".claude/skills/**", "apps/menus/tests/fixtures/**"],
+  },
   lint: {
     // Effect's rules. They need the oxlint that `prepare` patches (effect-tsgo patch).
     extends: [effectRecommended],
@@ -72,7 +76,7 @@ export default defineConfig({
         rules: { "functional/explained-cast": "error" },
       },
     ],
-    options: { typeAware: true, typeCheck },
+    options: { typeAware: typeCheck, typeCheck },
   },
   run: {
     cache: true,
@@ -85,6 +89,7 @@ export default defineConfig({
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
       // herdr-app on the dev target's Herdr host: here, or over SSH (herdr-dev.json).
       herdr: { command: "vpx scripts/herdr.ts", cache: false },
+      "herdr:sync": { command: "vpx scripts/herdr-sync.ts", cache: false },
       // Reads git's file list, which the cache doesn't track.
       "audit:config": { command: "vpx scripts/audit.ts", cache: false },
     },
