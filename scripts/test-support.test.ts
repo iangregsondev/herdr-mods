@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vite-plus/test";
 import { spawnSync } from "node:child_process";
+import { Effect, Result } from "effect";
 import {
   fakeHerdrHost,
   fakeLoggingBin,
@@ -16,6 +17,7 @@ import {
   toolPath,
   writeFile,
 } from "./test-support.ts";
+import { DevTarget, loadDevTarget } from "./dev-config.ts";
 
 /** Sets an env var for the current test only. */
 const stubEnv = (name: string, value: string): void => {
@@ -231,5 +233,17 @@ describe("fakeHerdrHost, unreachable", () => {
     expect([ssh.status, rsync.status]).toEqual([255, 255]);
     expect(ssh.stderr).toContain("Connection refused");
     expect(existsSync(join(fake.root, "ran"))).toBe(false);
+  });
+});
+
+describe("fakeHerdrHost, dev config", () => {
+  test("writes a dev config file that loads as its remote target", () => {
+    const fake = fakeHerdrHost();
+    const loaded = Effect.runSync(
+      Effect.result(loadDevTarget({ env: { HERDR_DEV_CONFIG: fake.config } })),
+    );
+    expect(Result.getOrUndefined(loaded)).toEqual(
+      DevTarget.Remote({ ...fake.target, file: fake.config }),
+    );
   });
 });

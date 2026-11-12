@@ -181,7 +181,7 @@ export interface FakeHerdrHost {
   readonly home: string;
   /** Where the host's `herdr-app` goes: `<root>/.local/bin`. Add one with `fakeBin`. */
   readonly appBin: string;
-  /** The dev target that reaches this host, with defaults for Herdr home and app path. */
+  /** The dev target in `config`: reaches this host, with the default Herdr home and app path. */
   readonly target: {
     readonly host: string;
     readonly user: string;
@@ -194,6 +194,8 @@ export interface FakeHerdrHost {
   readonly sshLog: string;
   /** One line per `rsync` call: its arguments, space-joined. Read with `loggedLines`. */
   readonly rsyncLog: string;
+  /** A dev config file targeting this host, for `HERDR_DEV_CONFIG`. */
+  readonly config: string;
 }
 
 /**
@@ -246,20 +248,23 @@ export function fakeHerdrHost(options: { readonly unreachable?: boolean } = {}):
   onTestFinished(() => {
     vi.unstubAllEnvs();
   });
+  const config = join(dir, "herdr-dev.json");
+  const remote = {
+    host: "herdr-host",
+    user: "ann",
+    port: 2222,
+    herdrHome: "~/.config/herdr-app",
+    herdrApp: "~/.local/bin/herdr-app",
+  };
+  writeFileSync(config, `${JSON.stringify({ target: "remote", remote }, null, 2)}\n`);
   return {
     root,
     home: join(root, ".config/herdr-app"),
     appBin: join(root, ".local/bin"),
-    target: {
-      host: "herdr-host",
-      user: "ann",
-      port: 2222,
-      herdrHome: "~/.config/herdr-app",
-      herdrApp: "~/.local/bin/herdr-app",
-      file: "herdr-dev.json",
-    },
+    target: { ...remote, file: config },
     sshLog,
     rsyncLog,
+    config,
   };
 }
 
