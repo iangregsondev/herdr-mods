@@ -23,7 +23,7 @@ import {
   InstalledModInTheWay,
   type TransportError,
 } from "./scripts/herdr-host.ts";
-import { ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
+import { ensureSlot, ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
 
@@ -56,9 +56,15 @@ export type EnsureSlot = (
   target: DevTarget,
 ) => string | Promise<string>;
 
-/** The slot step on the dev target's Herdr host. Rejects when the host can't be used. */
+/**
+ * The slot step on the dev target's Herdr host. On this machine it runs at once
+ * and throws on failure, as the local watch always has; over SSH it gives a
+ * promise, which rejects when the host can't be used.
+ */
 const ensureSlotOnTarget: EnsureSlot = (mod, modJson, target) =>
-  Effect.runPromise(ensureSlotOnHost(mod, modJson).pipe(Effect.provide(hostLayer(target))));
+  target._tag === "Local"
+    ? ensureSlot(mod, modJson, { home: target.herdrHome })
+    : Effect.runPromise(ensureSlotOnHost(mod, modJson).pipe(Effect.provide(hostLayer(target))));
 
 export interface ModPackOptions {
   /** Build into the Herdr app (watch mode). Defaults to `--watch` or `-w` in argv. */
@@ -166,21 +172,25 @@ function devOutDir(name: string, home: string): string {
  * layout if it has none. Herdr only docks a mod the first time it ever sees it,
  * so a dev build that was removed and comes back would otherwise not show.
  * A build whose mod.json can't be read throws and the next build tries again;
- * once `slot` has returned, later builds do nothing.
+ * once `slot` has given its line, later builds do nothing. It runs at once when
+ * `slot` does, and gives a promise when `slot` does.
  */
 function slotOnFirstBuild(
   name: string,
   { target, modDir, slot }: { target: DevTarget; modDir: string; slot: EnsureSlot },
-): () => Promise<void> {
+): () => void | Promise<void> {
   let done = false;
-  return async () => {
+  const finish = (line: string): void => {
+    done = true;
+    console.log(line);
+  };
+  return () => {
     if (done) return;
     // `modDir/assets/mod.json` is the mod's own committed file, trusted unchecked.
     // An unknown `place` gets a "by hand" message from ensureSlot, not a guess.
     const modJson = JSON.parse(readFileSync(resolve(modDir, "assets/mod.json"), "utf8")) as ModJson;
-    const line = await slot(name, modJson, target);
-    done = true;
-    console.log(line);
+    const line = slot(name, modJson, target);
+    return Predicate.isString(line) ? finish(line) : line.then(finish);
   };
 }
 
@@ -220,7 +230,7 @@ function syncAfterEachBuild(
     staging,
     target,
     slotStep,
-  }: { staging: string; target: DevTarget; slotStep: () => Promise<void> },
+  }: { staging: string; target: DevTarget; slotStep: () => void | Promise<void> },
 ): () => Promise<void> {
   let guarded = false;
   const sync = Effect.gen(function* () {
@@ -242,11 +252,13 @@ function syncAfterEachBuild(
     // A failed slot step is printed, not thrown: vp pack doesn't wait on onSuccess,
     // so a rejection here would reach no one. The step does its work once, so the
     // next build tries it again until it has.
-    await slotStep().catch((cause: unknown) =>
-      console.error(
-        `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
-      ),
-    );
+    await Promise.resolve()
+      .then(slotStep)
+      .catch((cause: unknown) =>
+        console.error(
+          `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
+        ),
+      );
   };
   // vp pack starts onSuccess without waiting for it, so builds can overlap: each
   // build's sync and slot step wait for the one before, and never interleave.
@@ -301,7 +313,7 @@ export function modPack(
  * The pack settings for building into `outDir`. A watch build passes `onSuccess`,
  * run after each good build; the out dir is then never cleaned.
  */
-function packConfig(outDir: string, onSuccess?: () => Promise<void>): PackConfig {
+function packConfig(outDir: string, onSuccess?: () => void | Promise<void>): PackConfig {
   const watch = onSuccess !== undefined;
   return {
     entry: { main: "src/main.ts" },

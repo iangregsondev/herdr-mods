@@ -278,6 +278,20 @@ function remoteHerdrHost(options: { readonly unreachable?: boolean } = {}) {
   return { ...fake, localHome };
 }
 
+describe("modPack, local watch slot step", () => {
+  test("throws at once, not as a rejected promise, when mod.json can't be read", () => {
+    useLocalTarget(herdrHomeWithMods());
+    const modDir = tempDir();
+    writeFile(modDir, "assets/mod.json", "{ not json");
+    silencedLog();
+    const { onSuccess } = modPack("hello", { watch: true, modDir });
+    if (typeof onSuccess !== "function") throw new Error("no onSuccess function");
+    // vp pack passes its resolved config and an abort signal; the hook reads neither.
+    const run = () => onSuccess(...([] as unknown as Parameters<typeof onSuccess>));
+    expect(run).toThrow(SyntaxError);
+  });
+});
+
 /**
  * modPack's watch config for `name`, with the real slot step (on the fake host)
  * and a mod.json of `modJson` (default: none of its fields).
