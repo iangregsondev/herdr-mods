@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Data, Effect, Predicate } from "effect";
-import { HerdrHost, type TransportError } from "./herdr-host.ts";
+import { HerdrHost, type HostUnreachable, type TransportError } from "./herdr-host.ts";
 
 export interface LayoutNode {
   id?: string;
@@ -105,15 +105,17 @@ function shippedFrom(text: string): Set<string> {
  * Layouts that ship with Herdr: their structure can't be edited, only cloned.
  * None when installed.json is missing or isn't a JSON object.
  */
-const shippedLayouts: Effect.Effect<Set<string>, TransportError, HerdrHost> = Effect.gen(
-  function* () {
-    const host = yield* HerdrHost;
-    return yield* host.readFile("installed.json").pipe(
-      Effect.map(shippedFrom),
-      Effect.catchTag("FileMissing", () => Effect.succeed(new Set<string>())),
-    );
-  },
-);
+const shippedLayouts: Effect.Effect<
+  Set<string>,
+  TransportError | HostUnreachable,
+  HerdrHost
+> = Effect.gen(function* () {
+  const host = yield* HerdrHost;
+  return yield* host.readFile("installed.json").pipe(
+    Effect.map(shippedFrom),
+    Effect.catchTag("FileMissing", () => Effect.succeed(new Set<string>())),
+  );
+});
 
 /**
  * The shown layout's name from `herdr-app status` JSON. Null unless the text is
@@ -146,22 +148,24 @@ export type HerdrStatus =
 const notFound = (cause: unknown): boolean =>
   Predicate.hasProperty(cause, "code") && cause.code === "ENOENT";
 
-/** Runs `herdr-app status` on the Herdr host. */
-const herdrStatus: Effect.Effect<HerdrStatus, never, HerdrHost> = Effect.gen(function* () {
-  const host = yield* HerdrHost;
-  return yield* host.herdrApp(["status"]).pipe(
-    Effect.map(({ stdout }): HerdrStatus => ({ _tag: "Running", text: stdout })),
-    Effect.catchTags({
-      // It ran and failed, which is what it does while the app is closed.
-      CommandFailed: () => Effect.succeed<HerdrStatus>({ _tag: "NotRunning" }),
-      // It couldn't start: not installed when it isn't there, else not answering.
-      TransportError: ({ cause }) =>
-        Effect.succeed<HerdrStatus>(
-          notFound(cause) ? { _tag: "NotInstalled" } : { _tag: "NotRunning" },
-        ),
-    }),
-  );
-});
+/** Runs `herdr-app status` on the Herdr host. Fails only when the host can't be reached. */
+const herdrStatus: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = Effect.gen(
+  function* () {
+    const host = yield* HerdrHost;
+    return yield* host.herdrApp(["status"]).pipe(
+      Effect.map(({ stdout }): HerdrStatus => ({ _tag: "Running", text: stdout })),
+      Effect.catchTags({
+        // It ran and failed, which is what it does while the app is closed.
+        CommandFailed: () => Effect.succeed<HerdrStatus>({ _tag: "NotRunning" }),
+        // It couldn't start: not installed when it isn't there, else not answering.
+        TransportError: ({ cause }) =>
+          Effect.succeed<HerdrStatus>(
+            notFound(cause) ? { _tag: "NotInstalled" } : { _tag: "NotRunning" },
+          ),
+      }),
+    );
+  },
+);
 
 /** A layout file isn't JSON, or its tree can't be walked. */
 class LayoutUnreadable extends Data.TaggedError("LayoutUnreadable")<{
@@ -244,7 +248,7 @@ export function removeSlots(
 export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
   mod: string,
   modJson: ModJson,
-  status: Effect.Effect<HerdrStatus, never, HerdrHost> = herdrStatus,
+  status: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = herdrStatus,
 ) {
   const host = yield* HerdrHost;
   const shown = yield* status;
