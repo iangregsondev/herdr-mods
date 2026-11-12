@@ -19,7 +19,7 @@ mod-pack.ts               shared vp pack settings for every mod (watch mode buil
 scripts/check-mods.ts     vp run check:mods: herdr-app check on every built mod, on the dev target's Herdr host
 scripts/dev-remove.ts     removes a mod's dev build and its panel from Herdr
 scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls (local, or remote over SSH)
-scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host
+scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host; `shot <file> [--crop x,y,w,h]` copies a (cropped) screenshot back
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
 scripts/require-vp.sh     preinstall guard: installs must go through vp
 scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, a fake Herdr host, run sh

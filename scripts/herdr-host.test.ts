@@ -616,3 +616,63 @@ describe("hostLayer", () => {
     }).pipe(Effect.provide(hostLayer(target)));
   });
 });
+
+describe("HerdrHost.cropImage, remote layer", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.effect(
+    "crops the image on the host with sips: height and width, then the y and x offset",
+    () => {
+      const fake = fakeHerdrHost();
+      vi.stubEnv("PATH", `${fake.appBin}:${process.env.PATH ?? ""}`);
+      const sipsLog = join(tempDir(), "sips.log");
+      fakeBin(fake.appBin, "sips", `printf '%s\\n' "$*" >> '${sipsLog}'; printf cropped > "$7"`);
+      const shot = writeFile(fake.root, "tmp/shot.png", "full");
+      return Effect.gen(function* () {
+        const host = yield* HerdrHost;
+        yield* host.cropImage(shot, { x: 10, y: 20, width: 300, height: 400 });
+        assert.deepStrictEqual(loggedLines(sipsLog), [`-c 400 300 --cropOffset 20 10 ${shot}`]);
+        assert.strictEqual(textOf(shot), "cropped");
+      }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
+    },
+  );
+});
+
+describe("HerdrHost.cropImage, local layer", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.effect("crops the image with sips from PATH", () => {
+    const bin = join(tempDir(), "bin");
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    const sipsLog = join(tempDir(), "sips.log");
+    fakeBin(bin, "sips", `printf '%s\\n' "$*" >> '${sipsLog}'; printf cropped > "$7"`);
+    const shot = writeFile(tempDir(), "shot.png", "full");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      yield* host.cropImage(shot, { x: 10, y: 20, width: 300, height: 400 });
+      assert.deepStrictEqual(loggedLines(sipsLog), [`-c 400 300 --cropOffset 20 10 ${shot}`]);
+      assert.strictEqual(textOf(shot), "cropped");
+    }).pipe(Effect.provide(HerdrHost.local(tempDir())));
+  });
+
+  it.effect("fails with CommandFailed when sips exits non-zero", () => {
+    const bin = join(tempDir(), "bin");
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    fakeBin(bin, "sips", "echo 'bad image' >&2; exit 13");
+    const shot = writeFile(tempDir(), "shot.png", "full");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      const outcome = Result.merge(
+        yield* Effect.result(host.cropImage(shot, { x: 0, y: 0, width: 1, height: 1 })),
+      );
+      assert.deepStrictEqual(
+        outcome,
+        new CommandFailed({ code: 13, stdout: "", stderr: "bad image\n" }),
+      );
+    }).pipe(Effect.provide(HerdrHost.local(tempDir())));
+  });
+});
