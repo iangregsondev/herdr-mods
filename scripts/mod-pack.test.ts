@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vite-plus/test";
 import {
   type EnsureSlot,
@@ -7,9 +8,9 @@ import {
   type ModPackOptions,
   watchFromArgv,
 } from "../mod-pack.ts";
-import { DevTarget } from "./dev-config.ts";
+import { describeDevTarget, DevTarget } from "./dev-config.ts";
 import { DEV_MARKER, type ModJson } from "./herdr-slots.ts";
-import { tempDir, writeFile } from "./test-support.ts";
+import { fakeHerdrHost, tempDir, writeFile } from "./test-support.ts";
 
 type PackConfig = ReturnType<typeof modPackConfig>;
 type SinglePack = Exclude<PackConfig, readonly unknown[]>;
@@ -46,6 +47,13 @@ function silencedLog() {
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   onTestFinished(() => log.mockRestore());
   return log;
+}
+
+/** Silences console.error for the current test and returns the spy; restored when it finishes. */
+function silencedError() {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  onTestFinished(() => error.mockRestore());
+  return error;
 }
 
 /** A temp Herdr home with an empty mods/ folder. */
@@ -140,6 +148,13 @@ describe("modPack, build mode", () => {
 });
 
 describe("modPack, watch mode", () => {
+  test("prints the dev target line on start", () => {
+    const target = useLocalTarget(herdrHomeWithMods());
+    const log = silencedLog();
+    modPack("hello", { watch: true });
+    expect(log).toHaveBeenCalledWith(describeDevTarget(target));
+  });
+
   test("builds into <home>/mods/<name> and marks it as a dev build", () => {
     const home = localHerdrHome();
     const config = modPack("hello", { watch: true });
@@ -222,5 +237,106 @@ describe("modPack, watch mode", () => {
     await runOnSuccess(config);
 
     expect(calls).toEqual([["hello", modJson, target]]);
+  });
+});
+
+/** The repo root, where the watch's staging folder lives (under node_modules). */
+const REPO_ROOT = resolve(import.meta.dirname, "..");
+
+/**
+ * A mod name no other test uses, whose staging folder in the repo is removed
+ * when the current test finishes.
+ */
+function stagedModName(): string {
+  const name = `test-${randomUUID().slice(0, 8)}`;
+  onTestFinished(() => rmSync(stagingFolder(name), { recursive: true, force: true }));
+  return name;
+}
+
+/** Where a remote watch stages `name`'s build. */
+const stagingFolder = (name: string): string => join(REPO_ROOT, "node_modules", ".herdr-dev", name);
+
+/**
+ * A fake Herdr host with a `mods/` folder, made the remote dev target for the
+ * current test, and a local Herdr home (HERDR_APP_HOME) that a remote watch must
+ * never touch.
+ */
+function remoteHerdrHost(options: { readonly unreachable?: boolean } = {}) {
+  const fake = fakeHerdrHost(options);
+  mkdirSync(join(fake.home, "mods"), { recursive: true });
+  const localHome = herdrHomeWithMods();
+  vi.stubEnv("HERDR_DEV_CONFIG", fake.config);
+  vi.stubEnv("HERDR_APP_HOME", localHome);
+  return { ...fake, localHome };
+}
+
+/**
+ * modPack's watch config for `name`, with the real slot step (on the fake host)
+ * and a mod.json of `modJson` (default: none of its fields).
+ */
+function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
+  const config = modPackConfig(name, { watch: true, modDir: modSource(modJson) });
+  if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
+  return config;
+}
+
+describe("modPack, remote watch", () => {
+  test("builds into the staging folder, never the repo's mods/ or a local Herdr home", () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    silencedLog();
+    const config = modPack(name, { watch: true });
+    expect(config.outDir).toBe(stagingFolder(name));
+    expect(config.copy).toEqual([{ from: "assets/*", to: stagingFolder(name) }]);
+    expect(config.clean).toBe(false);
+    expect(existsSync(join(REPO_ROOT, "mods", name))).toBe(false);
+    expect(readdirSync(join(host.localHome, "mods"))).toEqual([]);
+  });
+
+  test("prints the dev target line on start", () => {
+    const host = remoteHerdrHost();
+    const log = silencedLog();
+    modPack(stagedModName(), { watch: true });
+    expect(log).toHaveBeenCalledWith(describeDevTarget(DevTarget.Remote(host.target)));
+  });
+
+  test("writes the dev marker into the staging folder, not yet on the host", () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    silencedLog();
+    modPack(name, { watch: true });
+    expect(existsSync(join(stagingFolder(name), DEV_MARKER))).toBe(true);
+    expect(readdirSync(join(host.home, "mods"))).toEqual([]);
+  });
+
+  test("syncs the staging folder, marker and all, to the host after a good build", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    silencedLog();
+    const config = remoteModPack(name);
+    writeFile(stagingFolder(name), "main.js", "first build");
+
+    await runOnSuccess(config);
+
+    const dir = join(host.home, "mods", name);
+    expect(existsSync(join(dir, DEV_MARKER))).toBe(true);
+    expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("first build");
+  });
+
+  test("refuses to sync over an installed mod on the host, and leaves it untouched", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    const dir = join(host.home, "mods", name);
+    writeFile(dir, "main.js", "installed");
+    silencedLog();
+    const error = silencedError();
+    const config = remoteModPack(name);
+    writeFile(stagingFolder(name), "main.js", "dev build");
+
+    await runOnSuccess(config);
+
+    expect(readdirSync(dir)).toEqual(["main.js"]);
+    expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("installed");
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/installed mod, not a dev build/));
   });
 });
