@@ -80,10 +80,8 @@ export default defineConfig({
     // Cached, they would replay an old result without running.
     tasks: {
       types: { command: "sh scripts/link-herdr-types.sh", cache: false },
-      "check:mods": {
-        command: 'for d in mods/*/; do herdr-app check "$d" || exit 1; done',
-        cache: false,
-      },
+      // herdr-app check on every built mod, on the dev target's Herdr host.
+      "check:mods": { command: "vpx scripts/check-mods.ts", cache: false },
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
       // herdr-app on the dev target's Herdr host: here, or over SSH (herdr-dev.json).
       herdr: { command: "vpx scripts/herdr.ts", cache: false },
