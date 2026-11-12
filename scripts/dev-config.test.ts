@@ -1,5 +1,3 @@
-// @effect/vitest marks its whole API unstable; it is the test runner the repo mandates for Effect code.
-// oxlint-disable effecttsgo/unstable-api-usage
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
