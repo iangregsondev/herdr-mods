@@ -4,7 +4,7 @@
 //
 //   vp run dev:remove <name>
 import { Effect } from "effect";
-import { HerdrHost, type TransportError } from "./herdr-host.ts";
+import { HerdrHost, type HostUnreachable, type TransportError } from "./herdr-host.ts";
 import { herdrHome, removeSlotsOnHost } from "./herdr-slots.ts";
 
 export interface DevRemoveResult {
@@ -24,7 +24,7 @@ const usage: DevRemoveResult = { code: 2, out: [], err: ["usage: vp run dev:remo
 /** Removes the dev build named in `args` from the Herdr host. */
 export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   args: readonly string[],
-): Effect.fn.Return<DevRemoveResult, TransportError, HerdrHost> {
+): Effect.fn.Return<DevRemoveResult, TransportError | HostUnreachable, HerdrHost> {
   const name = args[0];
   if (!name || args.length > 1 || name.includes("/") || name.startsWith(".")) return usage;
 
