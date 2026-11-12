@@ -6,10 +6,12 @@
 // <app home>/mods/<name>/, so every save reloads the mod in the window.
 // Herdr hot-reloads only real files in its own mods/ folder (a symlink to
 // mods/<name>/ does not reload), so the build has to land there.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { Effect, Result } from "effect";
 import type { UserConfig } from "vite-plus";
-import { DEV_MARKER, ensureSlot, herdrHome, type ModJson } from "./scripts/herdr-slots.ts";
+import { DEV_MARKER, HerdrHost, InstalledModInTheWay } from "./scripts/herdr-host.ts";
+import { ensureSlot, herdrHome, type ModJson } from "./scripts/herdr-slots.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
 
@@ -56,26 +58,44 @@ export interface ModPackOptions {
   ensureSlot?: EnsureSlot;
 }
 
-/** The mod's folder in the Herdr app, claimed for a dev build. */
-function devOutDir(name: string, home: string): string {
-  const mods = join(home, "mods");
-  const dir = join(mods, name);
-  if (!existsSync(mods)) {
-    throw new Error(`mod-pack: no Herdr app at ${home} (set HERDR_APP_HOME?)`);
+/**
+ * Claims `mods/<name>/` on the Herdr host for a dev build: refuses an installed
+ * mod there, and writes the dev marker (making the folder). Fails with
+ * FileMissing when the host has no `mods/` folder.
+ */
+export const claimDevBuild = Effect.fn("claimDevBuild")(function* (name: string) {
+  const host = yield* HerdrHost;
+  yield* host.listDir("mods");
+  if ((yield* host.modState(name)) === "Installed") {
+    return yield* new InstalledModInTheWay({ path: host.location(`mods/${name}`) });
   }
-  if (existsSync(dir) && !existsSync(join(dir, DEV_MARKER))) {
-    throw new Error(
-      `mod-pack: ${dir} is an installed mod, not a dev build; not overwriting it. ` +
-        `Remove or rename it in Herdr first.`,
-    );
-  }
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, DEV_MARKER),
+  yield* host.writeFile(
+    `mods/${name}/${DEV_MARKER}`,
     `Dev build of "${name}" from herdr-mods (vp run ${name}#dev).\n` +
       `Remove it with: vp run dev:remove ${name}\n`,
   );
-  return dir;
+});
+
+/** The mod's folder in the Herdr app on this machine, claimed for a dev build. */
+function devOutDir(name: string, home: string): string {
+  const claimed = Effect.runSync(
+    Effect.result(claimDevBuild(name).pipe(Effect.provide(HerdrHost.local(home)))),
+  );
+  if (Result.isFailure(claimed)) {
+    const error = claimed.failure;
+    switch (error._tag) {
+      case "FileMissing":
+        throw new Error(`mod-pack: no Herdr app at ${home} (set HERDR_APP_HOME?)`);
+      case "InstalledModInTheWay":
+        throw new Error(
+          `mod-pack: ${error.path} is an installed mod, not a dev build; not overwriting it. ` +
+            `Remove or rename it in Herdr first.`,
+        );
+      case "TransportError":
+        throw new Error(`mod-pack: couldn't ${error.operation}`, { cause: error.cause });
+    }
+  }
+  return join(home, "mods", name);
 }
 
 /**
