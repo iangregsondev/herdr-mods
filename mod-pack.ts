@@ -273,9 +273,17 @@ function syncAfterEachBuild(
   };
   // vp pack starts onSuccess without waiting for it, so builds can overlap: each
   // build's sync and slot step wait for the one before, and never interleave.
+  // Anything syncOnce throws is printed here, so the queue never holds a rejected
+  // promise and every later build still gets its own sync.
   let previous: Promise<void> = Promise.resolve();
   return () => {
-    previous = previous.then(syncOnce);
+    previous = previous
+      .then(syncOnce)
+      .catch((cause: unknown) =>
+        console.error(
+          `mod-pack: couldn't sync ${name} (${causeText(cause)}); the next build tries again.`,
+        ),
+      );
     return previous;
   };
 }

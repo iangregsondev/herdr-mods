@@ -472,6 +472,27 @@ describe("modPack, remote watch", () => {
     expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
   });
 
+  test("prints a build whose sync throws, and still syncs the next build", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    const log = silencedLog();
+    const error = silencedError();
+    const config = remoteModPack(name);
+    await watchStarted(config);
+    // Printing the first "synced" line throws, as writing to a closed stdout does.
+    log.mockImplementationOnce(() => {
+      throw new Error("stdout closed");
+    });
+    writeFile(stagingFolder(name), "main.js", "first build");
+
+    await runOnSuccess(config).catch(() => undefined);
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/stdout closed/));
+
+    writeFile(stagingFolder(name), "main.js", "second build");
+    await runOnSuccess(config).catch(() => undefined);
+    expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
+  });
+
   test("adds the slot to the host's shown layout once, after the first good sync", async () => {
     const host = remoteHerdrHost();
     const name = stagedModName();
