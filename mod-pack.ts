@@ -91,6 +91,11 @@ export interface ModPackOptions {
    * Defaults to the repo's `.herdr-types/`.
    */
   typesDir?: string;
+  /**
+   * Where a remote watch stages its builds, one folder per mod, before syncing
+   * them to the Herdr host. Defaults to the repo's `node_modules/.herdr-dev/`.
+   */
+  stagingRoot?: string;
 }
 
 /** What the dev marker says, for anyone who finds it in a mod's folder. */
@@ -124,23 +129,24 @@ export const claimDevBuild = Effect.fn("claimDevBuild")(function* (name: string)
 /** The repo root: this file's folder. */
 const REPO_ROOT = fileURLToPath(new URL(".", import.meta.url));
 
-/** Where remote watches stage their builds: under node_modules, so git-ignored. */
-const STAGING_ROOT = join(REPO_ROOT, "node_modules", ".herdr-dev");
+/** Where remote watches stage their builds by default: under node_modules, so git-ignored. */
+export const STAGING_ROOT = join(REPO_ROOT, "node_modules", ".herdr-dev");
 
 /** Where a remote watch builds `name` before syncing it to the Herdr host. */
-export const stagingFolder = (name: string): string => join(STAGING_ROOT, name);
+export const stagingFolder = (name: string, stagingRoot: string = STAGING_ROOT): string =>
+  join(stagingRoot, name);
 
 /**
  * The staging folder for `name`, with the dev marker written in it, so the
  * first sync carries the marker to the Herdr host. It is never cleaned, so it
  * survives between runs. Throws, naming the file, when the marker can't be written.
  */
-function stageDevBuild(name: string): string {
+function stageDevBuild(name: string, stagingRoot: string): string {
   // The staging folder is on this machine, so the Local layer writes it.
   const written = Effect.runSync(
     Effect.result(
       HerdrHost.use((host) => host.writeFile(`${name}/${DEV_MARKER}`, markerText(name))).pipe(
-        Effect.provide(HerdrHost.local(STAGING_ROOT)),
+        Effect.provide(HerdrHost.local(stagingRoot)),
       ),
     ),
   );
@@ -151,7 +157,7 @@ function stageDevBuild(name: string): string {
       { cause: error },
     );
   }
-  return stagingFolder(name);
+  return stagingFolder(name, stagingRoot);
 }
 
 /** Says the watch won't overwrite the installed mod at `path`. */
@@ -348,6 +354,7 @@ export function modPack(
     modDir = process.cwd(),
     ensureSlot: slot = ensureSlotOnTarget,
     typesDir = TYPES_DIR,
+    stagingRoot = STAGING_ROOT,
   }: ModPackOptions = {},
 ): PackConfig {
   if (!watch) return packConfig(`../../mods/${name}`);
@@ -355,7 +362,7 @@ export function modPack(
   const started = startWatch(target, typesDir);
   const config =
     target._tag === "Remote"
-      ? remoteWatchConfig(name, { target, modDir, slot })
+      ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
       : packConfig(
           devOutDir(name, target.herdrHome),
           slotOnFirstBuild(name, { target, modDir, slot }),
@@ -367,9 +374,14 @@ export function modPack(
 /** The watch config for a remote dev target: stage here, sync to the host. */
 function remoteWatchConfig(
   name: string,
-  { target, modDir, slot }: { target: DevTarget; modDir: string; slot: EnsureSlot },
+  {
+    target,
+    modDir,
+    slot,
+    stagingRoot,
+  }: { target: DevTarget; modDir: string; slot: EnsureSlot; stagingRoot: string },
 ): PackConfig {
-  const staging = stageDevBuild(name);
+  const staging = stageDevBuild(name, stagingRoot);
   const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
   return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
 }

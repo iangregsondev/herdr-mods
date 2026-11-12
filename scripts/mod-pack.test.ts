@@ -5,15 +5,18 @@ import {
   lstatSync,
   readdirSync,
   readFileSync,
+  mkdtempSync,
   readlinkSync,
   rmSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, onTestFinished, test, vi } from "vite-plus/test";
+import { afterAll, describe, expect, onTestFinished, test, vi } from "vite-plus/test";
 import {
   type EnsureSlot,
   modPack as modPackConfig,
   type ModPackOptions,
+  stagingFolder,
   watchFromArgv,
   watchStarted,
 } from "../mod-pack.ts";
@@ -31,6 +34,13 @@ import {
 } from "./test-support.ts";
 
 type PackConfig = ReturnType<typeof modPackConfig>;
+
+/**
+ * Where remote watches in these tests stage their builds, so no test writes into
+ * the repo's own staging folder. Removed when the file's tests are done.
+ */
+const testStagingRoot = mkdtempSync(join(tmpdir(), "herdr-mods-staging-"));
+afterAll(() => rmSync(testStagingRoot, { recursive: true, force: true }));
 type SinglePack = Exclude<PackConfig, readonly unknown[]>;
 
 /** An `ensureSlot` that fails the test if called: no test reaches the real Herdr app. */
@@ -56,6 +66,7 @@ function modPack(name: string, options: ModPackOptions = {}): SinglePack {
   return startedPack(name, {
     ensureSlot: unexpectedEnsureSlot,
     typesDir: join(tempDir(), "types"),
+    stagingRoot: testStagingRoot,
     ...options,
   });
 }
@@ -273,18 +284,11 @@ describe("modPack, watch mode", () => {
 /** The repo root, where the watch's staging folder lives (under node_modules). */
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 
-/**
- * A mod name no other test uses, whose staging folder in the repo is removed
- * when the current test finishes.
- */
-function stagedModName(): string {
-  const name = `test-${randomUUID().slice(0, 8)}`;
-  onTestFinished(() => rmSync(stagingFolder(name), { recursive: true, force: true }));
-  return name;
-}
+/** A mod name no other test uses. */
+const stagedModName = (): string => `test-${randomUUID().slice(0, 8)}`;
 
-/** Where a remote watch stages `name`'s build. */
-const stagingFolder = (name: string): string => join(REPO_ROOT, "node_modules", ".herdr-dev", name);
+/** Where a remote watch in these tests stages `name`'s build: under `testStagingRoot`. */
+const staged = (name: string): string => stagingFolder(name, testStagingRoot);
 
 /**
  * A fake Herdr host with a `mods/` folder, made the remote dev target for the
@@ -372,7 +376,7 @@ describe("modPack, Herdr types on start", () => {
     silencedLog();
     const name = stagedModName();
     const config = modPack(name, { watch: true });
-    expect(config.outDir).toBe(stagingFolder(name));
+    expect(config.outDir).toBe(staged(name));
     await watchStarted(config);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/^herdr-types: no Herdr app types/));
   });
@@ -416,6 +420,7 @@ function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
     watch: true,
     modDir: modSource(modJson),
     typesDir: join(tempDir(), "types"),
+    stagingRoot: testStagingRoot,
   });
 }
 
@@ -425,11 +430,22 @@ describe("modPack, remote watch", () => {
     const name = stagedModName();
     silencedLog();
     const config = modPack(name, { watch: true });
-    expect(config.outDir).toBe(stagingFolder(name));
-    expect(config.copy).toEqual([{ from: "assets/*", to: stagingFolder(name) }]);
+    expect(config.outDir).toBe(staged(name));
+    expect(config.copy).toEqual([{ from: "assets/*", to: staged(name) }]);
     expect(config.clean).toBe(false);
     expect(existsSync(join(REPO_ROOT, "mods", name))).toBe(false);
     expect(readdirSync(join(host.localHome, "mods"))).toEqual([]);
+  });
+
+  test("stages in the staging root it is given, and never in the repo's", () => {
+    remoteHerdrHost();
+    const name = stagedModName();
+    const stagingRoot = tempDir();
+    silencedLog();
+    const config = modPack(name, { watch: true, stagingRoot });
+    expect(config.outDir).toBe(join(stagingRoot, name));
+    expect(existsSync(join(stagingRoot, name, DEV_MARKER))).toBe(true);
+    expect(existsSync(stagingFolder(name))).toBe(false);
   });
 
   test("prints the dev target line on start", () => {
@@ -444,7 +460,7 @@ describe("modPack, remote watch", () => {
     const name = stagedModName();
     silencedLog();
     modPack(name, { watch: true });
-    expect(existsSync(join(stagingFolder(name), DEV_MARKER))).toBe(true);
+    expect(existsSync(join(staged(name), DEV_MARKER))).toBe(true);
     expect(readdirSync(join(host.home, "mods"))).toEqual([]);
   });
 
@@ -453,7 +469,7 @@ describe("modPack, remote watch", () => {
     const name = stagedModName();
     silencedLog();
     const config = remoteModPack(name);
-    writeFile(stagingFolder(name), "main.js", "first build");
+    writeFile(staged(name), "main.js", "first build");
 
     await runOnSuccess(config);
 
@@ -470,7 +486,7 @@ describe("modPack, remote watch", () => {
     silencedLog();
     const error = silencedError();
     const config = remoteModPack(name);
-    writeFile(stagingFolder(name), "main.js", "dev build");
+    writeFile(staged(name), "main.js", "dev build");
 
     await runOnSuccess(config);
 
@@ -487,14 +503,14 @@ describe("modPack, remote watch", () => {
     silencedLog();
     const error = silencedError();
     const config = remoteModPack(name);
-    writeFile(stagingFolder(name), "main.js", "first build");
+    writeFile(staged(name), "main.js", "first build");
 
     await runOnSuccess(config);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/Herdr host unreachable/));
     expect(existsSync(join(host.home, "mods", name))).toBe(false);
 
     vi.stubEnv("PATH", reachablePath);
-    writeFile(stagingFolder(name), "main.js", "second build");
+    writeFile(staged(name), "main.js", "second build");
     await runOnSuccess(config);
     expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
   });
@@ -510,12 +526,12 @@ describe("modPack, remote watch", () => {
     log.mockImplementationOnce(() => {
       throw new Error("stdout closed");
     });
-    writeFile(stagingFolder(name), "main.js", "first build");
+    writeFile(staged(name), "main.js", "first build");
 
     await runOnSuccess(config).catch(() => undefined);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/stdout closed/));
 
-    writeFile(stagingFolder(name), "main.js", "second build");
+    writeFile(staged(name), "main.js", "second build");
     await runOnSuccess(config).catch(() => undefined);
     expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
   });
@@ -591,7 +607,7 @@ describe("modPack, remote watch", () => {
 
   test("stages in a folder git ignores", () => {
     const name = stagedModName();
-    const staged = join(stagingFolder(name), "main.js");
-    expect(git(REPO_ROOT, ["check-ignore", "--no-index", staged]).trim()).toBe(staged);
+    const file = join(stagingFolder(name), "main.js");
+    expect(git(REPO_ROOT, ["check-ignore", "--no-index", file]).trim()).toBe(file);
   });
 });
