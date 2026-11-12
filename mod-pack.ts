@@ -6,6 +6,8 @@
 // <app home>/mods/<name>/, so every save reloads the mod in the window.
 // Herdr hot-reloads only real files in its own mods/ folder (a symlink to
 // mods/<name>/ does not reload), so the build has to land there.
+// Every read and write of the Herdr home goes through HerdrHost; the one file read
+// here directly is the mod's own assets/mod.json, in the repo.
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Effect, Result } from "effect";
