@@ -34,5 +34,9 @@ dist-ssr
 gpui-kit.d.ts
 jsconfig.json
 
+# Dev target for the dev loop (scripts/dev-config.ts): names a real host and user, so never commit it.
+# herdr-dev.example.json is the committed template.
+herdr-dev.json
+
 # AI agent worktrees
 .claude/worktrees/

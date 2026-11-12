@@ -3,6 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Result } from "effect";
 import { decodeDevConfig, describeDevTarget, DevTarget, loadDevTarget } from "./dev-config.ts";
@@ -91,6 +92,14 @@ describe("decodeDevConfig", () => {
 });
 
 describe("loadDevTarget", () => {
+  it.effect("decodes the committed herdr-dev.example.json to a remote target", () =>
+    Effect.gen(function* () {
+      const example = fileURLToPath(new URL("../herdr-dev.example.json", import.meta.url));
+      const target = yield* loadDevTarget({ env: { HERDR_DEV_CONFIG: example } });
+      assert.strictEqual(target._tag, "Remote");
+    }),
+  );
+
   it.effect("reads the file HERDR_DEV_CONFIG points at", () =>
     Effect.gen(function* () {
       const dir = tempDir();

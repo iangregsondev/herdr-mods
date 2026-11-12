@@ -1,3 +1,7 @@
+// The dev target: where dev builds go. `local` is the Herdr app on this machine;
+// `remote` is a Herdr host reached over SSH. Set in herdr-dev.json at the repo root
+// (git-ignored; see herdr-dev.example.json), or the file HERDR_DEV_CONFIG names.
+// It holds no password or key: SSH auth stays with the developer's own key.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
