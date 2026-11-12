@@ -275,14 +275,15 @@ function syncAfterEachBuild(
     console.log(`mod-pack: synced ${name} to ${synced.success}`);
     // A failed slot step is printed, not thrown: vp pack doesn't wait on onSuccess,
     // so a rejection here would reach no one. The step does its work once, so the
-    // next build tries it again until it has.
-    await Promise.resolve()
-      .then(slotStep)
-      .catch((cause: unknown) =>
-        console.error(
-          `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
-        ),
+    // next build tries it again until it has. It may throw at once or reject;
+    // awaiting it inside `try` catches both.
+    try {
+      await slotStep();
+    } catch (cause) {
+      console.error(
+        `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
       );
+    }
   };
   // vp pack starts onSuccess without waiting for it, so builds can overlap: each
   // build's sync and slot step wait for the one before, and never interleave.
