@@ -69,6 +69,23 @@ export class CommandFailed extends Data.TaggedError("CommandFailed")<{
   readonly stderr: string;
 }> {}
 
+/** A failed command as `exit <code>`, then what it said on stderr, its lines joined by "; ". */
+const commandFailedText = ({ code, stderr }: CommandFailed): string => {
+  const said = stderr.trim();
+  return said === "" ? `exit ${code}` : `exit ${code}: ${said.split("\n").join("; ")}`;
+};
+
+/**
+ * A failure's cause as text, for messages to people: a failed command's exit code
+ * and what it said, else the cause's message, else the cause itself.
+ */
+export const causeText = (cause: unknown): string =>
+  cause instanceof CommandFailed
+    ? commandFailedText(cause)
+    : Predicate.hasProperty(cause, "message")
+      ? String(cause.message)
+      : String(cause);
+
 /** What a command that exited 0 printed. */
 export interface CommandOutput {
   readonly stdout: string;

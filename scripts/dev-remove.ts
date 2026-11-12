@@ -4,10 +4,10 @@
 // It acts on the dev target's Herdr host: this machine for `local`, over SSH for `remote`.
 //
 //   vp run dev:remove <name>
-import { Effect, Predicate } from "effect";
-import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { Effect } from "effect";
+import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import {
-  CommandFailed,
+  causeText,
   HerdrHost,
   hostLayer,
   type HostUnreachable,
@@ -29,17 +29,6 @@ export interface DevRemoveResult {
 }
 
 const usage: DevRemoveResult = { code: 2, out: [], err: ["usage: vp run dev:remove <name>"] };
-
-/**
- * A failure's cause as text: what a failed command printed to stderr, else the
- * cause's message when it has one.
- */
-const causeText = (cause: unknown): string =>
-  cause instanceof CommandFailed
-    ? cause.stderr.trim().split("\n").join("; ")
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
 
 /** Exit 1 with `message` on stderr. */
 const failed = (message: string): DevRemoveResult => ({
@@ -106,10 +95,8 @@ export const runDevRemove = Effect.fn("runDevRemove")(function* (
       HostUnreachable: (error) => Effect.succeed(failed(error.message)),
       TransportError: ({ operation, cause }) =>
         Effect.succeed(failed(`couldn't ${operation} (${causeText(cause)})`)),
-      DevConfigInvalid: ({ file, field, message }) =>
-        Effect.succeed(failed(`${file}: ${field}: ${message}`)),
-      DevConfigUnreadable: ({ file, cause }) =>
-        Effect.succeed(failed(`couldn't read ${file} (${causeText(cause)})`)),
+      DevConfigInvalid: (error) => Effect.succeed(failed(devConfigProblem(error))),
+      DevConfigUnreadable: (error) => Effect.succeed(failed(devConfigProblem(error))),
     }),
   );
 });

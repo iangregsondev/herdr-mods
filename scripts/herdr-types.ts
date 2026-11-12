@@ -13,9 +13,9 @@
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect, Predicate, Result } from "effect";
-import { type DevTarget, type LoadOptions, loadDevTarget } from "./dev-config.ts";
-import { CommandFailed, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
+import { Effect, Result } from "effect";
+import { type DevTarget, devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { causeText, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
 
 /** What to print and the exit code. */
 export interface TypesResult {
@@ -26,14 +26,6 @@ export interface TypesResult {
 
 /** Where the types go by default: `.herdr-types/` at the repo root (git-ignored). */
 export const TYPES_DIR = join(fileURLToPath(new URL("..", import.meta.url)), ".herdr-types");
-
-/** A failure's cause as text: what a failed command said, else its message. */
-const causeText = (cause: unknown): string =>
-  cause instanceof CommandFailed
-    ? cause.stderr.trim()
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
 
 /** The type files the Herdr app writes into its home on every start. */
 const TYPE_FILES = ["herdr.d.ts", "gpui-kit.d.ts"] as const;
@@ -135,12 +127,7 @@ export const runHerdrTypes = Effect.fn("runHerdrTypes")(function* (
 ): Effect.fn.Return<TypesResult> {
   const loaded = yield* Effect.result(loadDevTarget(options));
   if (Result.isFailure(loaded)) {
-    const error = loaded.failure;
-    return failure(
-      error._tag === "DevConfigInvalid"
-        ? `${error.file}: ${error.field}: ${error.message}`
-        : `couldn't read ${error.file} (${causeText(error.cause)})`,
-    );
+    return failure(devConfigProblem(loaded.failure));
   }
   return yield* refreshHerdrTypes(loaded.success, dest);
 });

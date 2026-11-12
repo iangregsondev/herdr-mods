@@ -349,7 +349,7 @@ describe("runDevRemove, host can't carry out a change", () => {
     onTestFinished(() => chmodSync(mods, 0o755));
     return Effect.gen(function* () {
       const result = yield* runDevRemove(["hello"], { env: { HERDR_DEV_CONFIG: fake.config } });
-      assert.match(result.err[0] ?? "", /\(rm: .*Permission denied\)$/);
+      assert.match(result.err[0] ?? "", /\(exit [1-9]\d*: rm: .*Permission denied\)$/);
     });
   });
 });

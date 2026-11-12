@@ -18,8 +18,14 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Predicate, Result } from "effect";
 import type { UserConfig } from "vite-plus";
-import { describeDevTarget, type DevTarget, loadDevTarget } from "./scripts/dev-config.ts";
 import {
+  describeDevTarget,
+  devConfigProblem,
+  type DevTarget,
+  loadDevTarget,
+} from "./scripts/dev-config.ts";
+import {
+  causeText,
   DEV_MARKER,
   type FileMissing,
   HerdrHost,
@@ -218,14 +224,6 @@ function slotOnFirstBuild(
   };
 }
 
-/** A failure's cause as text: what a failed command said, else its message. */
-const causeText = (cause: unknown): string =>
-  Predicate.hasProperty(cause, "stderr") && Predicate.isString(cause.stderr)
-    ? cause.stderr.trim()
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
-
 /** Why a remote watch didn't sync this build, as a line for the person. */
 function syncProblem(
   error: FileMissing | InstalledModInTheWay | TransportError | HostUnreachable,
@@ -306,13 +304,7 @@ function syncAfterEachBuild(
 function devTarget(): DevTarget {
   const loaded = Effect.runSync(Effect.result(loadDevTarget()));
   if (Result.isSuccess(loaded)) return loaded.success;
-  const error = loaded.failure;
-  switch (error._tag) {
-    case "DevConfigInvalid":
-      throw new Error(`mod-pack: ${error.file}: ${error.field}: ${error.message}`);
-    case "DevConfigUnreadable":
-      throw new Error(`mod-pack: couldn't read ${error.file}`, { cause: error.cause });
-  }
+  throw new Error(`mod-pack: ${devConfigProblem(loaded.failure)}`, { cause: loaded.failure });
 }
 
 /** Prints what the types refresh said, to stdout or stderr as it gave it. */

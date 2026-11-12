@@ -258,7 +258,7 @@ describe("runHerdr shot, copy back fails", () => {
       assert.match(
         result.stderr,
         new RegExp(
-          `^herdr: couldn't copy ann@herdr-host:\\S+/shot\\.png to ${out} \\(cp: .*No such file or directory\\)\\n$`,
+          `^herdr: couldn't copy ann@herdr-host:\\S+/shot\\.png to ${out} \\(exit [1-9]\\d*: cp: .*No such file or directory\\)\\n$`,
         ),
       );
       assert.deepStrictEqual(readdirSync(join(fake.root, "tmp")), []);

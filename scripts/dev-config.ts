@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Data, Effect, Option, Predicate, Result, Schema, SchemaIssue } from "effect";
+import { causeText } from "./herdr-host.ts";
 
 export type DevTarget = Data.TaggedEnum<{
   Local: { readonly herdrHome: string; readonly file: string; readonly found: boolean };
@@ -151,3 +152,9 @@ export const describeDevTarget: (target: DevTarget) => string = DevTarget.$match
   Local: ({ found, file }) => `target: local (${found ? "" : "no "}${file})`,
   Remote: ({ user, host, port, file }) => `target: remote ${user}@${host}:${port} (${file})`,
 });
+
+/** Why the dev config couldn't be loaded, as one line for the person. */
+export const devConfigProblem = (error: DevConfigInvalid | DevConfigUnreadable): string =>
+  error._tag === "DevConfigInvalid"
+    ? `${error.file}: ${error.field}: ${error.message}`
+    : `couldn't read ${error.file} (${causeText(error.cause)})`;
