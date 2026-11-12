@@ -15,6 +15,7 @@ import {
   modPack as modPackConfig,
   type ModPackOptions,
   watchFromArgv,
+  watchStarted,
 } from "../mod-pack.ts";
 import { describeDevTarget, DevTarget } from "./dev-config.ts";
 import { DEV_MARKER, hasSlot, type ModJson } from "./herdr-slots.ts";
@@ -39,16 +40,24 @@ const unexpectedEnsureSlot: EnsureSlot = (mod) => {
 
 /**
  * modPack's config, narrowed from vp's "one config or a list" type to the one it returns.
- * `ensureSlot` defaults to `unexpectedEnsureSlot`.
+ * The test waits, when it finishes, for the work the watch started in the background,
+ * so nothing still writes into its temp folders as they are removed. The finish
+ * callbacks run newest first, so this runs before those folders go.
  */
+function startedPack(name: string, options: ModPackOptions): SinglePack {
+  const config = modPackConfig(name, options);
+  onTestFinished(() => watchStarted(config));
+  if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
+  return config;
+}
+
+/** `startedPack`, with `ensureSlot` defaulting to `unexpectedEnsureSlot`. */
 function modPack(name: string, options: ModPackOptions = {}): SinglePack {
-  const config = modPackConfig(name, {
+  return startedPack(name, {
     ensureSlot: unexpectedEnsureSlot,
     typesDir: join(tempDir(), "types"),
     ...options,
   });
-  if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
-  return config;
 }
 
 type SlotCall = Parameters<EnsureSlot>;
@@ -324,11 +333,9 @@ describe("modPack, Herdr types on start", () => {
     writeTypeFiles(host.home);
     const typesDir = join(tempDir(), "types");
     silencedLog();
-    modPack(stagedModName(), { watch: true, typesDir });
-    await vi.waitFor(() =>
-      expect(typeFiles.map((file) => contentOf(join(typesDir, file)))).toEqual(
-        typeFiles.map((file) => `// ${file}\n`),
-      ),
+    await watchStarted(modPack(stagedModName(), { watch: true, typesDir }));
+    expect(typeFiles.map((file) => contentOf(join(typesDir, file)))).toEqual(
+      typeFiles.map((file) => `// ${file}\n`),
     );
   });
 
@@ -337,10 +344,10 @@ describe("modPack, Herdr types on start", () => {
     const error = silencedError();
     silencedLog();
     const name = stagedModName();
-    expect(modPack(name, { watch: true }).outDir).toBe(stagingFolder(name));
-    await vi.waitFor(() =>
-      expect(error).toHaveBeenCalledWith(expect.stringMatching(/^herdr-types: no Herdr app types/)),
-    );
+    const config = modPack(name, { watch: true });
+    expect(config.outDir).toBe(stagingFolder(name));
+    await watchStarted(config);
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^herdr-types: no Herdr app types/));
   });
 });
 
@@ -378,13 +385,11 @@ describe("modPack, local watch slot step", () => {
  * and a mod.json of `modJson` (default: none of its fields).
  */
 function remoteModPack(name: string, modJson: ModJson = {}): SinglePack {
-  const config = modPackConfig(name, {
+  return startedPack(name, {
     watch: true,
     modDir: modSource(modJson),
     typesDir: join(tempDir(), "types"),
   });
-  if (Array.isArray(config)) throw new Error("modPack returned a list of configs");
-  return config;
 }
 
 describe("modPack, remote watch", () => {

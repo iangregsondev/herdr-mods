@@ -303,14 +303,26 @@ function printTypes(result: TypesResult): void {
  * What a watch does once, when it starts: says where its builds go, and puts
  * Herdr's type files from the dev target into `typesDir`. The refresh never
  * fails (a problem is printed), so the watch always starts. On this machine it
- * is done before this returns; over SSH it runs alongside the first build.
+ * is done before this returns; over SSH it runs alongside the first build, and
+ * the promise given resolves when it is done.
  */
-function startWatch(target: DevTarget, typesDir: string): void {
+function startWatch(target: DevTarget, typesDir: string): Promise<void> {
   console.log(describeDevTarget(target));
   const refresh = refreshHerdrTypes(target, typesDir).pipe(Effect.map(printTypes));
-  if (target._tag === "Local") Effect.runSync(refresh);
-  else void Effect.runPromise(refresh);
+  if (target._tag === "Local") return Promise.resolve(Effect.runSync(refresh));
+  return Effect.runPromise(refresh);
 }
+
+/** The background work each watch config's start began, keyed by the config. */
+const startedWork = new WeakMap<PackConfig, Promise<void>>();
+
+/**
+ * Resolves when the work `config`'s watch started in the background (the types
+ * refresh over SSH) is done; at once for a config with none. The watch never
+ * waits on it, but a caller that must not outlive it, such as a test, can.
+ */
+export const watchStarted = (config: PackConfig): Promise<void> =>
+  startedWork.get(config) ?? Promise.resolve();
 
 export function modPack(
   name: string,
@@ -323,16 +335,26 @@ export function modPack(
 ): PackConfig {
   if (!watch) return packConfig(`../../mods/${name}`);
   const target = devTarget();
-  startWatch(target, typesDir);
-  if (target._tag === "Remote") {
-    const staging = stageDevBuild(name);
-    const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
-    return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
-  }
-  return packConfig(
-    devOutDir(name, target.herdrHome),
-    slotOnFirstBuild(name, { target, modDir, slot }),
-  );
+  const started = startWatch(target, typesDir);
+  const config =
+    target._tag === "Remote"
+      ? remoteWatchConfig(name, { target, modDir, slot })
+      : packConfig(
+          devOutDir(name, target.herdrHome),
+          slotOnFirstBuild(name, { target, modDir, slot }),
+        );
+  startedWork.set(config, started);
+  return config;
+}
+
+/** The watch config for a remote dev target: stage here, sync to the host. */
+function remoteWatchConfig(
+  name: string,
+  { target, modDir, slot }: { target: DevTarget; modDir: string; slot: EnsureSlot },
+): PackConfig {
+  const staging = stageDevBuild(name);
+  const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
+  return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
 }
 
 /**
