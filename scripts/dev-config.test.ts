@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Result } from "effect";
-import { decodeDevConfig, DevTarget, loadDevTarget } from "./dev-config.ts";
+import { decodeDevConfig, describeDevTarget, DevTarget, loadDevTarget } from "./dev-config.ts";
 import { tempDir, writeFile } from "./test-support.ts";
 
 const file = "herdr-dev.json";
@@ -202,4 +202,31 @@ describe("loadDevTarget", () => {
       );
     }),
   );
+});
+
+describe("describeDevTarget", () => {
+  it("says local with no file when there is no config file", () => {
+    const target = DevTarget.Local({ herdrHome: localHome, file, found: false });
+    assert.strictEqual(describeDevTarget(target), "target: local (no herdr-dev.json)");
+  });
+
+  it("names the file when a local target comes from it", () => {
+    const target = DevTarget.Local({ herdrHome: localHome, file, found: true });
+    assert.strictEqual(describeDevTarget(target), "target: local (herdr-dev.json)");
+  });
+
+  it("names the user, host and port of a remote target, and its file", () => {
+    const target = DevTarget.Remote({
+      host: "herdr-host",
+      user: "dev",
+      port: 2222,
+      herdrHome: "~/.config/herdr-app",
+      herdrApp: "~/.local/bin/herdr-app",
+      file,
+    });
+    assert.strictEqual(
+      describeDevTarget(target),
+      "target: remote dev@herdr-host:2222 (herdr-dev.json)",
+    );
+  });
 });

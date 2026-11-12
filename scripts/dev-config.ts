@@ -134,3 +134,9 @@ export const loadDevTarget = Effect.fn("loadDevTarget")(function* (options: Load
     onSome: (text) => Effect.fromResult(decodeDevConfig(text, { file, localHome })),
   });
 });
+
+/** One line naming the dev target, for the watch to print when it starts. */
+export const describeDevTarget: (target: DevTarget) => string = DevTarget.$match({
+  Local: ({ found, file }) => `target: local (${found ? "" : "no "}${file})`,
+  Remote: ({ user, host, port, file }) => `target: remote ${user}@${host}:${port} (${file})`,
+});
