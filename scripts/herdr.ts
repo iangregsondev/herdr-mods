@@ -8,9 +8,9 @@
 // `shot` saves a screenshot of the Herdr host's window to <file> on this machine:
 // it shoots into a temp folder on the host, crops there with `sips` when --crop is
 // given, copies the image back and removes the temp folder.
-import { Effect, Option, Predicate, Result } from "effect";
-import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
-import { CommandFailed, type Crop, HerdrHost, hostLayer } from "./herdr-host.ts";
+import { Effect, Option, Result } from "effect";
+import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { causeText, type Crop, HerdrHost, hostLayer } from "./herdr-host.ts";
 
 /** What to print and the exit code. */
 export interface HerdrResult {
@@ -18,14 +18,6 @@ export interface HerdrResult {
   readonly stdout: string;
   readonly stderr: string;
 }
-
-/** A failure's cause as text: a failed command's stderr, else its message when it has one. */
-const causeText = (cause: unknown): string =>
-  cause instanceof CommandFailed
-    ? cause.stderr.trim()
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
 
 /** Exit 1 with `message` on stderr. */
 const failure = (message: string): HerdrResult => ({
@@ -117,12 +109,7 @@ export const runHerdr = Effect.fn("runHerdr")(function* (
   const command = parsed.success;
   const loaded = yield* Effect.result(loadDevTarget(options));
   if (Result.isFailure(loaded)) {
-    const error = loaded.failure;
-    return failure(
-      error._tag === "DevConfigInvalid"
-        ? `${error.file}: ${error.field}: ${error.message}`
-        : `couldn't read ${error.file} (${causeText(error.cause)})`,
-    );
+    return failure(devConfigProblem(loaded.failure));
   }
   const target = loaded.success;
   const run =

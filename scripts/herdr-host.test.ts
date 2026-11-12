@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Effect, Result } from "effect";
 import { DevTarget } from "./dev-config.ts";
 import {
+  causeText,
   CommandFailed,
   DEV_MARKER,
   FileMissing,
@@ -26,6 +27,25 @@ import {
 /** A file's text, or undefined when it isn't there, so a missing file fails on the assertion. */
 const textOf = (path: string): string | undefined =>
   existsSync(path) ? readFileSync(path, "utf8") : undefined;
+
+describe("causeText", () => {
+  it("gives a failed command's exit code and what it said, on one line", () => {
+    const failed = new CommandFailed({ code: 2, stdout: "", stderr: "first\nsecond\n" });
+    assert.strictEqual(causeText(failed), "exit 2: first; second");
+  });
+
+  it("gives only the exit code when the failed command said nothing", () => {
+    const failed = new CommandFailed({ code: 3, stdout: "out", stderr: " \n" });
+    assert.strictEqual(causeText(failed), "exit 3");
+  });
+
+  it("gives any other cause's message, or the cause itself as text", () => {
+    assert.deepStrictEqual(
+      [causeText(new Error("disk full")), causeText("unexpected answer: maybe"), causeText(7)],
+      ["disk full", "unexpected answer: maybe", "7"],
+    );
+  });
+});
 
 describe("HerdrHost.location, local layer", () => {
   it.effect("is the path inside the Herdr home", () => {
@@ -448,6 +468,19 @@ describe("HerdrHost.herdrApp, remote layer, failure", () => {
       }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
     },
   );
+
+  it.effect("passes on herdr-app's own exit 255 as CommandFailed, not HostUnreachable", () => {
+    const fake = fakeHerdrHost();
+    fakeBin(fake.appBin, "herdr-app", "echo out; echo 'it broke' >&2; exit 255");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      const outcome = Result.merge(yield* Effect.result(host.herdrApp(["status"])));
+      assert.deepStrictEqual(
+        outcome,
+        new CommandFailed({ code: 255, stdout: "out\n", stderr: "it broke\n" }),
+      );
+    }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
+  });
 });
 
 describe("HerdrHost.syncInto, remote layer", () => {

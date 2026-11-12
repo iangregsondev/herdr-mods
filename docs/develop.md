@@ -101,21 +101,22 @@ or, once it's pushed:
 
 ## Troubleshooting
 
-| You see                                     | Why                                                              | Do                                                                             |
-| ------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `Task "dev:remove" not found`               | You're on a branch from before this tooling                      | Run it from a checkout that has it (`git pull` on `main`)                      |
-| `... is an installed mod, not a dev build`  | A real copy of the mod is installed                              | Remove that copy first (or develop under another name)                         |
-| `herdr-slots: ... add <name> by hand`       | `"place"` is top, bottom or none, or the layout ships with Herdr | Add the panel yourself, or switch to your own layout (clone a shipped one)     |
-| `herdr-slots: Herdr isn't running`          | `herdr-app status` didn't answer on the Herdr host               | Open Herdr, then restart the watch                                             |
-| `herdr-slots: herdr-app not found on PATH`  | The Herdr app isn't installed, or its CLI isn't on your `PATH`   | Install the Herdr app, then restart the watch                                  |
-| `dev-remove: could not read these layouts`  | A layout file isn't valid JSON; it was left as it is             | Fix or delete that file, then run `dev:remove` again for its panel             |
-| Saves don't change the panel                | Herdr isn't watching the folder (often after a symlink was used) | Check `vp run herdr status` for errors; if none, restart Herdr once            |
-| The panel shows the old version             | The latest build broke; Herdr keeps the last good one            | `vp run herdr check <mod folder>` for the exact error                          |
-| An empty panel after removing a mod by hand | The slot is still in your layout                                 | `vp run dev:remove <name>` removes leftover slots even when the files are gone |
-| `ENOENT ... chmod` in the watch output      | The folder was deleted while the watch ran                       | Stop the watch before `dev:remove`; restart it                                 |
-| `target: local` when you meant remote       | No `herdr-dev.json` in this checkout                             | Copy it from the main checkout (see [Remote Herdr host](#remote-herdr-host))   |
-| `mod-pack: herdr-dev.json: <field>: ...`    | The config has a bad or misspelt field                           | Fix that field; compare with `herdr-dev.example.json`                          |
-| `Herdr host unreachable: <host>`            | SSH couldn't connect in 5 seconds (host asleep, offline, no key) | Wake the host, check `ssh <user>@<host>` works with no prompt, save again      |
+| You see                                                             | Why                                                                        | Do                                                                                                                               |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `Task "dev:remove" not found`                                       | You're on a branch from before this tooling                                | Run it from a checkout that has it (`git pull` on `main`)                                                                        |
+| `... is an installed mod, not a dev build`                          | A real copy of the mod is installed                                        | Remove that copy first (or develop under another name)                                                                           |
+| `herdr-slots: ... add <name> by hand`                               | `"place"` is top, bottom or none, or the layout ships with Herdr           | Add the panel yourself, or switch to your own layout (clone a shipped one)                                                       |
+| `herdr-slots: Herdr isn't running`                                  | `herdr-app status` didn't answer on the Herdr host                         | Open Herdr, then restart the watch                                                                                               |
+| `herdr-slots: herdr-app not found on PATH`                          | The Herdr app isn't installed, or its CLI isn't on your `PATH`             | Install the Herdr app, then restart the watch                                                                                    |
+| `dev-remove: could not read these layouts`                          | A layout file isn't valid JSON; it was left as it is                       | Fix or delete that file, then run `dev:remove` again for its panel                                                               |
+| Saves don't change the panel                                        | Herdr isn't watching the folder (often after a symlink was used)           | Check `vp run herdr status` for errors; if none, restart Herdr once                                                              |
+| The panel shows the old version                                     | The latest build broke; Herdr keeps the last good one                      | `vp run herdr check <mod folder>` for the exact error                                                                            |
+| An empty panel after removing a mod by hand                         | The slot is still in your layout                                           | `vp run dev:remove <name>` removes leftover slots even when the files are gone                                                   |
+| `ENOENT ... chmod` in the watch output                              | The folder was deleted while the watch ran                                 | Stop the watch before `dev:remove`; restart it                                                                                   |
+| `target: local` when you meant remote                               | No `herdr-dev.json` in this checkout                                       | Copy it from the main checkout (see [Remote Herdr host](#remote-herdr-host))                                                     |
+| `mod-pack: herdr-dev.json: <field>: ...`                            | The config has a bad or misspelt field                                     | Fix that field; compare with `herdr-dev.example.json`                                                                            |
+| `vp install` fails with `herdr-types: herdr-dev.json: <field>: ...` | `vp install` runs the types step, which stops at a broken `herdr-dev.json` | Fix that field (compare with `herdr-dev.example.json`), then `vp install` again. To build locally meanwhile, move the file aside |
+| `Herdr host unreachable: <host>`                                    | SSH couldn't connect in 5 seconds (host asleep, offline, no key)           | Wake the host, check `ssh <user>@<host>` works with no prompt, save again                                                        |
 
 In `local` mode, set `HERDR_APP_HOME` to point all of this at another Herdr folder. In `remote` mode, `remote.herdrHome` in `herdr-dev.json` does that instead.
 
@@ -154,7 +155,7 @@ Nothing from the repo runs on the Herdr host.
 
    `host` (a name or an IP) and `user` are required. `port`, `herdrHome` and `herdrApp` can be left out; the values above are their defaults. A misspelt or unknown field is an error naming that field, never a quiet fall back to `local`. `"target": "local"`, or no file at all, means `local`.
 
-2. Run `vp run types`. It copies Herdr's type files from the Herdr host into `.herdr-types/`, so `vp check` passes here. `vp install` and every `#dev` watch do the same; run it again after updating Herdr on the host.
+2. Run `vp run types`. It copies Herdr's type files from the Herdr host into `.herdr-types/`, so `vp check` passes here. `vp install` and every `#dev` watch do the same; run it again after updating Herdr on the host. A host that can't be reached only warns, but a broken `herdr-dev.json` makes `vp install` fail, naming the field to fix.
 3. Run `vp run hello#dev`. The first line should read `target: remote <user>@<host>:<port> (herdr-dev.json)`.
 
 `herdr-dev.json` is git-ignored: it names a real host and user, and this repo is public. Only `herdr-dev.example.json`, with placeholder values, is committed.

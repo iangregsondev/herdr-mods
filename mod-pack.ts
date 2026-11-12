@@ -18,8 +18,14 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Predicate, Result } from "effect";
 import type { UserConfig } from "vite-plus";
-import { describeDevTarget, type DevTarget, loadDevTarget } from "./scripts/dev-config.ts";
 import {
+  describeDevTarget,
+  devConfigProblem,
+  type DevTarget,
+  loadDevTarget,
+} from "./scripts/dev-config.ts";
+import {
+  causeText,
   DEV_MARKER,
   type FileMissing,
   HerdrHost,
@@ -91,6 +97,18 @@ export interface ModPackOptions {
    * Defaults to the repo's `.herdr-types/`.
    */
   typesDir?: string;
+  /**
+   * Where a remote watch stages its builds, one folder per mod, before syncing
+   * them to the Herdr host. Defaults to the repo's `node_modules/.herdr-dev/`.
+   */
+  stagingRoot?: string;
+  /**
+   * Given, once a watch has started, the work it started in the background (the
+   * types refresh over SSH), which resolves when that is done and never rejects.
+   * The watch never waits on it; a caller that must not outlive it, such as a
+   * test, can. Defaults to doing nothing.
+   */
+  onStarted?: (started: Promise<void>) => void;
 }
 
 /** What the dev marker says, for anyone who finds it in a mod's folder. */
@@ -124,23 +142,24 @@ export const claimDevBuild = Effect.fn("claimDevBuild")(function* (name: string)
 /** The repo root: this file's folder. */
 const REPO_ROOT = fileURLToPath(new URL(".", import.meta.url));
 
-/** Where remote watches stage their builds: under node_modules, so git-ignored. */
-const STAGING_ROOT = join(REPO_ROOT, "node_modules", ".herdr-dev");
+/** Where remote watches stage their builds by default: under node_modules, so git-ignored. */
+export const STAGING_ROOT = join(REPO_ROOT, "node_modules", ".herdr-dev");
 
 /** Where a remote watch builds `name` before syncing it to the Herdr host. */
-export const stagingFolder = (name: string): string => join(STAGING_ROOT, name);
+export const stagingFolder = (name: string, stagingRoot: string = STAGING_ROOT): string =>
+  join(stagingRoot, name);
 
 /**
  * The staging folder for `name`, with the dev marker written in it, so the
  * first sync carries the marker to the Herdr host. It is never cleaned, so it
  * survives between runs. Throws, naming the file, when the marker can't be written.
  */
-function stageDevBuild(name: string): string {
+function stageDevBuild(name: string, stagingRoot: string): string {
   // The staging folder is on this machine, so the Local layer writes it.
   const written = Effect.runSync(
     Effect.result(
       HerdrHost.use((host) => host.writeFile(`${name}/${DEV_MARKER}`, markerText(name))).pipe(
-        Effect.provide(HerdrHost.local(STAGING_ROOT)),
+        Effect.provide(HerdrHost.local(stagingRoot)),
       ),
     ),
   );
@@ -151,7 +170,7 @@ function stageDevBuild(name: string): string {
       { cause: error },
     );
   }
-  return stagingFolder(name);
+  return stagingFolder(name, stagingRoot);
 }
 
 /** Says the watch won't overwrite the installed mod at `path`. */
@@ -205,14 +224,6 @@ function slotOnFirstBuild(
   };
 }
 
-/** A failure's cause as text: what a failed command said, else its message. */
-const causeText = (cause: unknown): string =>
-  Predicate.hasProperty(cause, "stderr") && Predicate.isString(cause.stderr)
-    ? cause.stderr.trim()
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
-
 /** Why a remote watch didn't sync this build, as a line for the person. */
 function syncProblem(
   error: FileMissing | InstalledModInTheWay | TransportError | HostUnreachable,
@@ -262,20 +273,29 @@ function syncAfterEachBuild(
     console.log(`mod-pack: synced ${name} to ${synced.success}`);
     // A failed slot step is printed, not thrown: vp pack doesn't wait on onSuccess,
     // so a rejection here would reach no one. The step does its work once, so the
-    // next build tries it again until it has.
-    await Promise.resolve()
-      .then(slotStep)
-      .catch((cause: unknown) =>
-        console.error(
-          `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
-        ),
+    // next build tries it again until it has. It may throw at once or reject;
+    // awaiting it inside `try` catches both.
+    try {
+      await slotStep();
+    } catch (cause) {
+      console.error(
+        `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
       );
+    }
   };
   // vp pack starts onSuccess without waiting for it, so builds can overlap: each
   // build's sync and slot step wait for the one before, and never interleave.
+  // Anything syncOnce throws is printed here, so the queue never holds a rejected
+  // promise and every later build still gets its own sync.
   let previous: Promise<void> = Promise.resolve();
   return () => {
-    previous = previous.then(syncOnce);
+    previous = previous
+      .then(syncOnce)
+      .catch((cause: unknown) =>
+        console.error(
+          `mod-pack: couldn't sync ${name} (${causeText(cause)}); the next build tries again.`,
+        ),
+      );
     return previous;
   };
 }
@@ -284,13 +304,7 @@ function syncAfterEachBuild(
 function devTarget(): DevTarget {
   const loaded = Effect.runSync(Effect.result(loadDevTarget()));
   if (Result.isSuccess(loaded)) return loaded.success;
-  const error = loaded.failure;
-  switch (error._tag) {
-    case "DevConfigInvalid":
-      throw new Error(`mod-pack: ${error.file}: ${error.field}: ${error.message}`);
-    case "DevConfigUnreadable":
-      throw new Error(`mod-pack: couldn't read ${error.file}`, { cause: error.cause });
-  }
+  throw new Error(`mod-pack: ${devConfigProblem(loaded.failure)}`, { cause: loaded.failure });
 }
 
 /** Prints what the types refresh said, to stdout or stderr as it gave it. */
@@ -308,21 +322,19 @@ function printTypes(result: TypesResult): void {
  */
 function startWatch(target: DevTarget, typesDir: string): Promise<void> {
   console.log(describeDevTarget(target));
-  const refresh = refreshHerdrTypes(target, typesDir).pipe(Effect.map(printTypes));
+  // A defect (printing included) is printed too, so the refresh never stops the
+  // watch and never leaves a rejected promise that no one handles.
+  const refresh = refreshHerdrTypes(target, typesDir).pipe(
+    Effect.map(printTypes),
+    Effect.catchDefect((defect) =>
+      Effect.sync(() =>
+        console.error(`mod-pack: couldn't refresh Herdr's types (${causeText(defect)})`),
+      ),
+    ),
+  );
   if (target._tag === "Local") return Promise.resolve(Effect.runSync(refresh));
   return Effect.runPromise(refresh);
 }
-
-/** The background work each watch config's start began, keyed by the config. */
-const startedWork = new WeakMap<PackConfig, Promise<void>>();
-
-/**
- * Resolves when the work `config`'s watch started in the background (the types
- * refresh over SSH) is done; at once for a config with none. The watch never
- * waits on it, but a caller that must not outlive it, such as a test, can.
- */
-export const watchStarted = (config: PackConfig): Promise<void> =>
-  startedWork.get(config) ?? Promise.resolve();
 
 export function modPack(
   name: string,
@@ -331,28 +343,34 @@ export function modPack(
     modDir = process.cwd(),
     ensureSlot: slot = ensureSlotOnTarget,
     typesDir = TYPES_DIR,
+    stagingRoot = STAGING_ROOT,
+    onStarted = () => undefined,
   }: ModPackOptions = {},
 ): PackConfig {
   if (!watch) return packConfig(`../../mods/${name}`);
   const target = devTarget();
-  const started = startWatch(target, typesDir);
-  const config =
-    target._tag === "Remote"
-      ? remoteWatchConfig(name, { target, modDir, slot })
-      : packConfig(
-          devOutDir(name, target.herdrHome),
-          slotOnFirstBuild(name, { target, modDir, slot }),
-        );
-  startedWork.set(config, started);
-  return config;
+  // Handed on before the out dir is claimed, so a caller can wait on the start
+  // even when claiming it throws.
+  onStarted(startWatch(target, typesDir));
+  return target._tag === "Remote"
+    ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
+    : packConfig(
+        devOutDir(name, target.herdrHome),
+        slotOnFirstBuild(name, { target, modDir, slot }),
+      );
 }
 
 /** The watch config for a remote dev target: stage here, sync to the host. */
 function remoteWatchConfig(
   name: string,
-  { target, modDir, slot }: { target: DevTarget; modDir: string; slot: EnsureSlot },
+  {
+    target,
+    modDir,
+    slot,
+    stagingRoot,
+  }: { target: DevTarget; modDir: string; slot: EnsureSlot; stagingRoot: string },
 ): PackConfig {
-  const staging = stageDevBuild(name);
+  const staging = stageDevBuild(name, stagingRoot);
   const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
   return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
 }

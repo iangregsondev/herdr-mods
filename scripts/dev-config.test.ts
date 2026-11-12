@@ -4,7 +4,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Result } from "effect";
-import { decodeDevConfig, describeDevTarget, DevTarget, loadDevTarget } from "./dev-config.ts";
+import {
+  decodeDevConfig,
+  describeDevTarget,
+  DevConfigInvalid,
+  devConfigProblem,
+  DevConfigUnreadable,
+  DevTarget,
+  loadDevTarget,
+} from "./dev-config.ts";
 import { tempDir, writeFile } from "./test-support.ts";
 
 const file = "herdr-dev.json";
@@ -247,6 +255,21 @@ describe("describeDevTarget", () => {
     assert.strictEqual(
       describeDevTarget(target),
       "target: remote dev@herdr-host:2222 (herdr-dev.json)",
+    );
+  });
+});
+
+describe("devConfigProblem", () => {
+  it("names the file and the field of an invalid config", () => {
+    const error = new DevConfigInvalid({ file, field: "remote.user", message: "is missing" });
+    assert.strictEqual(devConfigProblem(error), "herdr-dev.json: remote.user: is missing");
+  });
+
+  it("names the file it couldn't read, and why", () => {
+    const error = new DevConfigUnreadable({ file, cause: new Error("EACCES: permission denied") });
+    assert.strictEqual(
+      devConfigProblem(error),
+      "couldn't read herdr-dev.json (EACCES: permission denied)",
     );
   });
 });

@@ -5,9 +5,9 @@
 //
 //   vp run check:mods
 import { readdirSync } from "node:fs";
-import { Effect, Predicate, Result } from "effect";
-import { type LoadOptions, loadDevTarget } from "./dev-config.ts";
-import { CommandFailed, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
+import { Effect, Result } from "effect";
+import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { causeText, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
 
 /** What to print and the exit code. */
 export interface CheckModsResult {
@@ -23,14 +23,6 @@ interface ModCheck {
   readonly stdout: string;
   readonly stderr: string;
 }
-
-/** A failure's cause as text: a failed command's stderr, else its message when it has one. */
-const causeText = (cause: unknown): string =>
-  cause instanceof CommandFailed
-    ? `exit ${cause.code}: ${cause.stderr.trim()}`
-    : Predicate.hasProperty(cause, "message")
-      ? String(cause.message)
-      : String(cause);
 
 /** Exit 1 with `message` on stderr. */
 const failure = (message: string): CheckModsResult => ({
@@ -67,12 +59,7 @@ export const runCheckMods = Effect.fn("runCheckMods")(function* (
 ): Effect.fn.Return<CheckModsResult> {
   const loaded = yield* Effect.result(loadDevTarget(options));
   if (Result.isFailure(loaded)) {
-    const error = loaded.failure;
-    return failure(
-      error._tag === "DevConfigInvalid"
-        ? `${error.file}: ${error.field}: ${error.message}`
-        : `couldn't read ${error.file} (${causeText(error.cause)})`,
-    );
+    return failure(devConfigProblem(loaded.failure));
   }
   const target = loaded.success;
   return yield* Effect.gen(function* () {
