@@ -1,7 +1,8 @@
 import { recommended as effectRecommended } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// CI has no Herdr app, so no gpui-kit/herdr types (docs/types.md): type-check locally only.
+// CI has no Herdr app, so no gpui-kit/herdr types (docs/types.md): type-check and run the
+// type-aware lint rules locally only. Without the types those rules see `any` and warn.
 const typeCheck = !process.env.CI;
 
 // mods/ is build output (committed for installs) and .herdr-types/ links the app's own files.
@@ -75,7 +76,7 @@ export default defineConfig({
         rules: { "functional/explained-cast": "error" },
       },
     ],
-    options: { typeAware: true, typeCheck },
+    options: { typeAware: typeCheck, typeCheck },
   },
   run: {
     cache: true,
