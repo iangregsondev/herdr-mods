@@ -468,6 +468,19 @@ describe("HerdrHost.herdrApp, remote layer, failure", () => {
       }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
     },
   );
+
+  it.effect("passes on herdr-app's own exit 255 as CommandFailed, not HostUnreachable", () => {
+    const fake = fakeHerdrHost();
+    fakeBin(fake.appBin, "herdr-app", "echo out; echo 'it broke' >&2; exit 255");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      const outcome = Result.merge(yield* Effect.result(host.herdrApp(["status"])));
+      assert.deepStrictEqual(
+        outcome,
+        new CommandFailed({ code: 255, stdout: "out\n", stderr: "it broke\n" }),
+      );
+    }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
+  });
 });
 
 describe("HerdrHost.syncInto, remote layer", () => {

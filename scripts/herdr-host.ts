@@ -98,7 +98,8 @@ export class InstalledModInTheWay extends Data.TaggedError("InstalledModInTheWay
 }> {}
 
 /**
- * SSH couldn't connect to the Herdr host (ssh, or rsync over it, exited 255).
+ * SSH couldn't connect to the Herdr host: ssh exited 255 before the remote shell
+ * ran, or rsync over it exited 255.
  * `host` is `user@host:port`; `stderr` is what ssh said.
  */
 export class HostUnreachable extends Data.TaggedError("HostUnreachable")<{
@@ -194,14 +195,31 @@ const reached =
       : Effect.succeed(result);
 
 /**
+ * The line the remote shell prints on stderr before anything else. ssh exits 255
+ * both when it can't connect and when the remote command itself exits 255; this
+ * line tells the two apart, since only a shell that ran prints it.
+ */
+const CONNECTED = "herdr-mods: connected";
+const CONNECTED_LINE = `${CONNECTED}\n`;
+
+/**
  * Runs `script` with `sh` on the Herdr host, feeding it `input`. Fails with
- * HostUnreachable when ssh can't connect; any other exit code is the script's.
+ * HostUnreachable when ssh can't connect; once the remote shell has run, every
+ * exit code (255 included) is the script's, and its stderr is the script's own.
  */
 const sshCommand =
   (target: RemoteTarget) =>
   (script: string, input = ""): Effect.Effect<ProcessResult, TransportError | HostUnreachable> =>
-    runProcess("ssh", [...sshOptions(target), target.host, script], input).pipe(
-      Effect.flatMap(reached(target)),
+    runProcess(
+      "ssh",
+      [...sshOptions(target), target.host, `printf '%s\\n' ${shQuote(CONNECTED)} >&2; ${script}`],
+      input,
+    ).pipe(
+      Effect.flatMap((result) =>
+        result.stderr.includes(CONNECTED_LINE)
+          ? Effect.succeed({ ...result, stderr: result.stderr.replace(CONNECTED_LINE, "") })
+          : reached(target)(result),
+      ),
     );
 
 /**
