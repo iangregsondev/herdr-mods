@@ -1,8 +1,12 @@
 // @effect/vitest marks its whole API unstable; it is the test runner the repo mandates for Effect code.
 // oxlint-disable effecttsgo/unstable-api-usage
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Result } from "effect";
-import { decodeDevConfig, DevTarget } from "./dev-config.ts";
+import { Effect, Result } from "effect";
+import { decodeDevConfig, DevTarget, loadDevTarget } from "./dev-config.ts";
+import { tempDir, writeFile } from "./test-support.ts";
 
 const file = "herdr-dev.json";
 const localHome = "/home/dev/.config/herdr-app";
@@ -84,4 +88,118 @@ describe("decodeDevConfig", () => {
     assert.strictEqual(error?._tag, "DevConfigInvalid");
     assert.strictEqual(error?.field, "(whole file)");
   });
+});
+
+describe("loadDevTarget", () => {
+  it.effect("reads the file HERDR_DEV_CONFIG points at", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      const path = writeFile(
+        dir,
+        "other.json",
+        JSON.stringify({
+          target: "remote",
+          remote: { host: "herdr-host", user: "dev", port: 2222 },
+        }),
+      );
+      const target = yield* loadDevTarget({ env: { HERDR_DEV_CONFIG: path }, repoRoot: dir });
+      assert.deepStrictEqual(
+        target,
+        DevTarget.Remote({
+          host: "herdr-host",
+          user: "dev",
+          port: 2222,
+          herdrHome: "~/.config/herdr-app",
+          herdrApp: "~/.local/bin/herdr-app",
+          file: path,
+        }),
+      );
+    }),
+  );
+
+  it.effect("treats no file as local, with the Herdr home from HERDR_APP_HOME", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      const result = yield* Effect.result(
+        loadDevTarget({ env: { HERDR_APP_HOME: "/apps/herdr" }, repoRoot: dir }),
+      );
+      assert.deepStrictEqual(
+        result,
+        Result.succeed(
+          DevTarget.Local({ herdrHome: "/apps/herdr", file: "herdr-dev.json", found: false }),
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "treats no file as local, with the default Herdr home when HERDR_APP_HOME is unset",
+    () =>
+      Effect.gen(function* () {
+        const target = yield* loadDevTarget({ env: {}, repoRoot: tempDir() });
+        assert.deepStrictEqual(
+          target,
+          DevTarget.Local({
+            herdrHome: join(homedir(), ".config", "herdr-app"),
+            file: "herdr-dev.json",
+            found: false,
+          }),
+        );
+      }),
+  );
+
+  it.effect("reads a local target from the file, with the Herdr home from HERDR_APP_HOME", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      writeFile(dir, "herdr-dev.json", JSON.stringify({ target: "local" }));
+      const target = yield* loadDevTarget({
+        env: { HERDR_APP_HOME: "/apps/herdr" },
+        repoRoot: dir,
+      });
+      assert.deepStrictEqual(
+        target,
+        DevTarget.Local({ herdrHome: "/apps/herdr", file: "herdr-dev.json", found: true }),
+      );
+    }),
+  );
+
+  it.effect("fails with DevConfigInvalid for an invalid file, never falling back to local", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      writeFile(dir, "herdr-dev.json", JSON.stringify({ target: "remote", remote: { host: "h" } }));
+      const error = yield* Effect.flip(loadDevTarget({ env: {}, repoRoot: dir }));
+      assert.strictEqual(error._tag, "DevConfigInvalid");
+      assert.strictEqual(error._tag === "DevConfigInvalid" ? error.field : "", "remote.user");
+    }),
+  );
+
+  it.effect("fails with DevConfigUnreadable when the path can't be read as a file", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      mkdirSync(join(dir, "herdr-dev.json"));
+      const error = yield* Effect.flip(loadDevTarget({ env: {}, repoRoot: dir }));
+      assert.strictEqual(error._tag, "DevConfigUnreadable");
+      assert.strictEqual(error.file, "herdr-dev.json");
+    }),
+  );
+
+  it.effect("reads HERDR_DEV_CONFIG instead of the repo root's file", () =>
+    Effect.gen(function* () {
+      const dir = tempDir();
+      writeFile(
+        dir,
+        "herdr-dev.json",
+        JSON.stringify({ target: "remote", remote: { host: "h", user: "u" } }),
+      );
+      const other = writeFile(dir, "other.json", JSON.stringify({ target: "local" }));
+      const target = yield* loadDevTarget({
+        env: { HERDR_DEV_CONFIG: other, HERDR_APP_HOME: "/apps/herdr" },
+        repoRoot: dir,
+      });
+      assert.deepStrictEqual(
+        target,
+        DevTarget.Local({ herdrHome: "/apps/herdr", file: other, found: true }),
+      );
+    }),
+  );
 });

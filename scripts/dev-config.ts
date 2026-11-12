@@ -1,4 +1,8 @@
-import { Data, Effect, Predicate, Result, Schema, SchemaIssue } from "effect";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Data, Effect, Option, Predicate, Result, Schema, SchemaIssue } from "effect";
 
 export type DevTarget = Data.TaggedEnum<{
   Local: { readonly herdrHome: string; readonly file: string; readonly found: boolean };
@@ -83,3 +87,50 @@ export function decodeDevConfig(
     }),
   );
 }
+
+/** Where to look: the environment (`HERDR_DEV_CONFIG`, `HERDR_APP_HOME`) and the repo root. */
+export interface LoadOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly repoRoot?: string;
+}
+
+/** The file exists but couldn't be read (permissions, a folder in its place). */
+export class DevConfigUnreadable extends Data.TaggedError("DevConfigUnreadable")<{
+  readonly file: string;
+  readonly cause: unknown;
+}> {}
+
+const CONFIG_NAME = "herdr-dev.json";
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+/** The file's text, or none when there is no file at `path`. */
+const readIfPresent = (path: string, file: string) =>
+  Effect.try({
+    try: () => Option.some(readFileSync(path, "utf8")),
+    catch: (cause) => new DevConfigUnreadable({ file, cause }),
+  }).pipe(
+    Effect.catchIf(
+      (error) => Predicate.hasProperty(error.cause, "code") && error.cause.code === "ENOENT",
+      () => Effect.succeed(Option.none<string>()),
+    ),
+  );
+
+/**
+ * Loads the dev target from `herdr-dev.json` at the repo root, or from the file
+ * `HERDR_DEV_CONFIG` names. No file means `local`, with the Herdr home from
+ * `HERDR_APP_HOME` or the default. A file that can't be read or decoded fails;
+ * it never falls back to `local`.
+ */
+export const loadDevTarget = Effect.fn("loadDevTarget")(function* (options: LoadOptions = {}) {
+  const env = options.env ?? process.env;
+  const override = env.HERDR_DEV_CONFIG;
+  const file = override ?? CONFIG_NAME;
+  const path =
+    override === undefined ? join(options.repoRoot ?? REPO_ROOT, CONFIG_NAME) : resolve(override);
+  const localHome = env.HERDR_APP_HOME ?? join(homedir(), ".config", "herdr-app");
+  const text = yield* readIfPresent(path, file);
+  return yield* Option.match(text, {
+    onNone: () => Effect.succeed(DevTarget.Local({ herdrHome: localHome, file, found: false })),
+    onSome: (text) => Effect.fromResult(decodeDevConfig(text, { file, localHome })),
+  });
+});
