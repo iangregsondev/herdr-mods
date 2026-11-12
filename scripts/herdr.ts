@@ -56,7 +56,6 @@ export const runHerdr = Effect.fn("runHerdr")(function* (
           code: 127,
         }),
     }),
-    Effect.orDie,
   );
 });
 
