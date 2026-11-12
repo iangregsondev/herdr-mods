@@ -2,10 +2,13 @@
 // A mod builds from apps/<name>/src/main.ts into the repo-root mods/<name>/,
 // the folder Herdr users install. That output is committed.
 //
-// Watch mode (`vp run <name>#dev`) builds into the Herdr app instead:
-// <app home>/mods/<name>/, so every save reloads the mod in the window.
-// Herdr hot-reloads only real files in its own mods/ folder (a symlink to
-// mods/<name>/ does not reload), so the build has to land there.
+// Watch mode (`vp run <name>#dev`) builds into the Herdr app instead, on the dev
+// target (herdr-dev.json; see scripts/dev-config.ts), so every save reloads the mod
+// in the window. Herdr hot-reloads only real files in its own mods/ folder (a symlink
+// to mods/<name>/ does not reload), so the build has to land there.
+// - local: builds straight into <app home>/mods/<name>/.
+// - remote: builds into node_modules/.herdr-dev/<name>/ (git-ignored, never cleaned),
+//   then rsyncs that into the Herdr host's mods/<name>/ after each good build.
 // Every read and write of the Herdr home goes through HerdrHost; the one file read
 // here directly is the mod's own assets/mod.json, in the repo.
 import { readFileSync } from "node:fs";

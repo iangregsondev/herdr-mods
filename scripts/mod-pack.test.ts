@@ -13,6 +13,7 @@ import { DEV_MARKER, hasSlot, type ModJson } from "./herdr-slots.ts";
 import {
   fakeHerdrHost,
   fakeLoggingBin,
+  git,
   loggedLines,
   readLayout,
   slot,
@@ -278,6 +279,21 @@ function remoteHerdrHost(options: { readonly unreachable?: boolean } = {}) {
   return { ...fake, localHome };
 }
 
+describe("modPack, dev config", () => {
+  test("a watch throws, naming the field, when the dev config is invalid", () => {
+    const config = writeFile(
+      tempDir(),
+      "herdr-dev.json",
+      JSON.stringify({ target: "remote", remote: { host: "herdr-host" } }),
+    );
+    vi.stubEnv("HERDR_DEV_CONFIG", config);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    expect(() => modPack("hello", { watch: true })).toThrow(`${config}: remote.user`);
+  });
+});
+
 describe("modPack, local watch slot step", () => {
   test("throws at once, not as a rejected promise, when mod.json can't be read", () => {
     useLocalTarget(herdrHomeWithMods());
@@ -449,5 +465,11 @@ describe("modPack, remote watch", () => {
 
     expect(loggedLines(appLog)).toEqual(["status"]);
     expect(readLayout(work).children?.map((child) => child.content?.mod)).toEqual([name]);
+  });
+
+  test("stages in a folder git ignores", () => {
+    const name = stagedModName();
+    const staged = join(stagingFolder(name), "main.js");
+    expect(git(REPO_ROOT, ["check-ignore", "--no-index", staged]).trim()).toBe(staged);
   });
 });
