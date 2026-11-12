@@ -9,8 +9,16 @@ import {
   watchFromArgv,
 } from "../mod-pack.ts";
 import { describeDevTarget, DevTarget } from "./dev-config.ts";
-import { DEV_MARKER, type ModJson } from "./herdr-slots.ts";
-import { fakeHerdrHost, tempDir, writeFile } from "./test-support.ts";
+import { DEV_MARKER, hasSlot, type ModJson } from "./herdr-slots.ts";
+import {
+  fakeHerdrHost,
+  fakeLoggingBin,
+  loggedLines,
+  readLayout,
+  slot,
+  tempDir,
+  writeFile,
+} from "./test-support.ts";
 
 type PackConfig = ReturnType<typeof modPackConfig>;
 type SinglePack = Exclude<PackConfig, readonly unknown[]>;
@@ -338,5 +346,94 @@ describe("modPack, remote watch", () => {
     expect(readdirSync(dir)).toEqual(["main.js"]);
     expect(readFileSync(join(dir, "main.js"), "utf8")).toBe("installed");
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/installed mod, not a dev build/));
+  });
+
+  test("prints a failed sync, keeps going, and syncs again on the next build", async () => {
+    const host = remoteHerdrHost();
+    const reachablePath = process.env.PATH;
+    fakeHerdrHost({ unreachable: true });
+    const name = stagedModName();
+    silencedLog();
+    const error = silencedError();
+    const config = remoteModPack(name);
+    writeFile(stagingFolder(name), "main.js", "first build");
+
+    await runOnSuccess(config);
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/Herdr host unreachable/));
+    expect(existsSync(join(host.home, "mods", name))).toBe(false);
+
+    vi.stubEnv("PATH", reachablePath);
+    writeFile(stagingFolder(name), "main.js", "second build");
+    await runOnSuccess(config);
+    expect(readFileSync(join(host.home, "mods", name, "main.js"), "utf8")).toBe("second build");
+  });
+
+  test("adds the slot to the host's shown layout once, after the first good sync", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    const appLog = join(host.root, "herdr-app.log");
+    fakeLoggingBin(host.appBin, "herdr-app", { log: appLog, output: '{"layout":"work"}' });
+    const work = writeFile(
+      host.home,
+      "layouts/work.json",
+      JSON.stringify({ type: "row", children: [slot("other")] }),
+    );
+    const log = silencedLog();
+    const config = remoteModPack(name, { place: "left" });
+
+    await runOnSuccess(config);
+    await runOnSuccess(config);
+    await runOnSuccess(config);
+
+    expect(loggedLines(appLog)).toEqual(["status"]);
+    const children = readLayout(work).children ?? [];
+    expect(children.map((child) => child.content?.mod)).toEqual([name, "other"]);
+    expect(log).toHaveBeenCalledWith(`herdr-slots: added ${name} to "work" (left).`);
+  });
+
+  test("prints a failed slot step, keeps going, and tries the slot again on the next build", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    fakeLoggingBin(host.appBin, "herdr-app", {
+      log: join(host.root, "herdr-app.log"),
+      output: '{"layout":"work"}',
+    });
+    const work = writeFile(
+      host.home,
+      "layouts/work.json",
+      JSON.stringify({ type: "row", children: [] }),
+    );
+    const modDir = tempDir();
+    writeFile(modDir, "assets/mod.json", "{ not json");
+    silencedLog();
+    const error = silencedError();
+    const config = modPack(name, { watch: true, modDir, ensureSlot: undefined });
+
+    await expect(runOnSuccess(config)).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(`couldn't put ${name}'s slot back`));
+    expect(readLayout(work).children).toEqual([]);
+
+    writeFile(modDir, "assets/mod.json", "{}");
+    await runOnSuccess(config);
+    expect(hasSlot(readLayout(work), name)).toBe(true);
+  });
+
+  test("runs one build's sync and slot step at a time when builds overlap", async () => {
+    const host = remoteHerdrHost();
+    const name = stagedModName();
+    const appLog = join(host.root, "herdr-app.log");
+    fakeLoggingBin(host.appBin, "herdr-app", { log: appLog, output: '{"layout":"work"}' });
+    const work = writeFile(
+      host.home,
+      "layouts/work.json",
+      JSON.stringify({ type: "row", children: [] }),
+    );
+    silencedLog();
+    const config = remoteModPack(name);
+
+    await Promise.all([runOnSuccess(config), runOnSuccess(config)]);
+
+    expect(loggedLines(appLog)).toEqual(["status"]);
+    expect(readLayout(work).children?.map((child) => child.content?.mod)).toEqual([name]);
   });
 });

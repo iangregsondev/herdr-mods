@@ -210,11 +210,18 @@ function syncProblem(
 
 /**
  * After each good build of a remote watch, syncs the staging folder into the
- * host's `mods/<name>/`. Before the first sync it checks there is no installed
- * mod there. A failure is printed and never thrown, so the watch keeps going and
- * the next build tries again.
+ * host's `mods/<name>/`, then runs `slotStep` (which does its work once). Before
+ * the first sync it checks there is no installed mod there. A failure is printed
+ * and never thrown, so the watch keeps going and the next build tries again.
  */
-function syncAfterEachBuild(name: string, staging: string, target: DevTarget): () => Promise<void> {
+function syncAfterEachBuild(
+  name: string,
+  {
+    staging,
+    target,
+    slotStep,
+  }: { staging: string; target: DevTarget; slotStep: () => Promise<void> },
+): () => Promise<void> {
   let guarded = false;
   const sync = Effect.gen(function* () {
     if (!guarded) {
@@ -225,13 +232,28 @@ function syncAfterEachBuild(name: string, staging: string, target: DevTarget): (
     yield* host.syncInto(staging, `mods/${name}`);
     return host.location(`mods/${name}`);
   }).pipe(Effect.provide(hostLayer(target)));
-  return async () => {
+  const syncOnce = async (): Promise<void> => {
     const synced = await Effect.runPromise(Effect.result(sync));
     if (Result.isFailure(synced)) {
       console.error(syncProblem(synced.failure));
       return;
     }
     console.log(`mod-pack: synced ${name} to ${synced.success}`);
+    // A failed slot step is printed, not thrown: vp pack doesn't wait on onSuccess,
+    // so a rejection here would reach no one. The step does its work once, so the
+    // next build tries it again until it has.
+    await slotStep().catch((cause: unknown) =>
+      console.error(
+        `mod-pack: couldn't put ${name}'s slot back (${causeText(cause)}); the next build tries again.`,
+      ),
+    );
+  };
+  // vp pack starts onSuccess without waiting for it, so builds can overlap: each
+  // build's sync and slot step wait for the one before, and never interleave.
+  let previous: Promise<void> = Promise.resolve();
+  return () => {
+    previous = previous.then(syncOnce);
+    return previous;
   };
 }
 
@@ -266,7 +288,8 @@ export function modPack(
   startWatch(target);
   if (target._tag === "Remote") {
     const staging = stageDevBuild(name);
-    return packConfig(staging, syncAfterEachBuild(name, staging, target));
+    const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
+    return packConfig(staging, syncAfterEachBuild(name, { staging, target, slotStep }));
   }
   return packConfig(
     devOutDir(name, target.herdrHome),
