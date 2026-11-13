@@ -11314,6 +11314,12 @@ const defaultsBecause = (what, failed, settled) => ({
 	settled,
 	leftover: none()
 });
+/** What a folder scan scans, as a key: a scan is due again when it changes. */
+const scanKey = ({ folders, depth, skip }) => JSON.stringify({
+	folders,
+	depth,
+	skip
+});
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
@@ -12022,6 +12028,14 @@ const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(
 	path,
 	group: repo.group
 }))).reduce((best, on) => best[0] && best[0].path.length >= on.path.length ? best : [on], []).filter((on) => on.group !== OTHER).map((on) => [space.id, on.group])));
+/**
+* Whether `groups` differ from those `published` in shared state (anything at all, since
+* any mod can write it): publishing only on a change spares every mod a render.
+*/
+const groupsChanged = (groups, published) => {
+	const entries = Object.entries(groups);
+	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, group]) => Reflect.get(published, space) !== group);
+};
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -13508,12 +13522,7 @@ var Worktrunk = class extends View {
 		this.settings = loaded.parsed.settings;
 		this.settingsError = loaded.parsed.error;
 		const now = Date.now();
-		const { folders, depth, skip } = this.settings;
-		const key = JSON.stringify({
-			folders,
-			depth,
-			skip
-		});
+		const key = scanKey(this.settings);
 		const due = scanDue(this.lastScan, {
 			forced: scan,
 			key,
@@ -13589,7 +13598,7 @@ var Worktrunk = class extends View {
 	publishGroups() {
 		if (!this.discovered) return;
 		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
-		if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
+		if (groupsChanged(groups, shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
 	}
 	render(cx) {
 		const style = {

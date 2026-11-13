@@ -20,6 +20,7 @@ import {
   readLists,
   refreshMachines,
   runJob,
+  scanKey,
   saveSettings,
   settingsText,
   spaceWorktree,
@@ -859,6 +860,29 @@ describe("refreshMachines with a machine busy", () => {
       assert.sameMembers(done, [THIS_MACHINE, "linux"]);
     }),
   );
+});
+
+describe("scanKey", () => {
+  const work = { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w", machine: null }] };
+
+  it("a change to the folders, the depth or the skip names changes the key", () => {
+    const keys = [
+      work,
+      { ...work, folders: [] },
+      { ...work, depth: 7 },
+      { ...work, skip: ["dist"] },
+    ].map(scanKey);
+    assert.strictEqual(new Set(keys).size, 4);
+  });
+
+  it("hiding a repo or the no-wrapper setting leaves the key alone: they change no scan", () => {
+    const keys = [
+      work,
+      { ...work, hidden: [{ machine: null, root: "/w/old" }] },
+      { ...work, noWrapper: true },
+    ].map(scanKey);
+    assert.strictEqual(new Set(keys).size, 1);
+  });
 });
 
 describe("landSearch", () => {

@@ -137,6 +137,10 @@ const defaultsBecause = (what: string, failed: FileError, settled: boolean): Loa
   leftover: Option.none(),
 });
 
+/** What a folder scan scans, as a key: a scan is due again when it changes. */
+export const scanKey = ({ folders, depth, skip }: Settings): string =>
+  JSON.stringify({ folders, depth, skip });
+
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = <A, R>(
   effect: Effect.Effect<A, ShellError | CommandFailed | ListUnreadable, R>,

@@ -86,6 +86,7 @@ import {
   defectAsReason,
   runJob,
   saveSettings,
+  scanKey,
   settingsText,
   spaceWorktree,
   syncToast,
@@ -165,6 +166,7 @@ import { failureText, reveal, Shell, stopJob } from "./shell.ts";
 import {
   clickCommand,
   focusedOrHere,
+  groupsChanged,
   goTo,
   spaceGroups,
   spacePlaces,
@@ -1140,8 +1142,7 @@ export default class Worktrunk extends View {
     this.settingsError = loaded.parsed.error;
 
     const now = Date.now();
-    const { folders, depth, skip } = this.settings;
-    const key = JSON.stringify({ folders, depth, skip });
+    const key = scanKey(this.settings);
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
     const places = spacePlaces(spaces(), panes()).map((p): Located => ({
       machine: p.machine,
@@ -1231,7 +1232,7 @@ export default class Worktrunk extends View {
   publishGroups() {
     if (!this.discovered) return;
     const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
-    if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) {
+    if (groupsChanged(groups, shared(GROUPS_KEY))) {
       setShared(GROUPS_KEY, groups);
     }
   }
