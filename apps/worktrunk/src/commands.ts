@@ -124,6 +124,8 @@ export const removeScript = (
 
 /** A worktree other than the main checkout, with the repo it belongs to. */
 export interface Linked {
+  /** The machine the repo lives on; its folders are there. */
+  readonly machine: Machine;
   /** The repo's main checkout. */
   readonly main: string;
   /** The worktree's folder. */
@@ -149,8 +151,12 @@ export const mergeScript = (target: Linked, mode: MergeMode, options: WtOptions)
 
 /** One repo's worktrees to remove. */
 export interface Batch {
+  /** The machine the repo lives on. */
+  readonly machine: Machine;
   readonly main: string;
   readonly branches: readonly string[];
+  /** The worktrees' folders, to close their spaces once they are gone. */
+  readonly paths: readonly string[];
 }
 
 /**
@@ -233,14 +239,20 @@ export interface Job {
   readonly shell: string;
   /** The script to run in it. */
   readonly body: string;
+  /** The machine it runs on: the folder and the shell are that machine's. */
+  readonly on: Machine;
 }
 
-/** `hc` arguments that start `job` as a background terminal, printing its address as JSON. */
-export const jobArgs = ({ cwd, shell, body }: Job): readonly string[] => [
+/**
+ * `hc` arguments that start `job` as a background terminal, printing its address as
+ * JSON. A job on another machine starts there (`--on`); this machine's needs no flag.
+ */
+export const jobArgs = ({ cwd, shell, body, on }: Job): readonly string[] => [
   "run",
   "--json",
   "--bg",
   "--no-parent",
+  ...(on === null ? [] : ["--on", on]),
   "--cwd",
   cwd,
   "--",

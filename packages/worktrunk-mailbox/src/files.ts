@@ -26,8 +26,14 @@ export class PickerFailed extends Data.TaggedError("PickerFailed")<{ readonly ca
 export class Files extends Context.Service<
   Files,
   {
-    /** The file's text. */
-    readonly read: (path: string) => Effect.Effect<string, FileMissing | FileError>;
+    /**
+     * The file's text, read on machine `on` (Herdr's name for it); this machine when left
+     * out or null. Only reading reaches another machine: Herdr writes on this one only.
+     */
+    readonly read: (
+      path: string,
+      on?: string | null,
+    ) => Effect.Effect<string, FileMissing | FileError>;
     /** Writes `text` as a new file at `path`; it never replaces a file. */
     readonly create: (path: string, text: string) => Effect.Effect<void, WriteConflict | FileError>;
     /** Writes `text` over the file at `path`, only while it still holds `expected`. */
@@ -44,9 +50,9 @@ export class Files extends Context.Service<
 >()("worktrunk-mailbox/Files") {
   static readonly layer = (api: FilesApi) => {
     // No `signal` parameter: Herdr's runtime has no AbortController.
-    const read = (path: string) =>
+    const read = (path: string, on: string | null = null) =>
       Effect.tryPromise({
-        try: () => api.readTextFile(path),
+        try: () => (on === null ? api.readTextFile(path) : api.readTextFile(path, { on })),
         catch: (cause) => new FileError({ path, cause }),
       }).pipe(Effect.filterOrFail(Predicate.isNotNull, () => new FileMissing({ path })));
     // `expected: null` makes Herdr create the file, refusing when one is there. Herdr's

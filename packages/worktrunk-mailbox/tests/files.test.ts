@@ -57,6 +57,24 @@ describe("Files.read", () => {
     }).pipe(Effect.provide(Files.layer(onDisk({ "/a.json": "{}" })))),
   );
 
+  it.effect("a file on another machine is read there", () =>
+    Effect.gen(function* () {
+      const asked: unknown[] = [];
+      const api: FilesApi = {
+        ...onDisk({}),
+        readTextFile: (path, options) => {
+          asked.push([path, options]);
+          return Promise.resolve("{}");
+        },
+      };
+      const text = yield* Effect.gen(function* () {
+        const files = yield* Files;
+        return yield* files.read("/tmp/t1/a.json", "linux");
+      }).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual([text, asked], ["{}", [["/tmp/t1/a.json", { on: "linux" }]]]);
+    }),
+  );
+
   it.effect("no file is FileMissing, naming the path", () =>
     Effect.gen(function* () {
       const files = yield* Files;

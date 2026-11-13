@@ -85,15 +85,17 @@ import {
   ITEM_HEIGHT,
   busyNotice,
   cleanupAction,
+  cleanupCount,
   cleanupFor,
   confirmFor,
   dialogHeight,
   findWorktree,
-  jobFor,
+  jobsFor,
   menuHeight,
   repoMenu,
   rowMenu,
   type Action,
+  type CreateAction,
   type JobSpec,
   type MenuItem,
 } from "./menus.ts";
@@ -125,6 +127,7 @@ import {
   THIS_MACHINE,
   type Homes,
   type Located,
+  type Machine,
   type RepoId,
 } from "./machines.ts";
 import type { Repo } from "./repos.ts";
@@ -829,7 +832,7 @@ export default class Worktrunk extends View {
         Option.map(this.searchBox, (box) => box.focus());
         return;
       case "Create":
-        return this.createWorktree(cx, action.main, action.name, action.base);
+        return this.createWorktree(cx, action);
       case "Settings":
         cx.spawn(async () => {
           const text = await runEdge(settingsText(settingsFile()), Result.fail);
@@ -849,7 +852,7 @@ export default class Worktrunk extends View {
         });
         return;
       default:
-        Option.map(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
+        this.runJobs(cx, jobsFor(action, this.settings));
     }
   }
 
@@ -884,53 +887,65 @@ export default class Worktrunk extends View {
   }
 
   /**
-   * What every job does once it has ended: say why it never started, or close spaces and
-   * say what went wrong around it.
+   * What every job does once it has ended: say why it never started, or close the spaces
+   * on its removed folders (on its machine) and say what went wrong around it.
    */
-  jobEnded(cx: AsyncContext, title: string, outcome: JobOutcome) {
+  jobEnded(title: string, machine: Machine, outcome: JobOutcome) {
     if (outcome._tag === "NotStarted") {
       notify({ title: `Couldn't start: ${title}`, body: outcome.reason, level: "error" });
     } else {
-      spacesInGone(spaces(), panes(), outcome.gone).forEach((id) =>
+      spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) =>
         run("space.close", { id, confirmed: true }),
       );
       jobProblems(title, outcome.problems);
     }
+  }
+
+  /** No job runs any more: the panel says so and reads the list again. */
+  jobsDone(cx: AsyncContext) {
     this.job = Option.none();
     cx.notify();
     this.refresh(cx, { scan: false });
   }
 
   /**
-   * Runs `spec` as a terminal job in a floating window, one job at a time. The window
-   * closes when the job ends; a failed job waits for Enter first, so it stays open with
-   * its exit code. Then spaces on removed folders close and the list is read again.
+   * Runs `specs` one after another as terminal jobs, each in a floating window on its
+   * machine, one job at a time. A window closes when its job ends; a failed job waits
+   * for Enter first, so it stays open with its exit code. After each, spaces on its
+   * removed folders close; after the last, the list is read again.
    */
-  runJob(cx: AsyncContext, spec: JobSpec) {
-    if (this.busy()) return;
-    this.job = Option.some(spec.title);
+  runJobs(cx: AsyncContext, specs: readonly JobSpec[]) {
+    const [first] = specs;
+    if (first === undefined || this.busy()) return;
+    // Busy at once, so a request that comes before the first job starts waits its turn.
+    this.job = Option.some(first.title);
     cx.notify();
     cx.spawn(async (cx) => {
-      const outcome = await runEdge(
-        runJob(spec, (addr) => openJobWindow(spec.title, addr)),
-        (defect): JobOutcome => ({ _tag: "NotStarted", reason: defect }),
-      );
-      this.jobEnded(cx, spec.title, outcome);
+      for (const spec of specs) {
+        this.job = Option.some(spec.title);
+        cx.notify();
+        const outcome = await runEdge(
+          runJob(spec, (addr) => openJobWindow(spec.title, addr)),
+          (defect): JobOutcome => ({ _tag: "NotStarted", reason: defect }),
+        );
+        this.jobEnded(spec.title, spec.on, outcome);
+      }
+      this.jobsDone(cx);
     });
   }
 
   /**
-   * Switches to or creates the worktree for `name` as a job, then opens a space on it, or
-   * selects the one already there.
+   * Switches to or creates the worktree `create` asks for as a job on its repo's machine,
+   * then opens a space on it there, or selects the one already there.
    */
-  createWorktree(cx: AsyncContext, main: string, name: string, base: string | null) {
+  createWorktree(cx: AsyncContext, create: CreateAction) {
     if (this.busy()) return;
-    const title = `Open or create ${name}`;
+    const title = `Open or create ${create.name}`;
     this.job = Option.some(title);
     cx.notify();
     cx.spawn(async (cx) => {
       const made = await runEdge(
-        newWorktree({ main, name, base }, (addr) => openJobWindow(title, addr)),
+        newWorktree(create, (addr) => openJobWindow(title, addr)),
         (defect) => ({
           outcome: { _tag: "NotStarted", reason: defect } satisfies JobOutcome,
           switched: Option.none(),
@@ -938,17 +953,18 @@ export default class Worktrunk extends View {
         }),
       );
       jobProblems(title, made.problems);
-      // The job ran on this machine, so the worktree it switched to is here.
+      // The job ran on the repo's machine, so the worktree it switched to is there.
       Option.map(made.switched, ({ branch, path }) =>
         onClickRow(
           goTo(spacePlaces(spaces(), panes()), {
-            machine: THIS_MACHINE,
+            machine: create.machine,
             folder: path,
             name: branch,
           }),
         ),
       );
-      this.jobEnded(cx, title, made.outcome);
+      this.jobEnded(title, create.machine, made.outcome);
+      this.jobsDone(cx);
     });
   }
 
@@ -1989,7 +2005,7 @@ export default class Worktrunk extends View {
                       .text_color(t.ansi1)
                       .hover((s) => s.bg(t.hover))
                       .on_click(() => ask(action))
-                      .child(`Clean up all ${action.paths.length}`),
+                      .child(`Clean up all ${cleanupCount(action)}`),
                   ),
                 ),
             ),
@@ -2077,9 +2093,7 @@ export default class Worktrunk extends View {
       .child(div().flex_1())
       .children(
         Option.toArray(
-          cleanupAction([
-            { root: repoOfKey(repo.key).root, worktrees: this.worktreesOf(repo.key) },
-          ]),
+          cleanupAction([{ ...repoOfKey(repo.key), worktrees: this.worktreesOf(repo.key) }]),
         ).map((action) =>
           div()
             .id(`cleanup-${repo.key}`)

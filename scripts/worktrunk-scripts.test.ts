@@ -324,7 +324,7 @@ describe("removeScript", () => {
 });
 
 describe("mergeScript", () => {
-  const target = { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
+  const target = { machine: null, main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
 
   test("squash-merges inside the worktree, then removes it from the main checkout", () => {
     expect(runWithWt(mergeScript(target, "squash", WRAPPED)).calls).toEqual([
@@ -353,8 +353,8 @@ describe("mergeScript", () => {
 
 describe("cleanupScript", () => {
   const batches = [
-    { main: "/r/app", branches: ["a", "b"] },
-    { main: "/r/lib", branches: ["c"] },
+    { machine: null, main: "/r/app", branches: ["a", "b"], paths: ["/r/app.a", "/r/app.b"] },
+    { machine: null, main: "/r/lib", branches: ["c"], paths: ["/r/lib.c"] },
   ];
 
   test("removes each repo's merged branches from its main checkout", () => {

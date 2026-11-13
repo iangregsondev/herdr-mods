@@ -697,7 +697,12 @@ describe("spaceWorktree", () => {
         [
           Result.succeed({
             _tag: "Merge",
-            target: { main: "/work/repo", path: "/work/repo.ahead", branch: "ahead" },
+            target: {
+              machine: THIS_MACHINE,
+              main: "/work/repo",
+              path: "/work/repo.ahead",
+              branch: "ahead",
+            },
             mode: "squash",
             dirty: false,
           }),
@@ -1051,6 +1056,28 @@ const MERGE_JOB = {
   cwd: "/r/app",
   body: "wt merge",
   gone: ["/r/app.feat", "/r/app.other"],
+  on: THIS_MACHINE,
+};
+
+/** MERGE_JOB for a repo on the machine `linux`. */
+const LINUX_JOB = { ...MERGE_JOB, cwd: "/srv/app", gone: ["/srv/app.feat"], on: "linux" };
+
+/** The jobs API for `options`, also recording each exec's command and the machine it ran on. */
+const machineJobApi = (options: Parameters<typeof jobApi>[0]) => {
+  const jobs = jobApi(options);
+  const ran: unknown[] = [];
+  const hcRuns: (readonly string[])[] = [];
+  const api: ExecApi = {
+    exec: (command, args = [], execOptions) => {
+      ran.push([command, execOptions?.on ?? THIS_MACHINE]);
+      return jobs.api.exec(command, args);
+    },
+    hc: (args) => {
+      if (args[0] === "run") hcRuns.push(args);
+      return jobs.api.hc(args);
+    },
+  };
+  return { api, ran, hcRuns, log: jobs.log };
 };
 
 describe("runJob", () => {
@@ -1083,6 +1110,55 @@ describe("runJob", () => {
           ["gone", "/r/app.feat", "/r/app.other"],
         ]);
       }),
+  );
+
+  it.effect("a job on another machine reads that machine's login shell and starts there", () =>
+    Effect.gen(function* () {
+      const { api, ran, hcRuns } = machineJobApi({ gone: "/srv/app.feat\n" });
+      yield* runJob(LINUX_JOB, () => undefined).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [ran[0], hcRuns.map((args) => args.slice(4, 8))],
+        [["sh", "linux"], [["--on", "linux", "--cwd", "/srv/app"]]],
+      );
+    }),
+  );
+
+  it.effect("a job on another machine checks its removed folders there", () =>
+    Effect.gen(function* () {
+      const { api, ran, log } = machineJobApi({ gone: "/srv/app.feat\n" });
+      const outcome = yield* runJob(LINUX_JOB, () => undefined).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [log.at(-1), ran.at(-1), outcome._tag === "Ended" ? outcome.gone : []],
+        [["gone", "/srv/app.feat"], ["sh", "linux"], ["/srv/app.feat"]],
+      );
+    }),
+  );
+
+  it.effect("what fails around a job on another machine is named as that machine's", () =>
+    Effect.gen(function* () {
+      const { api } = machineJobApi({ goneFails: true });
+      const outcome = yield* runJob(LINUX_JOB, () => undefined).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(outcome, {
+        _tag: "Ended",
+        code: Option.some(0),
+        gone: [],
+        problems: ["On linux: Couldn't check which folders went, so no space was closed: no"],
+      });
+    }),
+  );
+
+  it.effect("a job on another machine that never started says so as that machine's", () =>
+    Effect.gen(function* () {
+      const { api } = machineJobApi({ started: "oops" });
+      const outcome = yield* runJob(LINUX_JOB, () => undefined).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(outcome, { _tag: "NotStarted", reason: "On linux: no such folder" });
+    }),
   );
 
   it.effect("a login shell that can't be found: the job never starts, and says why", () =>
@@ -1183,7 +1259,7 @@ describe("runJob", () => {
 });
 
 describe("newWorktree", () => {
-  const TARGET = { main: "/r/app", name: "feat", base: null };
+  const TARGET = { main: "/r/app", name: "feat", base: null, machine: THIS_MACHINE };
 
   /** The job API, plus mktemp and rm in `exec`, and wt's answer file on a fake disk. */
   const newApi = (
@@ -1197,7 +1273,10 @@ describe("newWorktree", () => {
   ) => {
     const jobs = jobApi({ waits: [`{"ended":true,"exit_code":${options.code ?? 0}}`] });
     const bodies: string[] = [];
-    const exec: ExecApi["exec"] = (command, args = []) => {
+    /** The machine each exec ran on, by its command. */
+    const machines: (readonly [string, unknown])[] = [];
+    const exec: ExecApi["exec"] = (command, args = [], execOptions) => {
+      machines.push([command, execOptions?.on ?? THIS_MACHINE]);
       if (command === "mktemp") {
         jobs.log.push(["mktemp"]);
         return Promise.resolve({ code: 0, stdout: options.mktemp ?? "/tmp/t1\n", stderr: "" });
@@ -1221,9 +1300,72 @@ describe("newWorktree", () => {
         onSome: (text) => ({ "/tmp/t1/switch.json": text }),
       }),
     );
-    const layer = Layer.mergeAll(Shell.layer({ exec, hc }), Files.layer(files.api));
-    return { layer, log: jobs.log, bodies };
+    /** Each answer file read, with the machine it was read on. */
+    const reads: unknown[] = [];
+    const layer = Layer.mergeAll(
+      Shell.layer({ exec, hc }),
+      Files.layer({
+        ...files.api,
+        readTextFile: (path, readOptions) => {
+          reads.push([path, readOptions?.on ?? THIS_MACHINE]);
+          return files.api.readTextFile(path, readOptions);
+        },
+      }),
+    );
+    return { layer, log: jobs.log, bodies, machines, reads };
   };
+
+  it.effect("a repo on another machine makes and removes its temp folder there", () =>
+    Effect.gen(function* () {
+      const { layer, machines } = newApi();
+      yield* newWorktree({ ...TARGET, machine: "linux" }, () => undefined).pipe(
+        Effect.provide(layer),
+      );
+      assert.deepStrictEqual(
+        machines.filter(([command]) => command === "mktemp" || command === "rm"),
+        [
+          ["mktemp", "linux"],
+          ["rm", "linux"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("what fails around a new worktree on another machine is named as that machine's", () =>
+    Effect.gen(function* () {
+      const failing = newApi({ rmFails: true });
+      const made = yield* newWorktree({ ...TARGET, machine: "linux" }, () => undefined).pipe(
+        Effect.provide(failing.layer),
+      );
+      const noTemp = newApi({ mktemp: "" });
+      const unmade = yield* newWorktree({ ...TARGET, machine: "linux" }, () => undefined).pipe(
+        Effect.provide(noTemp.layer),
+      );
+      assert.deepStrictEqual(
+        [made.problems, unmade.outcome],
+        [
+          ["On linux: Couldn't remove the temp folder /tmp/t1: rm: busy"],
+          {
+            _tag: "NotStarted",
+            reason: "On linux: couldn't make a temp folder: mktemp printed no folder",
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("a repo on another machine has wt's answer read there", () =>
+    Effect.gen(function* () {
+      const { layer, reads } = newApi();
+      const made = yield* newWorktree({ ...TARGET, machine: "linux" }, () => undefined).pipe(
+        Effect.provide(layer),
+      );
+      assert.deepStrictEqual(
+        [reads, made.switched],
+        [[["/tmp/t1/switch.json", "linux"]], Option.some({ branch: "feat", path: "/r/app.feat" })],
+      );
+    }),
+  );
 
   it.effect("runs wt switch as a job, reads its answer, then removes the temp folder", () =>
     Effect.gen(function* () {

@@ -119,11 +119,31 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test("a Merge or Remove target that names no machine is on this machine", () => {
+    const target = { main: "/r/app", path: "/r/app.feat", branch: "feat" };
+    expect(readAction({ _tag: "Remove", target, dirty: false })).toEqual(
+      Option.some({ _tag: "Remove", target: { ...target, machine: THIS_MACHINE }, dirty: false }),
+    );
+  });
+
   test.each([
-    { _tag: "Create", main: "/r/app", name: "feat", base: null },
-    { _tag: "Create", main: "/r/app", name: "feat", base: "main" },
-  ] as const)("reads back a Create with base $base", (action) => {
+    { _tag: "Create", main: "/r/app", name: "feat", base: null, machine: THIS_MACHINE },
+    { _tag: "Create", main: "/r/app", name: "feat", base: "main", machine: THIS_MACHINE },
+    { _tag: "Create", main: "/srv/app", name: "feat", base: null, machine: "linux" },
+  ] as const)("reads back a Create with base $base on machine $machine", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test("a Create that names no machine is on this machine", () => {
+    expect(readAction({ _tag: "Create", main: "/r/app", name: "feat", base: null })).toEqual(
+      Option.some({
+        _tag: "Create",
+        main: "/r/app",
+        name: "feat",
+        base: null,
+        machine: THIS_MACHINE,
+      }),
+    );
   });
 
   test("reads back a Settings action, as the header's settings button sends it", () => {
@@ -171,10 +191,7 @@ describe("readAction", () => {
       "a remove that doesn't say if it is dirty",
       { _tag: "Remove", target: { main: "/r", path: "/r.f", branch: "f" } },
     ],
-    [
-      "a clean up with a bad batch",
-      { _tag: "Cleanup", batches: [{ main: 1 }], paths: [], dirty: 0 },
-    ],
+    ["a clean up with a bad batch", { _tag: "Cleanup", batches: [{ main: 1 }], dirty: 0 }],
     ["an open with a bad click", { _tag: "Open", click: { _tag: "Select" } }],
     ["a create whose base isn't text or null", { _tag: "Create", main: "/r", name: "f", base: 1 }],
     ["a hide with no repo", { _tag: "Hide" }],

@@ -17,6 +17,7 @@ import {
   type SpaceAct,
 } from "worktrunk-mailbox";
 import type { DialogProps } from "./dialog.ts";
+import type { Machine } from "./machines.ts";
 import { confirmFor, type Action, type Confirm, type MenuItem } from "./menus.ts";
 import { DEFAULT_VIEW_STATE, SHOWS, type Click, type Show, type ViewState } from "./view.ts";
 
@@ -63,6 +64,9 @@ const readMode = oneOf<MergeMode>(["squash", "keep"]);
 
 const readAct = oneOf<SpaceAct>(SPACE_ACTS);
 
+/** The machine a value names; no machine named is this machine. */
+const readMachine = (value: unknown): Machine => Option.getOrNull(text(value));
+
 const readClick = (value: unknown): Option.Option<Click> => {
   const f = fields(value);
   switch (f._tag) {
@@ -72,7 +76,7 @@ const readClick = (value: unknown): Option.Option<Click> => {
       return Option.map(
         Option.all({ name: text(f.name), folder: text(f.folder) }),
         // No machine named is this machine.
-        (click): Click => ({ _tag: "New", ...click, machine: Option.getOrNull(text(f.machine)) }),
+        (click): Click => ({ _tag: "New", ...click, machine: readMachine(f.machine) }),
       );
     default:
       return Option.none();
@@ -81,12 +85,22 @@ const readClick = (value: unknown): Option.Option<Click> => {
 
 const readLinked = (value: unknown): Option.Option<Linked> => {
   const f = fields(value);
-  return Option.all({ main: text(f.main), path: text(f.path), branch: text(f.branch) });
+  return Option.map(
+    Option.all({ main: text(f.main), path: text(f.path), branch: text(f.branch) }),
+    (linked): Linked => ({ machine: readMachine(f.machine), ...linked }),
+  );
 };
 
 const readBatch = (value: unknown): Option.Option<Batch> => {
   const f = fields(value);
-  return Option.all({ main: text(f.main), branches: listOf(f.branches, text) });
+  return Option.map(
+    Option.all({
+      main: text(f.main),
+      branches: listOf(f.branches, text),
+      paths: listOf(f.paths, text),
+    }),
+    (batch): Batch => ({ machine: readMachine(f.machine), ...batch }),
+  );
 };
 
 /** An Action, as `send` posts it or a menu item carries it; none for anything else. */
@@ -109,7 +123,6 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.map(
         Option.all({
           batches: listOf(f.batches, readBatch),
-          paths: listOf(f.paths, text),
           dirty: finite(f.dirty),
         }),
         (cleanup): Action => ({ _tag: "Cleanup", ...cleanup }),
@@ -124,7 +137,7 @@ export const readAction = (value: unknown): Option.Option<Action> => {
     case "Create":
       return Option.map(
         Option.all({ main: text(f.main), name: text(f.name), base: textOrNull(f.base) }),
-        (create): Action => ({ _tag: "Create", ...create }),
+        (create): Action => ({ _tag: "Create", ...create, machine: readMachine(f.machine) }),
       );
     case "CopyPath":
       return Option.map(text(f.path), (path): Action => ({ _tag: "CopyPath", path }));

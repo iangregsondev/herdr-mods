@@ -615,6 +615,17 @@ describe("loginShell", () => {
     }),
   );
 
+  it.effect("the shell of the machine asked for, read there", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/bin/bash", stderr: "" });
+      const shell = yield* loginShell("linux").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [shell, calls],
+        ["/bin/bash", [["sh", ["-c", 'printf %s "$SHELL"'], { on: "linux" }]]],
+      );
+    }),
+  );
+
   it.effect("a $SHELL that can't be read is LoginShellUnknown, saying why, with no guess", () =>
     Effect.gen(function* () {
       const failed = yield* loginShell().pipe(
@@ -656,7 +667,7 @@ const hcAnswering = (answers: readonly string[], stderr = "") => {
 };
 
 describe("startJob", () => {
-  const job = { cwd: "/r/app", shell: "/bin/zsh", body: "wt list" };
+  const job = { cwd: "/r/app", shell: "/bin/zsh", body: "wt list", on: THIS_MACHINE };
 
   it.effect("starts the job as a background terminal; its address", () =>
     Effect.gen(function* () {
@@ -715,6 +726,17 @@ describe("goneFolders", () => {
     }),
   );
 
+  it.effect("checks the folders on the machine asked for", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/srv/a\n", stderr: "" });
+      const gone = yield* goneFolders(["/srv/a"], "linux").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [gone, calls],
+        [["/srv/a"], [["sh", shArgs(GONE_SCRIPT, ["/srv/a"]), { timeout: 60_000, on: "linux" }]]],
+      );
+    }),
+  );
+
   it.effect("no folders: nothing gone, and nothing run", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/r/a\n", stderr: "" });
@@ -763,6 +785,14 @@ describe("makeTempDir", () => {
     }),
   );
 
+  it.effect("makes it on the machine asked for", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/tmp/tmp.l1\n", stderr: "" });
+      const dir = yield* makeTempDir("linux").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([dir, calls], ["/tmp/tmp.l1", [["mktemp", ["-d"], { on: "linux" }]]]);
+    }),
+  );
+
   it.effect("mktemp printing no folder failed: CommandFailed, naming it", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -784,6 +814,14 @@ describe("removeDir", () => {
       const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
       yield* removeDir("/tmp/tmp.x1").pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(calls, [["rm", ["-rf", "/tmp/tmp.x1"], undefined]]);
+    }),
+  );
+
+  it.effect("removes it on the machine asked for", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
+      yield* removeDir("/tmp/tmp.l1", "linux").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["rm", ["-rf", "/tmp/tmp.l1"], { on: "linux" }]]);
     }),
   );
 });
