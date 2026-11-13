@@ -24,22 +24,43 @@ export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map(), ask
 export const waitingOn = (orphans: Orphans, machine: Machine): readonly string[] =>
   orphans.waiting.get(machine) ?? [];
 
-/** The panel's own job removed the folders `gone` on `machine`: never dropped paths. */
+/**
+ * The panel's own job removed the folders `gone` on `machine`: never dropped paths. Those
+ * a list read already dropped stop waiting (a check running on them returns none of
+ * them); the rest are left out of the next read that drops them.
+ */
 export const jobRemoved = (
   orphans: Orphans,
   machine: Machine,
   gone: readonly string[],
-): Orphans => ({
-  ...orphans,
-  removed: new Map([
-    ...orphans.removed,
-    [machine, [...(orphans.removed.get(machine) ?? []), ...gone]],
-  ]),
-});
+): Orphans => {
+  const waits = waitingOn(orphans, machine);
+  return {
+    ...orphans,
+    waiting: new Map([...orphans.waiting, [machine, waits.filter((path) => !gone.includes(path))]]),
+    removed: new Map([
+      ...orphans.removed,
+      [
+        machine,
+        [...(orphans.removed.get(machine) ?? []), ...gone.filter((path) => !waits.includes(path))],
+      ],
+    ]),
+  };
+};
+
+/** A repo's fresh read against its list from before. */
+interface Fresh {
+  /** The paths listed before and not now. */
+  readonly dropped: readonly string[];
+  /** Every path listed before or now. */
+  readonly seen: readonly string[];
+}
 
 /**
  * What the panel remembers after `machine`'s batched list read answers, given each repo's
- * list from before (`old`).
+ * list from before (`old`). A folder a job removed is left out of the dropped paths, and
+ * forgotten by the first fresh read of its repo, whether that read dropped it or lists it
+ * again (a worktree made there anew), so its later removal in a terminal counts.
  */
 export const listsRead = (
   orphans: Orphans,
@@ -47,21 +68,24 @@ export const listsRead = (
   machine: Machine,
   answer: MachineLists,
 ): Orphans => {
-  const dropped = Result.match(answer, {
-    onFailure: (): readonly string[] => [],
+  const reads = Result.match(answer, {
+    onFailure: (): readonly Fresh[] => [],
     onSuccess: (lists) =>
       Array.from(lists).flatMap(([key, list]) =>
         Result.match(list, {
-          onFailure: (): readonly string[] => [],
+          onFailure: (): readonly Fresh[] => [],
           onSuccess: (worktrees) => {
-            const now = new Set(worktrees.map((w) => w.path));
-            return (old.get(key)?.worktrees ?? [])
-              .map((w) => w.path)
-              .filter((path) => !now.has(path));
+            const now = worktrees.map((w) => w.path);
+            const before = (old.get(key)?.worktrees ?? []).map((w) => w.path);
+            return [
+              { dropped: before.filter((path) => !now.includes(path)), seen: [...before, ...now] },
+            ];
           },
         }),
       ),
   });
+  const dropped = reads.flatMap((fresh) => fresh.dropped);
+  const seen = reads.flatMap((fresh) => fresh.seen);
   const removed = orphans.removed.get(machine) ?? [];
   return {
     ...orphans,
@@ -74,7 +98,7 @@ export const listsRead = (
     ]),
     removed: new Map([
       ...orphans.removed,
-      [machine, removed.filter((path) => !dropped.includes(path))],
+      [machine, removed.filter((path) => !seen.includes(path))],
     ]),
   };
 };
@@ -101,7 +125,9 @@ export const checked = (
           [machine, waitingOn(orphans, machine).filter((path) => !asked.includes(path))],
         ]),
       },
-      gone: gone.filter((path) => asked.includes(path)),
+      gone: gone.filter(
+        (path) => asked.includes(path) && waitingOn(orphans, machine).includes(path),
+      ),
     }),
   });
 

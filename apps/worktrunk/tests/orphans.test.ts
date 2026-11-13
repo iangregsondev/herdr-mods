@@ -97,6 +97,18 @@ describe("listsRead", () => {
     expect(waitingOn(orphans, THIS_MACHINE)).toEqual(["/r/app.feat"]);
   });
 
+  test("a job's removed folder listed again on the next read is forgotten, so its later removal in a terminal counts", () => {
+    const both = new Map([[APP, listed("/r/app", "/r/app.feat")]]);
+    const remade = listsRead(
+      jobRemoved(NO_ORPHANS, THIS_MACHINE, ["/r/app.feat"]),
+      both,
+      THIS_MACHINE,
+      read([APP, fresh("/r/app", "/r/app.feat")]),
+    );
+    const orphans = listsRead(remade, both, THIS_MACHINE, read([APP, fresh("/r/app")]));
+    expect(waitingOn(orphans, THIS_MACHINE)).toEqual(["/r/app.feat"]);
+  });
+
   test("dropped paths wait on their own machine, apart from another's", () => {
     const srv = repoKey({ machine: "linux", root: "/srv/app" });
     const old = new Map([
@@ -120,6 +132,32 @@ const waiting = (machine: string | null, ...paths: readonly string[]) =>
     machine,
     read([APP, fresh("/r/app")]),
   );
+
+describe("jobRemoved", () => {
+  test("a dropped path the panel's own job then removed stops waiting", () => {
+    const orphans = jobRemoved(waiting(THIS_MACHINE, "/r/app.feat", "/r/app.fix"), THIS_MACHINE, [
+      "/r/app.feat",
+    ]);
+    expect(waitingOn(orphans, THIS_MACHINE)).toEqual(["/r/app.fix"]);
+  });
+
+  test("a job removing an already dropped path leaves nothing behind, so a worktree made there again counts when it goes", () => {
+    const byJob = jobRemoved(waiting(THIS_MACHINE, "/r/app.feat"), THIS_MACHINE, ["/r/app.feat"]);
+    const remade = listsRead(
+      byJob,
+      new Map([[APP, listed("/r/app")]]),
+      THIS_MACHINE,
+      read([APP, fresh("/r/app", "/r/app.feat")]),
+    );
+    const orphans = listsRead(
+      remade,
+      new Map([[APP, listed("/r/app", "/r/app.feat")]]),
+      THIS_MACHINE,
+      read([APP, fresh("/r/app")]),
+    );
+    expect(waitingOn(orphans, THIS_MACHINE)).toEqual(["/r/app.feat"]);
+  });
+});
 
 describe("checked", () => {
   test("a gone folder comes back gone and stops waiting", () => {
@@ -156,6 +194,13 @@ describe("checked", () => {
       ["/r/app.feat"],
       ["/r/app.fix"],
     ]);
+  });
+
+  test("a check that started before the panel's own job removed its folder finds it gone, but never returns it", () => {
+    const asked = ["/r/app.feat", "/r/app.fix"];
+    const byJob = jobRemoved(waiting(THIS_MACHINE, ...asked), THIS_MACHINE, ["/r/app.feat"]);
+    const after = checked(byJob, THIS_MACHINE, asked, Result.succeed(asked));
+    expect(after.gone).toEqual(["/r/app.fix"]);
   });
 });
 
