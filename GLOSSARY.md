@@ -51,10 +51,26 @@ _Avoid_: checkout (except for the main checkout), clone
 A named folder (such as Work or Personal) that holds repos. A repo belongs to the deepest group folder that contains it, or to Other.
 _Avoid_: category, workspace
 
+**New worktree**:
+A linked worktree whose branch is still at main's tip, with no commits and no changes of its own. Nothing in it to clean up yet.
+_Avoid_: empty worktree
+
+**Merged worktree**:
+A linked worktree whose work is already in main, or whose branch never got a commit while main moved on. Ready to clean up.
+_Avoid_: done, finished
+
 **Current repo**:
 The repo holding the folder of the pane that has focus in Herdr. There is none when that folder is outside every repo.
 _Avoid_: active repo (active means in-progress work here)
 
 **Space**:
-A Herdr space: a sidebar entry that holds tabs, usually opened on one worktree's folder.
+A Herdr space: a sidebar entry that holds tabs, usually opened on one worktree's folder. Every space lives on one machine.
 _Avoid_: workspace
+
+**Machine**:
+A computer that Herdr's spaces live on, named as Herdr names it (`hc machine ls`). Every repo and every space is on exactly one machine. The same repo cloned on two machines is two repos.
+_Avoid_: remote, server, host (Herdr host means the computer running the Herdr app)
+
+**This machine**:
+The machine the Herdr app itself runs on. Any other machine is reached over SSH.
+_Avoid_: local (except in the dev loop's `local` dev target)
