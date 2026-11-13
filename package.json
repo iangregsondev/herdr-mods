@@ -8,9 +8,12 @@
     "ready": "vp run verify && vp run -r build",
     "preinstall": "sh scripts/require-vp.sh",
     "prepare": "vp config && vpx scripts/herdr-types.ts && effect-tsgo patch --oxlint --typescript",
-    "test": "vp test scripts"
+    "test": "vp test scripts",
+    "version": "changeset version && vp check --fix && vp run -r build"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "catalog:",
+    "@changesets/cli": "catalog:",
     "@effect/tsgo": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
