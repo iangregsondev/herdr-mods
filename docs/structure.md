@@ -12,20 +12,25 @@ apps/<name>/              SOURCE of one mod (you edit this)
     RECIPE.md, preview.png  for sharing (herdr.dev/mods); see docs/develop.md
     *.svg                 the mod's own icons
   vite.config.ts          pack: modPack("<name>")
+  package.json            its mod version; CHANGELOG.md beside it once released (both written by the version PR)
 packages/<name>/          shared TS libs, bundled into each mod that imports them
   worktrunk-mailbox/      how mods reach the worktrunk panel: its mailbox and its layout block, plus the JSON readers and Files service the mods share
 mods/iangregsondev-<name>/  BUILD OUTPUT, committed: the folder Herdr users install
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
-mod-pack.ts               shared vp pack settings for every mod: the namespace, the out folder (watch mode builds into Herdr, or stages in node_modules/.herdr-dev/ and syncs to a remote Herdr host)
+mod-pack.ts               shared vp pack settings for every mod: the namespace, the out folder (watch mode builds into Herdr, or stages in node_modules/.herdr-dev/ and syncs to a remote Herdr host), the version stamp in the built RECIPE.md
 mod-env.d.ts              declares __MOD_ID__ and __NAMESPACE__, the constants the build gives each mod
 herdr-dev.example.json    template for herdr-dev.json (git-ignored): the dev target, local or a remote Herdr host
 .config/wt.toml           worktrunk hooks: a new worktree gets the main checkout's herdr-dev.json
+.changeset/               changesets waiting for the next version PR, and config.json (the changesets settings); see docs/develop.md, "Releases"
+.github/workflows/ci.yml  CI: vp run verify, the build, mods/ up to date; on a PR, vp run check:changesets
+.github/workflows/release.yml  on push to main: keeps the version PR open, then tags and releases each bumped mod (vp run release:tags)
 scripts/changeset-check.ts  vp run check:changesets: CI fails a PR that changes a mod (or packages/) without a changeset for it
 scripts/check-mods.ts     vp run check:mods: herdr-app check on every built mod, on the dev target's Herdr host
 scripts/copy-dev-config.sh  copies herdr-dev.json into a new worktree (run by .config/wt.toml)
 scripts/dev-config.ts     reads the dev target from herdr-dev.json (or HERDR_DEV_CONFIG)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from the dev target's Herdr host
 scripts/git.ts            Git: the Effect service for git in a repo folder (files changed since a base ref, tags on origin)
+scripts/recipe-stamp.ts   stampRecipe: the "Version x.y.z · Changelog" line mod-pack.ts puts under the built RECIPE.md's title
 scripts/release-tags.ts   vp run release:tags: the publish script of the release workflow (.github/workflows/release.yml); lists the mod-id tags not yet on origin for changesets/action
 scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls (local, or remote over SSH)
 scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host; `shot <file> [--crop x,y,w,h]` copies a (cropped) screenshot back
@@ -46,5 +51,6 @@ herdr-env.d.ts            loads the Herdr app's types (see docs/types.md)
 - **Build:** `vp run -r build` runs `vp pack` in each app. The output is `mods/iangregsondev-<name>/main.js`: ESM, ES2022, not minified (installers read every file). `herdr`, `gpui-kit` and the other built-ins stay external, and everything else gets bundled.
 - **Commit `mods/`.** Installs only copy files (with no build and no `npm install`), and hmod matches installed mods to this repo by file hash.
 - **Dev:** `vp run <name>#dev` watches and builds a dev build into the Herdr app instead, on the dev target from `herdr-dev.json` (no file means `local`). `local`: into `~/.config/herdr-app/mods/iangregsondev-<name>/`. `remote`: into `node_modules/.herdr-dev/iangregsondev-<name>/`, then rsync over SSH into the Herdr host's `mods/iangregsondev-<name>/`. Herdr reloads on every save. It never touches the repo's `mods/`. `vp run herdr <args…>` runs `herdr-app` on the same Herdr host. Details: [develop.md](develop.md).
+- **Releases:** each mod has its own version, moved by changesets. A change to a mod or to `packages/` needs one; a release is a tag and GitHub release named by mod id (`iangregsondev-worktrunk@0.1.0`, [ADR 0004](adr/0004-release-tags-use-mod-ids.md)). Details: [develop.md](develop.md#releases).
 - **The runtime is the Herdr app's embedded JS** (gpui-kit). It is not Node or Bun: no Node APIs and no DOM. `setTimeout` exists but throws: use `cx.timer`.
 - **New mod:** copy `apps/hello/`, rename it in `package.json`, `vite.config.ts` and `assets/mod.json`, then `vp install`. Full steps: [develop.md](develop.md).
