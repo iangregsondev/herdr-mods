@@ -112,7 +112,7 @@ export const runReleaseTags = Effect.fn("runReleaseTags")(
     const released = yield* writeReleaseTags(options);
     const stdout =
       released.length === 0
-        ? "release:tags: every mod-id tag is on origin; nothing to release\n"
+        ? "release:tags: nothing to release\n"
         : released.map((pkg) => `release:tags: ${releaseTag(pkg)}\n`).join("");
     return { code: 0, stdout, stderr: "" };
   },
