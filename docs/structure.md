@@ -25,6 +25,7 @@ scripts/copy-dev-config.sh  copies herdr-dev.json into a new worktree (run by .c
 scripts/dev-config.ts     reads the dev target from herdr-dev.json (or HERDR_DEV_CONFIG)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from the dev target's Herdr host
 scripts/git.ts            Git: the Effect service for git in a repo folder (files changed since a base ref, tags on origin)
+scripts/release-tags.ts   vp run release:tags: the publish script of the release workflow (.github/workflows/release.yml); lists the mod-id tags not yet on origin for changesets/action
 scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls (local, or remote over SSH)
 scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host; `shot <file> [--crop x,y,w,h]` copies a (cropped) screenshot back
 scripts/herdr-types.ts    vp run types: puts Herdr's type files into .herdr-types/ from the dev target's Herdr host (docs/types.md)
