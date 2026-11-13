@@ -5769,6 +5769,11 @@ const causeElectDefects = (self) => hasDies(self) && hasFails(self) ? causeFromR
 */
 const findRecoverableError = (self) => hasDies(self) ? fail$2(causeElectDefects(self)) : findError(self);
 /** @internal */
+const findDefect = (self) => {
+	const reason = self.reasons.find(isDieReason);
+	return reason ? succeed$3(reason.defect) : fail$2(self);
+};
+/** @internal */
 const hasInterrupts = (self) => self.reasons.some(isInterruptReason);
 /** @internal */
 const causeMap = /*#__PURE__*/ dual(2, (self, f) => {
@@ -6520,6 +6525,8 @@ const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(s
 /** @internal */
 const catch_$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
 /** @internal */
+const catchDefect$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findDefect, f));
+/** @internal */
 const catchIf$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
@@ -6616,7 +6623,7 @@ const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 	return match$2(self, options);
 });
 /** @internal */
-const exit$1 = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
+const exit = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
 const exitPrimitive = /*#__PURE__*/ makePrimitive({
 	op: "Exit",
 	[evaluate](fiber) {
@@ -6669,7 +6676,7 @@ const scopeCloseFinalizers = /*#__PURE__*/ fnUntraced$1(function* (self, finaliz
 	const parent = getCurrentFiber();
 	for (let i = arr.length - 1; i >= 0; i--) {
 		const [key, finalizer] = arr[i];
-		if (self.strategy === "sequential") exits.push(yield* exit$1(runFinalizer(finalizer, exit_)));
+		if (self.strategy === "sequential") exits.push(yield* exit(runFinalizer(finalizer, exit_)));
 		else if (key !== parent) fibers.push(forkUnsafe$1(parent, runFinalizer(finalizer, exit_), true, true, "inherit"));
 	}
 	if (fibers.length > 0) exits = yield* fiberAwaitAll(fibers);
@@ -8773,48 +8780,6 @@ const result = result$1;
 */
 const option = option$1;
 /**
-* Transforms an effect to encapsulate both failure and success using the `Exit`
-* data type.
-*
-* **When to use**
-*
-* Use when you need to inspect the full outcome, including typed failures, defects,
-* and interruptions.
-*
-* **Details**
-*
-* `exit` wraps an effect's success or failure inside an `Exit` type, allowing
-* you to handle both cases explicitly.
-*
-* The resulting effect cannot fail because the failure is encapsulated within
-* the `Exit.Failure` type. The error type is set to `never`, indicating that
-* the effect is structured to never fail directly.
-*
-* **Example** (Capturing completion as Exit)
-*
-* ```ts import.meta.vitest
-* import { Effect, Exit } from "effect"
-*
-* const success = Effect.succeed(42)
-* const failure = Effect.fail("Something went wrong")
-*
-* const program1 = Effect.exit(success)
-* const program2 = Effect.exit(failure)
-*
-* Effect.runSync(program1) // => Exit.succeed(42)
-*
-* Effect.runSync(program2) // => Exit.fail("Something went wrong")
-* ```
-*
-* @see {@link option} for a version that uses `Option` instead.
-* @see {@link result} for a version that uses `Result` instead.
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const exit = exit$1;
-/**
 * Transforms the value inside an effect by applying a function to it.
 *
 * **When to use**
@@ -9057,6 +9022,57 @@ const catchTag = catchTag$1;
 * @since 2.0.0
 */
 const catchTags = catchTags$1;
+/**
+* Recovers from defects using a provided recovery function.
+*
+* **When to use**
+*
+* Use when you need to report or translate defects at integration boundaries.
+*
+* **Details**
+*
+* `catchDefect` handles unexpected defects, such as thrown exceptions or
+* values passed to `die`, without catching typed failures or interruptions.
+*
+* When to Recover from Defects:
+*
+* Defects are unexpected errors that typically should not be recovered from, as
+* they often indicate serious issues. In some cases, such as dynamically loaded
+* plugins, controlled recovery may be needed.
+*
+* **Gotchas**
+*
+* `catchDefect` recovers any cause that contains a defect, including causes
+* that also contain typed errors. Typed error handlers such as `catch` skip
+* those causes, so defects always take precedence.
+*
+* **Example** (Recovering from defects)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* // An effect that might throw an unexpected error (defect)
+* const program = Effect.sync(() => {
+*   throw new Error("Unexpected error")
+* })
+*
+* // Recover from defects only
+* const recovered = Effect.catchDefect(program, (defect) => {
+*   return Effect.sync(() => { output.push(`Caught defect: ${(defect as Error).message}`) }).pipe(
+*     Effect.as("Recovered from defect")
+*   )
+* })
+*
+* void output.push(Effect.runSync(recovered))
+* output // => ["Caught defect: Unexpected error", "Recovered from defect"]
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 4.0.0
+*/
+const catchDefect = catchDefect$1;
 /**
 * Recovers from specific errors using a `Predicate` or `Refinement`.
 *
@@ -11394,7 +11410,14 @@ const machineLists = (machine, roots) => wtLists(machine, roots).pipe(map((lists
 }), list])))), catch_((failed) => succeed(fail$2({
 	_tag: "Down",
 	reason: failureText(failed)
+}))), catchDefect((defect) => succeed(fail$2({
+	_tag: "Down",
+	reason: defectText(defect)
 }))));
+/** A defect, a bug, as its one-line reason. */
+const defectText = (defect) => `a bug: ${String(defect)}`;
+/** `read`, with a defect, a bug, as its failed answer, so the panel shows it like any other. */
+const defectAsReason = (read) => read.pipe(catchDefect((defect) => succeed(fail$2(defectText(defect)))));
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 const readCi = fn("readCi")(function* (repo) {
 	return yield* wtCi(repo);
@@ -12659,16 +12682,20 @@ const toggleFold = (key) => {
 		[key]: !folded[key]
 	});
 };
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = (read) => exit(read).pipe(map(match$1({
-	onSuccess: (answer) => answer,
-	onFailure: (cause) => fail$2(pretty(cause))
-})));
+/**
+* Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+* code that keeps the answers), as a toast: the read never stops silently.
+*/
+const showDefect = (what) => (body) => notify({
+	title: `Couldn't read ${what}`,
+	body,
+	level: "error"
+});
 /**
 * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
 * under the repo's `repoKey`.
 */
-const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsFailure(read(repo)), (repo, answer) => keep(repoKey(repo), answer)), () => void 0);
+const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsReason(read(repo)), (repo, answer) => keep(repoKey(repo), answer)), showDefect("CI"));
 const viewState = () => readViewState(shared(VIEW_KEY));
 const setView = (change) => setShared(VIEW_KEY, writeViewState({
 	...viewState(),
@@ -13413,7 +13440,7 @@ var Worktrunk = class extends View {
 			this.lists = kept.lists;
 			this.machineStatus = kept.machines;
 			cx.notify();
-		}), () => void 0);
+		}), showDefect("the worktrees"));
 	}
 	/** Reads CI again with the next refresh, which `ask` starts. */
 	refreshWithCi(cx, ask) {

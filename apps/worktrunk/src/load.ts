@@ -425,7 +425,20 @@ const machineLists = (
     Effect.catch((failed) =>
       Effect.succeed<MachineLists>(Result.fail({ _tag: "Down", reason: failureText(failed) })),
     ),
+    // A bug in the read is that machine's failure too, so the panel says so.
+    Effect.catchDefect((defect) =>
+      Effect.succeed<MachineLists>(Result.fail({ _tag: "Down", reason: defectText(defect) })),
+    ),
   );
+
+/** A defect, a bug, as its one-line reason. */
+export const defectText = (defect: unknown): string => `a bug: ${String(defect)}`;
+
+/** `read`, with a defect, a bug, as its failed answer, so the panel shows it like any other. */
+export const defectAsReason = <A, R>(
+  read: Effect.Effect<Result.Result<A, string>, never, R>,
+): Effect.Effect<Result.Result<A, string>, never, R> =>
+  read.pipe(Effect.catchDefect((defect) => Effect.succeed(Result.fail(defectText(defect)))));
 
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 export const readCi = Effect.fn("readCi")(function* (repo: RepoId) {

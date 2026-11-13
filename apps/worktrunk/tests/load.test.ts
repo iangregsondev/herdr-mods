@@ -1,9 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { machineStates, THIS_MACHINE } from "../src/machines.ts";
-import { Effect, Fiber, Layer, Option, Result } from "effect";
+import { Effect, Exit, Fiber, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
   addGroupFolderOn,
+  defectAsReason,
   dialogFor,
   findRepos,
   hideInSettings,
@@ -27,6 +28,7 @@ import { parseList } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
+import type { MachineLists } from "../src/reads.ts";
 import { DEFAULT_SETTINGS, parseSettings, serializeSettings } from "../src/settings.ts";
 
 /** A repo on this machine. */
@@ -1088,6 +1090,36 @@ describe("readLists", () => {
       }),
   );
 
+  it.effect("a machine whose read dies, a bug, is kept as down with the defect", () =>
+    Effect.gen(function* () {
+      const api: ExecApi = {
+        hc: noHc,
+        exec: (_command, args = [], options) =>
+          options?.on === "linux"
+            ? // An answer with no fields: reading its exit code throws, a defect.
+              Promise.resolve(undefined as unknown as Awaited<ReturnType<ExecApi["exec"]>>)
+            : Promise.resolve({ code: 0, stdout: `\u001e0\t${args[3]}\n[]`, stderr: "" }),
+      };
+      const kept: (readonly [unknown, MachineLists])[] = [];
+      yield* readLists(
+        [here("/a"), { machine: "linux", root: "/srv/c" }],
+        new Map(),
+        (machine, answer) => kept.push([machine, answer]),
+      ).pipe(Effect.provide(Shell.layer(api)), Effect.exit);
+      const linux = kept.find(([machine]) => machine === "linux");
+      assert.deepStrictEqual(
+        Option.map(Option.fromNullishOr(linux), ([, answer]) =>
+          Result.match(answer, {
+            onSuccess: () => "read",
+            onFailure: (status) =>
+              status._tag === "Down" && status.reason.includes("TypeError") ? "down" : "other",
+          }),
+        ),
+        Option.some("down"),
+      );
+    }),
+  );
+
   it.live("this machine's lists land while another machine's run hangs", () =>
     Effect.gen(function* () {
       const landed = { resolve: (): void => undefined };
@@ -1133,6 +1165,19 @@ describe("readCi", () => {
       };
       const read = yield* readCi(here("/work/repo")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(read, parseList(ci));
+    }),
+  );
+});
+
+describe("defectAsReason", () => {
+  it.effect("a read that dies, a bug, is its failed answer naming the defect", () =>
+    Effect.gen(function* () {
+      const answer = yield* defectAsReason(
+        Effect.die(new TypeError("no list")).pipe(
+          Effect.as<Result.Result<readonly string[], string>>(Result.succeed([])),
+        ),
+      ).pipe(Effect.exit);
+      assert.deepStrictEqual(answer, Exit.succeed(Result.fail("a bug: TypeError: no list")));
     }),
   );
 });

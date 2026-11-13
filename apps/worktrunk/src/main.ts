@@ -78,6 +78,7 @@ import {
   readDialogRepo,
   readEach,
   readLists,
+  defectAsReason,
   runJob,
   saveSettings,
   settingsText,
@@ -317,18 +318,12 @@ const toggleFold = (key: string) => {
   setShared(FOLDED_KEY, { ...folded, [key]: !folded[key] });
 };
 
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = <A>(
-  read: Effect.Effect<Result.Result<A, string>, never, Shell | Files>,
-): Effect.Effect<Result.Result<A, string>, never, Shell | Files> =>
-  Effect.exit(read).pipe(
-    Effect.map(
-      Exit.match({
-        onSuccess: (answer) => answer,
-        onFailure: (cause) => Result.fail(Cause.pretty(cause)),
-      }),
-    ),
-  );
+/**
+ * Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+ * code that keeps the answers), as a toast: the read never stops silently.
+ */
+const showDefect = (what: string) => (body: string) =>
+  notify({ title: `Couldn't read ${what}`, body, level: "error" });
 
 /**
  * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
@@ -344,10 +339,10 @@ const readAll = (
     readEach(
       repos,
       limit,
-      (repo) => defectAsFailure(read(repo)),
+      (repo) => defectAsReason(read(repo)),
       (repo, answer) => keep(repoKey(repo), answer),
     ),
-    () => undefined,
+    showDefect("CI"),
   );
 
 const viewState = (): ViewState => readViewState(shared(VIEW_KEY));
@@ -1185,7 +1180,7 @@ export default class Worktrunk extends View {
         this.machineStatus = kept.machines;
         cx.notify();
       }),
-      () => undefined,
+      showDefect("the worktrees"),
     );
   }
 
