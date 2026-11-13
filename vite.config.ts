@@ -92,6 +92,8 @@ export default defineConfig({
       "herdr:sync": { command: "vpx scripts/herdr-sync.ts", cache: false },
       // Reads git's file list, which the cache doesn't track.
       "audit:config": { command: "vpx scripts/audit.ts", cache: false },
+      // The release workflow's publish script: reads the tags on origin, writes CHANGESETS_OUTPUT.
+      "release:tags": { command: "vpx scripts/release-tags.ts", cache: false },
     },
   },
 });
