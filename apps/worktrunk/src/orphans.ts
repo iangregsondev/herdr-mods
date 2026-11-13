@@ -5,7 +5,8 @@
 import { Result } from "effect";
 import type { Machine, RepoKey } from "./machines.ts";
 import type { MachineLists, RepoList } from "./reads.ts";
-import { spacesInGone, type PaneLike, type SpaceLike } from "./spaces.ts";
+import { isUnder } from "./repos.ts";
+import { spacePlaces, spacesInGone, type PaneLike, type SpaceLike } from "./spaces.ts";
 
 /** What the panel remembers about worktree paths dropped from their repo's list. */
 export interface Orphans {
@@ -13,9 +14,11 @@ export interface Orphans {
   readonly waiting: ReadonlyMap<Machine, readonly string[]>;
   /** The folders the panel's own jobs removed on each machine, left out of dropped paths. */
   readonly removed: ReadonlyMap<Machine, readonly string[]>;
+  /** The spaces already offered for closing by a toast: never offered again. */
+  readonly asked: ReadonlySet<string>;
 }
 
-export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map() };
+export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map(), asked: new Set() };
 
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 export const waitingOn = (orphans: Orphans, machine: Machine): readonly string[] =>
@@ -146,4 +149,54 @@ export const orphanSpaces = (
   return spaces
     .filter((space) => ids.has(space.id))
     .map((space) => ({ space: space.id, step: closeOrAsk(space, panes) }));
+};
+
+/** The parts of a `SpaceInfo` the ask toast reads. */
+export interface NamedSpace extends SpaceLike {
+  readonly name: string;
+}
+
+/** A toast offering to close an orphan space, shaped for `notify`. */
+export interface AskToast {
+  readonly title: string;
+  readonly body: string;
+  readonly level: "warning";
+  readonly action: {
+    readonly name: "space.close";
+    readonly args: { readonly id: string; readonly confirmed: false };
+  };
+}
+
+/**
+ * The toasts for the orphan spaces on `machine` (as `orphanSpaces` finds them) where
+ * something other than a shell runs and no toast has asked before: each names the space
+ * and the gone folder it is on, and clicking it closes the space after Herdr's own
+ * confirm. The spaces asked about are remembered, so a later check never asks again.
+ */
+export const askToasts = (
+  orphans: Orphans,
+  spaces: readonly NamedSpace[],
+  panes: readonly ProgramPane[],
+  machine: Machine,
+  gone: readonly string[],
+): { readonly orphans: Orphans; readonly toasts: readonly AskToast[] } => {
+  const asks = new Set(
+    orphanSpaces(spaces, panes, machine, gone)
+      .filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space))
+      .map((orphan) => orphan.space),
+  );
+  const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+  const goneUnder = (path: string) => gone.find((folder) => isUnder(path, folder));
+  const toasts = spaces
+    .filter((space) => asks.has(space.id))
+    .map((space): AskToast => {
+      const folder = goneUnder(space.folder) ?? goneUnder(places.get(space.id) ?? "") ?? "";
+      return {
+        title: "Space on a removed worktree",
+        body: `${space.name} is on ${folder}, which is gone. Something is still running in it. Click to close it.`,
+        level: "warning",
+        action: { name: "space.close", args: { id: space.id, confirmed: false } },
+      };
+    });
+  return { orphans: { ...orphans, asked: new Set([...orphans.asked, ...asks]) }, toasts };
 };
