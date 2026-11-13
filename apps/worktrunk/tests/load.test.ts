@@ -670,6 +670,39 @@ describe("findRepos with a machine down", () => {
     }),
   );
 
+  it.effect("a machine whose exec slots are all taken keeps its last search and isn't down", () =>
+    Effect.gen(function* () {
+      const api: ExecApi = {
+        hc: noHc,
+        exec: (_command, args = [], options) => {
+          if (options?.on === "linux") {
+            return Promise.reject(new Error("`herdr.exec`: 16 execs are running already"));
+          }
+          const body = args[1] ?? "";
+          const stdout = body.includes("walk()")
+            ? "/w\t/w/zed\t1\n"
+            : body.includes("git-common-dir")
+              ? ""
+              : "/h";
+          return Promise.resolve({ code: 0, stdout, stderr: "" });
+        },
+      };
+      const last = searched("linux", "/home/l", {
+        repos: [{ machine: "linux", root: "/srv/api", count: 2 }],
+        missing: [],
+      });
+      // An open space on linux makes its search run there, so the refusal is met.
+      const places = [{ machine: "linux", folder: "/srv/api" }];
+      const found = yield* findRepos(settings, "/h", places, Option.some(last)).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual<unknown>(
+        Result.map(found, (f) => [f.repos.map((repo) => repo.root), f.statuses]),
+        Result.succeed([["/srv/api", "/w/zed"], new Map()]),
+      );
+    }),
+  );
+
   it.effect(
     "a machine still connecting runs nothing and is connecting; this machine is searched",
     () =>
@@ -1376,6 +1409,28 @@ describe("readLists", () => {
           ["linux", Result.fail({ _tag: "Down", reason: "ssh: connect to host linux: timed out" })],
         ]);
       }),
+  );
+
+  it.effect("a machine whose exec slots are all taken reads no lists and isn't down", () =>
+    Effect.gen(function* () {
+      const api: ExecApi = {
+        hc: noHc,
+        exec: (_command, args = [], options) =>
+          options?.on === "linux"
+            ? Promise.reject(new Error("`herdr.exec`: 16 execs are running already"))
+            : Promise.resolve({ code: 0, stdout: `\u001e0\t${args[3]}\n[]`, stderr: "" }),
+      };
+      const kept: unknown[] = [];
+      yield* readLists(
+        [here("/a"), { machine: "linux", root: "/srv/c" }],
+        new Map(),
+        (machine, answer) => kept.push([machine, answer]),
+      ).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(kept, [
+        [THIS_MACHINE, Result.succeed(new Map([["/a", Result.succeed([])]]))],
+        ["linux", Result.succeed(new Map())],
+      ]);
+    }),
   );
 
   it.effect("a machine whose read dies, a bug, is kept as down with the defect", () =>

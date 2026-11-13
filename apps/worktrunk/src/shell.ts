@@ -264,6 +264,13 @@ export const failureText = (error: ShellError | CommandFailed | ListUnreadable):
   }
 };
 
+/**
+ * The machine's Herdr refused to start the run because all its exec slots are taken. The
+ * machine is up and busy, and a later run gets a slot once one frees.
+ */
+export const slotsFull = (error: ShellError | CommandFailed | ListUnreadable): boolean =>
+  error._tag === "ShellError" && causeText(error.cause).includes("execs are running already");
+
 /** A rejection's reason as text. */
 export const causeText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);

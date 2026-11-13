@@ -11312,6 +11312,11 @@ const failureText = (error) => {
 		case "ListUnreadable": return error.message;
 	}
 };
+/**
+* The machine's Herdr refused to start the run because all its exec slots are taken. The
+* machine is up and busy, and a later run gets a slot once one frees.
+*/
+const slotsFull = (error) => error._tag === "ShellError" && causeText(error.cause).includes("execs are running already");
 /** A rejection's reason as text. */
 const causeText = (cause) => cause instanceof Error ? cause.message : String(cause);
 /**
@@ -11485,7 +11490,7 @@ const searchMachine = (ask, machine) => {
 	if (isSome(held)) return succeed(fail$2(held.value));
 	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
 	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
-	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(fail$2({
+	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
 	}))), catchDefect((defect) => succeed(fail$2({
@@ -11636,7 +11641,7 @@ const readLists = (repos, skip, keep) => {
 const machineLists = (machine, roots) => wtLists(machine, roots).pipe(map((lists) => succeed$3(new Map(Array.from(lists, ([root, list]) => [repoKey({
 	machine,
 	root
-}), list])))), catch_((failed) => succeed(fail$2({
+}), list])))), catch_((failed) => succeed(slotsFull(failed) ? succeed$3(/* @__PURE__ */ new Map()) : fail$2({
 	_tag: "Down",
 	reason: failureText(failed)
 }))), catchDefect((defect) => succeed(fail$2({
