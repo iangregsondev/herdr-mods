@@ -60,6 +60,15 @@ export class Git extends Context.Service<
       repo: string,
       base: string,
     ) => Effect.Effect<ReadonlyArray<string>, GitError>;
+    /**
+     * The files HEAD's branch added since it left `base` (`base...HEAD`), paths relative
+     * to the repo root. A file the base already held is left out, even if the branch
+     * changed it; a rename's new path counts as added.
+     */
+    readonly addedFiles: (
+      repo: string,
+      base: string,
+    ) => Effect.Effect<ReadonlyArray<string>, GitError>;
     /** The names of the tags on the `origin` remote. Tags only in the local repo are left out. */
     readonly originTags: (repo: string) => Effect.Effect<ReadonlyArray<string>, GitError>;
   }
@@ -70,6 +79,16 @@ export class Git extends Context.Service<
       runGit(repo, ["diff", "--name-only", "--no-renames", "-z", `${base}...HEAD`]).pipe(
         Effect.map(nulList),
       ),
+    // `--no-renames` reports a rename as a delete and an add, so its new path is listed.
+    addedFiles: (repo, base) =>
+      runGit(repo, [
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=A",
+        "-z",
+        `${base}...HEAD`,
+      ]).pipe(Effect.map(nulList)),
     // `--refs` drops the peeled `^{}` lines annotated tags add.
     originTags: (repo) =>
       runGit(repo, ["ls-remote", "--tags", "--refs", "origin"]).pipe(Effect.map(tagNames)),
