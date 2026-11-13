@@ -2,10 +2,13 @@
 // person may edit by hand. Pure: no `herdr` or `gpui` imports.
 //
 // { "folders": [{ "name": "Work", "path": "~/code/work" }], "depth": 4, "skip": [...],
-//   "hidden": ["/code/work/old-repo"], "noWrapper": false }
-// Each folder is scanned for repos and names a group.
+//   "hidden": ["/code/work/old-repo", { "machine": "linux", "path": "/srv/old" }],
+//   "noWrapper": false }
+// Each folder is scanned for repos and names a group. A hidden repo written as a bare
+// folder is on this machine.
 import { Option, Predicate, Result } from "effect";
 import { finite, parseJson } from "worktrunk-mailbox";
+import { repoKey, THIS_MACHINE, type RepoId } from "./machines.ts";
 
 export interface GroupFolder {
   /** The group's name, such as "Work". */
@@ -20,8 +23,8 @@ export interface Settings {
   readonly depth: number;
   /** Folder names the scan never enters. */
   readonly skip: readonly string[];
-  /** Repos (main checkout folders) the panel leaves out. */
-  readonly hidden: readonly string[];
+  /** Repos the panel leaves out, by machine and main checkout folder. */
+  readonly hidden: readonly RepoId[];
   /** Merge and remove call the wt program itself, skipping a shell function named `wt`. */
   readonly noWrapper: boolean;
 }
@@ -45,12 +48,15 @@ interface FolderEntry {
   readonly path: string;
 }
 
+/** A hidden repo as written: a folder on this machine, or a folder on a named machine. */
+type HiddenEntry = string | { readonly machine: string; readonly path: string };
+
 /** The file as written, before defaults and clean-up. */
 interface SettingsFile {
   readonly folders?: readonly FolderEntry[];
   readonly depth?: number;
   readonly skip?: readonly string[];
-  readonly hidden?: readonly string[];
+  readonly hidden?: readonly HiddenEntry[];
   readonly noWrapper?: boolean;
 }
 
@@ -58,6 +64,12 @@ const isFolderEntry = (value: unknown): value is FolderEntry =>
   Predicate.isObject(value) &&
   Predicate.isString(value.path) &&
   (value.name === undefined || Predicate.isString(value.name));
+
+const isHiddenEntry = (value: unknown): value is HiddenEntry =>
+  Predicate.isString(value) ||
+  (Predicate.isObject(value) &&
+    Predicate.isString(value.machine) &&
+    Predicate.isString(value.path));
 
 const listOf = <A>(value: unknown, item: (v: unknown) => v is A): value is readonly A[] =>
   Array.isArray(value) && value.every(item);
@@ -75,7 +87,7 @@ const readSettingsFile = (value: unknown): Result.Result<SettingsFile, string> =
   if (skip !== undefined && !listOf(skip, Predicate.isString)) {
     return Result.fail('"skip" must be a list of folder names');
   }
-  if (hidden !== undefined && !listOf(hidden, Predicate.isString)) {
+  if (hidden !== undefined && !listOf(hidden, isHiddenEntry)) {
     return Result.fail('"hidden" must be a list of repo folders');
   }
   if (noWrapper !== undefined && !Predicate.isBoolean(noWrapper)) {
@@ -121,7 +133,13 @@ const normalize = (file: SettingsFile): Settings => ({
     file.skip === undefined
       ? DEFAULT_SETTINGS.skip
       : file.skip.map((name) => name.trim()).filter((name) => name !== ""),
-  hidden: (file.hidden ?? DEFAULT_SETTINGS.hidden).filter((root) => root !== ""),
+  hidden: (file.hidden ?? [])
+    .map((entry): RepoId =>
+      Predicate.isString(entry)
+        ? { machine: THIS_MACHINE, root: entry }
+        : { machine: entry.machine, root: entry.path },
+    )
+    .filter((repo) => repo.root !== ""),
   noWrapper: file.noWrapper ?? DEFAULT_SETTINGS.noWrapper,
 });
 
@@ -155,7 +173,9 @@ export const serializeSettings = ({
     folders: folders.map(({ name, path }) => ({ name, path })),
     depth,
     skip,
-    hidden,
+    hidden: hidden.map(({ machine, root }): HiddenEntry =>
+      machine === null ? root : { machine, path: root },
+    ),
     noWrapper,
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -191,20 +211,22 @@ export const planImport = (
 };
 
 /**
- * The settings file's text with the repo at `root` hidden, from its text now (null when
+ * The settings file's text with `repo` (by machine and folder) hidden, from its text now (null when
  * there is none). A file that doesn't parse is never replaced: the result is its error
  * instead, so a hand edit in progress is never lost to the defaults. A repo already
  * hidden leaves the text as it is.
  */
 export const hideRepo = (
   current: string | null,
-  root: string,
+  repo: RepoId,
   fileName: string,
 ): Result.Result<string, string> => {
   const { settings, error } = parseSettings(current, fileName);
   if (Option.isSome(error)) return Result.fail(error.value);
-  if (current !== null && settings.hidden.includes(root)) return Result.succeed(current);
-  return Result.succeed(serializeSettings({ ...settings, hidden: [...settings.hidden, root] }));
+  if (current !== null && settings.hidden.some((hidden) => repoKey(hidden) === repoKey(repo))) {
+    return Result.succeed(current);
+  }
+  return Result.succeed(serializeSettings({ ...settings, hidden: [...settings.hidden, repo] }));
 };
 
 /** What a save from the Settings dialog does. */
@@ -238,10 +260,10 @@ export const planSave = (
   return { _tag: "Write", text, expected: opened };
 };
 
-/** The settings with `root` no longer hidden. */
-export const unhide = (settings: Settings, root: string): Settings => ({
+/** The settings with `repo` (by machine and folder) no longer hidden. */
+export const unhide = (settings: Settings, repo: RepoId): Settings => ({
   ...settings,
-  hidden: settings.hidden.filter((hidden) => hidden !== root),
+  hidden: settings.hidden.filter((hidden) => repoKey(hidden) !== repoKey(repo)),
 });
 
 /**

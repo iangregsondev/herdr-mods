@@ -1,4 +1,5 @@
 import { Option } from "effect";
+import { THIS_MACHINE } from "../src/machines.ts";
 import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_VIEW_STATE } from "../src/view.ts";
 import { confirmFor, repoMenu, rowMenu } from "../src/menus.ts";
@@ -125,6 +126,13 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test.each([
+    { _tag: "Hide", machine: null, root: "/r/app" },
+    { _tag: "Hide", machine: "linux", root: "/r/app" },
+  ] as const)("reads back a Hide of the repo on machine $machine", (action) => {
+    expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
   test.each(SPACE_ACTS)(
     "reads back a SpaceWorktree asking to %s, as a space's menu posts it",
     (act) => {
@@ -165,7 +173,7 @@ describe("readAction", () => {
     expect(readAction(value)).toEqual(Option.none());
   });
 
-  test.each(actionsOf(repoMenu("/r/app", [MAIN, FEAT, DONE])))(
+  test.each(actionsOf(repoMenu({ machine: THIS_MACHINE, root: "/r/app" }, [MAIN, FEAT, DONE])))(
     "reads back the repo menu's $_tag action as it was sent",
     (action) => {
       expect(readAction(overTheWire(action))).toEqual(Option.some(action));
@@ -274,7 +282,7 @@ describe("readSettingsText", () => {
 });
 
 describe("overlay props writers", () => {
-  const items = repoMenu("/r/app", [MAIN, DONE]);
+  const items = repoMenu({ machine: THIS_MACHINE, root: "/r/app" }, [MAIN, DONE]);
   const remove = Option.getOrThrow(Option.fromNullishOr(items[1]?.action));
 
   test("each names its overlay's role, and its reader reads back what it wrote", () => {

@@ -1,6 +1,7 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
+import { repoKey } from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
@@ -47,7 +48,7 @@ export interface Snapshot {
   /** The first folder scan has finished. */
   readonly discovered: boolean;
   readonly loading: boolean;
-  /** Each repo's list by its root; a repo missing here hasn't been read yet. */
+  /** Each repo's list by its `repoKey`; a repo missing here hasn't been read yet. */
   readonly lists: ReadonlyMap<string, RepoList>;
   readonly settings: Settings;
   readonly settingsError: Option.Option<string>;
@@ -57,9 +58,9 @@ export interface Snapshot {
   readonly settingsFile: string;
   readonly spaces: readonly SpaceLike[];
   readonly panes: readonly PaneLike[];
-  /** Folded repos (by root) and groups (by `<root>|<kind>`). */
+  /** Folded repos (by `repoKey`) and groups (by `<repoKey>|<kind>`). */
   readonly folded: Readonly<Record<string, boolean>>;
-  /** Each repo's CI by its root; CI is read less often than the list. */
+  /** Each repo's CI by its `repoKey`; CI is read less often than the list. */
   readonly ci: ReadonlyMap<string, CiRead>;
   readonly view: ViewState;
   /** The search box's text. */
@@ -108,7 +109,7 @@ export interface RowView {
 export type SectionKind = "merged" | "active" | "conflict";
 
 export interface SectionView {
-  /** `<root>|<kind>`: unique, and its fold key. */
+  /** `<repoKey>|<kind>`: unique, and its fold key. */
   readonly key: string;
   readonly kind: SectionKind;
   readonly label: string;
@@ -124,7 +125,7 @@ export type RepoStatus =
   | { readonly _tag: "Error"; readonly text: string };
 
 export interface RepoView {
-  /** The repo's root: unique, and its fold key. */
+  /** The repo's `repoKey`: unique, and its fold key. */
   readonly key: string;
   readonly name: string;
   /** Its group, none for Other. */
@@ -282,7 +283,7 @@ const badgeOf = (ci: Ci): Option.Option<CiBadge> => {
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
 const ciOf = (snapshot: Snapshot, repo: Repo, worktree: Worktree): Ci =>
   Option.getOrElse(
-    Option.fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)),
+    Option.fromNullishOr(snapshot.ci.get(repoKey(repo))?.byPath.get(worktree.path)),
     () => worktree.ci,
   );
 
@@ -329,7 +330,7 @@ const statusOf = (list: Option.Option<RepoList>): RepoStatus =>
   });
 
 const listOf = (snapshot: Snapshot, repo: Repo): Option.Option<RepoList> =>
-  Option.fromNullishOr(snapshot.lists.get(repo.root));
+  Option.fromNullishOr(snapshot.lists.get(repoKey(repo)));
 
 /** How many worktrees: wt list's answer once read, else the scan's. */
 const countOf = (repo: Repo, list: Option.Option<RepoList>): number =>
@@ -371,7 +372,8 @@ const repoView = (
   const worktrees = all.filter((w) => matches(query, repo, w));
   // A search shows every match, so it opens whatever is folded.
   const searching = Option.isSome(query);
-  const folded = foldable && !searching && snapshot.folded[repo.root] === true;
+  const key = repoKey(repo);
+  const folded = foldable && !searching && snapshot.folded[key] === true;
   // Every worktree, matching or not, so a space never moves to a shorter path.
   const on = spacesOnWorktrees(
     places,
@@ -382,13 +384,13 @@ const repoView = (
   const inSection = (kind: SectionKind) =>
     worktrees.filter((w) => Option.contains(kindOf(w), kind)).sort(newestFirst);
   return {
-    key: repo.root,
+    key,
     name: lastSegment(repo.root),
     group: repo.group === OTHER ? Option.none() : Option.some(repo.group),
     count: Option.map(list, () => countOf(repo, list)),
     status: statusOf(list),
     ciNote: Option.map(
-      Option.flatMap(Option.fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error),
+      Option.flatMap(Option.fromNullishOr(snapshot.ci.get(key)), (ci) => ci.error),
       (error) => `CI status not updated: ${error}`,
     ),
     folded,
@@ -398,13 +400,13 @@ const repoView = (
       ? []
       : SECTIONS.flatMap(([kind, label]) => {
           const rows = inSection(kind);
-          const key = `${repo.root}|${kind}`;
-          const sectionFolded = !searching && snapshot.folded[key] === true;
+          const sectionKey = `${key}|${kind}`;
+          const sectionFolded = !searching && snapshot.folded[sectionKey] === true;
           return rows.length === 0
             ? []
             : [
                 {
-                  key,
+                  key: sectionKey,
                   kind,
                   label,
                   count: rows.length,
@@ -542,11 +544,11 @@ const flatBody = (
       .map((worktree) => ({ repo, worktree, space: Option.fromNullishOr(on.get(worktree.path)) }));
   });
   if (found.length === 0) {
-    const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
+    const unread = repos.some((repo) => !snapshot.lists.has(repoKey(repo)));
     const empty = Option.match(query, { onSome: noMatch, onNone: () => FLAT_EMPTY[show] });
     return { _tag: "Message", text: unread ? "Reading…" : empty };
   }
-  const repoCount = new Set(found.map(({ repo }) => repo.root)).size;
+  const repoCount = new Set(found.map(({ repo }) => repoKey(repo))).size;
   return {
     _tag: "Flat",
     summary:

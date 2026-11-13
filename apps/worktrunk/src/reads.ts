@@ -1,6 +1,7 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
+import { repoKey } from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -171,8 +172,8 @@ export type CurrentRepo =
   | { readonly _tag: "Failed"; readonly reason: string };
 
 /**
- * The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
- * hidden one, say), grouped by the group folders.
+ * The Current repo from its lookup: the listed repo (same machine and folder), or one the
+ * panel doesn't list (a hidden one, say), grouped by the group folders.
  */
 export const currentRepoOf = (
   found: CurrentLookup,
@@ -188,7 +189,7 @@ export const currentRepoOf = (
         onNone: (): CurrentRepo => ({ _tag: "NotInRepo" }),
         onSome: (repo): CurrentRepo => ({
           _tag: "InRepo",
-          repo: repos.find((listed) => listed.root === repo.root) ?? {
+          repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
             ...repo,
             group: groupOf(repo.root, folders, home),
           },
@@ -236,14 +237,14 @@ export const takeLookup = (
         follow: { ...follow, found: Option.some(answer) },
         refresh: Option.match(follow.found, {
           onNone: () => true,
-          onSome: (before) => rootOf(before) !== rootOf(answer),
+          onSome: (before) => keyOf(before) !== keyOf(answer),
         }),
       }
     : { follow, refresh: false };
 
-/** The repo root an answer names; undefined for none or a failed lookup. */
-const rootOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>
+/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
+const keyOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>
   Result.match(answer, {
     onFailure: () => undefined,
-    onSuccess: (found) => Option.getOrUndefined(found)?.root,
+    onSuccess: (found) => Option.getOrUndefined(Option.map(found, repoKey)),
   });

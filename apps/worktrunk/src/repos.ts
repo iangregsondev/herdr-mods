@@ -2,6 +2,7 @@
 // imports. The folder scan and the open spaces' repos are found by shell scripts; this
 // module reads their output.
 import { Option } from "effect";
+import { repoKey, type Machine, type RepoId } from "./machines.ts";
 import { expandHome, lastSegment, type GroupFolder } from "./settings.ts";
 
 export { expandHome };
@@ -30,9 +31,8 @@ export const groupOf = (root: string, folders: readonly GroupFolder[], home: str
       Option.getOrElse(() => OTHER),
     );
 
-export interface FoundRepo {
-  /** The main checkout's folder. */
-  readonly root: string;
+/** A repo found on a machine; `root` is its main checkout's folder there. */
+export interface FoundRepo extends RepoId {
   /** How many worktrees it has, the main checkout included. */
   readonly count: number;
 }
@@ -42,31 +42,37 @@ const count = (text: string | undefined): number => {
   return Number.isInteger(n) && n > 0 ? n : 1;
 };
 
-/** The folder scan's output: one `group folder<TAB>repo<TAB>count` line per repo. */
-export const parseScan = (stdout: string): readonly FoundRepo[] =>
+/**
+ * The folder scan's output, from the scan run on `machine`: one
+ * `group folder<TAB>repo<TAB>count` line per repo.
+ */
+export const parseScan = (stdout: string, machine: Machine): readonly FoundRepo[] =>
   stdout.split("\n").flatMap((line) => {
     const [, root, n] = line.split("\t");
-    return root ? [{ root, count: count(n) }] : [];
+    return root ? [{ machine, root, count: count(n) }] : [];
   });
 
-/** The open spaces' repos: one `repo<TAB>count` line per repo. */
-export const parseOwners = (stdout: string): readonly FoundRepo[] =>
+/** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
+export const parseOwners = (stdout: string, machine: Machine): readonly FoundRepo[] =>
   stdout.split("\n").flatMap((line) => {
     const [root, n] = line.split("\t");
-    return root && line.includes("\t") ? [{ root, count: count(n) }] : [];
+    return root && line.includes("\t") ? [{ machine, root, count: count(n) }] : [];
   });
 
-/** The Current repo: the repo the owners script names for the focused folder, if any. */
-export const currentRepo = (stdout: string): Option.Option<FoundRepo> =>
-  Option.fromNullishOr(parseOwners(stdout)[0]);
+/**
+ * The Current repo: the repo the owners script, run on `machine`, names for the focused
+ * folder, if any.
+ */
+export const currentRepo = (stdout: string, machine: Machine): Option.Option<FoundRepo> =>
+  Option.fromNullishOr(parseOwners(stdout, machine)[0]);
 
 export interface Repo extends FoundRepo {
   readonly group: string;
 }
 
 /**
- * Every repo once, scanned or from an open space, with its group, by folder name.
- * An open space's count is fresher than the scan's, so it wins.
+ * Every repo once (by machine and folder), scanned or from an open space, with its group,
+ * by folder name. An open space's count is fresher than the scan's, so it wins.
  */
 export const reposFrom = (
   scanned: readonly FoundRepo[],
@@ -74,12 +80,20 @@ export const reposFrom = (
   folders: readonly GroupFolder[],
   home: string,
 ): readonly Repo[] =>
-  Array.from(new Map([...scanned, ...owners].map((repo) => [repo.root, repo.count])))
-    .map(([root, n]) => ({ root, count: n, group: groupOf(root, folders, home) }))
+  Array.from(new Map([...scanned, ...owners].map((repo) => [repoKey(repo), repo])).values())
+    .map(({ machine, root, count: n }) => ({
+      machine,
+      root,
+      count: n,
+      group: groupOf(root, folders, home),
+    }))
     .sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
 
-/** `repos` without the hidden ones (by main checkout folder), in their order. */
+/** `repos` without the hidden ones (by machine and main checkout folder), in their order. */
 export const withoutHidden = <R extends FoundRepo>(
   repos: readonly R[],
-  hidden: readonly string[],
-): readonly R[] => repos.filter((repo) => !hidden.includes(repo.root));
+  hidden: readonly RepoId[],
+): readonly R[] => {
+  const keys = new Set(hidden.map(repoKey));
+  return repos.filter((repo) => !keys.has(repoKey(repo)));
+};

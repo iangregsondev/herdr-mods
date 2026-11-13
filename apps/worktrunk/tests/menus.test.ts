@@ -14,6 +14,7 @@ import {
   spaceWorktreeAction,
 } from "../src/menus.ts";
 import { mergeScript, removeScript, cleanupScript } from "../src/commands.ts";
+import { repoKey, THIS_MACHINE } from "../src/machines.ts";
 import type { RepoList } from "../src/reads.ts";
 import type { Click } from "../src/view.ts";
 import type { Worktree, WorktreeState } from "../src/worktrees.ts";
@@ -148,11 +149,13 @@ describe("cleanupAction", () => {
   });
 });
 
+const APP = { machine: THIS_MACHINE, root: "/r/app" };
+
 describe("repoMenu", () => {
   const worktrees = [wt("/r/app", "main", MAIN), wt("/r/app.a", "a", MERGED), FEAT];
 
   test("new or open worktree, clean up with the merged count, refresh, reveal, hide", () => {
-    expect(labels(repoMenu("/r/app", worktrees))).toEqual([
+    expect(labels(repoMenu(APP, worktrees))).toEqual([
       "New or open worktree…",
       "Clean up 1 merged…",
       "Refresh",
@@ -162,12 +165,12 @@ describe("repoMenu", () => {
   });
 
   test("no clean up item when nothing is merged", () => {
-    expect(labels(repoMenu("/r/app", [FEAT]))).not.toContain("Clean up 0 merged…");
-    expect(repoMenu("/r/app", [FEAT])).toHaveLength(4);
+    expect(labels(repoMenu(APP, [FEAT]))).not.toContain("Clean up 0 merged…");
+    expect(repoMenu(APP, [FEAT])).toHaveLength(4);
   });
 
   test("its items act on this repo; only Clean up is destructive", () => {
-    const items = repoMenu("/r/app", worktrees);
+    const items = repoMenu(APP, worktrees);
     expect(items.map((i) => [i.action._tag, i.danger])).toEqual([
       ["NewOrOpen", false],
       ["Cleanup", true],
@@ -178,8 +181,19 @@ describe("repoMenu", () => {
     expect([items[0]?.action, items[3]?.action, items[4]?.action]).toEqual([
       { _tag: "NewOrOpen", folder: "/r/app" },
       { _tag: "Reveal", path: "/r/app" },
-      { _tag: "Hide", root: "/r/app" },
+      { _tag: "Hide", machine: THIS_MACHINE, root: "/r/app" },
     ]);
+  });
+});
+
+describe("repoMenu on another machine", () => {
+  test("hides the repo on its own machine", () => {
+    const items = repoMenu({ machine: "linux", root: "/r/app" }, [FEAT]);
+    expect(items.find((i) => i.action._tag === "Hide")?.action).toEqual({
+      _tag: "Hide",
+      machine: "linux",
+      root: "/r/app",
+    });
   });
 });
 
@@ -194,9 +208,18 @@ describe("findWorktree", () => {
     ["/r/lib", list([wt("/r/lib", "main", MAIN), wt("/r/lib.y", "y", MERGED)])],
   ]);
 
-  test("the worktree at a path, with its repo's main checkout", () => {
+  test("the worktree at a path, with its repo's machine and main checkout", () => {
     expect(findWorktree(lists, "/r/lib.y")).toEqual(
-      Option.some({ root: "/r/lib", worktree: wt("/r/lib.y", "y", MERGED) }),
+      Option.some({ machine: THIS_MACHINE, root: "/r/lib", worktree: wt("/r/lib.y", "y", MERGED) }),
+    );
+  });
+
+  test("a list kept for another machine names that machine and the bare folder", () => {
+    const linux = new Map([
+      [repoKey({ machine: "linux", root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
+    ]);
+    expect(findWorktree(linux, "/r/lib.y")).toEqual(
+      Option.some({ machine: "linux", root: "/r/lib", worktree: wt("/r/lib.y", "y", MERGED) }),
     );
   });
 
@@ -216,6 +239,20 @@ describe("findWorktree", () => {
         paths: ["/r/web.z", "/r/lib.y"],
         dirty: 0,
       }),
+    );
+  });
+
+  test("cleanupFor batches the same folder on two machines apart", () => {
+    const two = new Map([
+      [repoKey({ machine: THIS_MACHINE, root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
+      [repoKey({ machine: "linux", root: "/r/lib" }), list([wt("/r/lib.z", "z", MERGED)])],
+    ]);
+    const batches = Option.map(cleanupFor(two, ["/r/lib.y", "/r/lib.z"]), (a) => a.batches);
+    expect(batches).toEqual(
+      Option.some([
+        { main: "/r/lib", branches: ["y"] },
+        { main: "/r/lib", branches: ["z"] },
+      ]),
     );
   });
 
@@ -329,7 +366,7 @@ describe("confirmFor", () => {
     { _tag: "CopyPath", path: "/r/app" },
     { _tag: "Reveal", path: "/r/app" },
     { _tag: "Refresh" },
-    { _tag: "Hide", root: "/r/app" },
+    { _tag: "Hide", machine: THIS_MACHINE, root: "/r/app" },
   ] as const)("$_tag changes nothing, so it doesn't ask", (action) => {
     expect(confirmFor(action)).toEqual(Option.none());
   });
@@ -404,7 +441,7 @@ describe("jobFor", () => {
     { _tag: "CopyPath", path: "/r/app" },
     { _tag: "Reveal", path: "/r/app" },
     { _tag: "Refresh" },
-    { _tag: "Hide", root: "/r/app" },
+    { _tag: "Hide", machine: THIS_MACHINE, root: "/r/app" },
   ] as const)("$_tag isn't a job", (action) => {
     expect(jobFor(action, WRAPPED)).toEqual(Option.none());
   });

@@ -21,6 +21,7 @@ import {
   removeScript,
   shArgs,
 } from "../apps/worktrunk/src/commands.ts";
+import { THIS_MACHINE } from "../apps/worktrunk/src/machines.ts";
 import { currentRepo } from "../apps/worktrunk/src/repos.ts";
 import {
   fakeBin,
@@ -153,16 +154,23 @@ describe("OWNERS_SCRIPT", () => {
 describe("the Current repo's lookup: currentRepo over OWNERS_SCRIPT", () => {
   /** The Current repo of `folder`, as the panel looks it up: the script, then its reading. */
   const lookUp = (folder: string) =>
-    currentRepo(runSh(scriptFile(OWNERS_SCRIPT), { args: [folder], env: isolatedGitEnv() }).stdout);
+    currentRepo(
+      runSh(scriptFile(OWNERS_SCRIPT), { args: [folder], env: isolatedGitEnv() }).stdout,
+      THIS_MACHINE,
+    );
 
   test("a folder in the main checkout belongs to that repo", () => {
     const { repo } = repoWithWorktree();
-    expect(lookUp(join(repo, "src"))).toEqual(Option.some({ root: repo, count: 2 }));
+    expect(lookUp(join(repo, "src"))).toEqual(
+      Option.some({ machine: THIS_MACHINE, root: repo, count: 2 }),
+    );
   });
 
   test("a linked worktree belongs to its repo, through the shared git folder", () => {
     const { root, repo } = repoWithWorktree();
-    expect(lookUp(join(root, "api.feature"))).toEqual(Option.some({ root: repo, count: 2 }));
+    expect(lookUp(join(root, "api.feature"))).toEqual(
+      Option.some({ machine: THIS_MACHINE, root: repo, count: 2 }),
+    );
   });
 
   test("a folder outside every repo has none", () => {

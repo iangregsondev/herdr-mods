@@ -119,6 +119,7 @@ import {
   type RefreshAsk,
   type RepoList,
 } from "./reads.ts";
+import { repoKey, repoOfKey, type RepoId } from "./machines.ts";
 import type { FoundRepo, Repo } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
@@ -300,15 +301,23 @@ const defectAsFailure = <A>(
     ),
   );
 
-/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
+/**
+ * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
+ * under the repo's `repoKey`.
+ */
 const readAll = (
-  roots: readonly string[],
+  repos: readonly RepoId[],
   limit: number,
   read: (root: string) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
-  keep: (root: string, answer: Result.Result<readonly Worktree[], string>) => void,
+  keep: (key: string, answer: Result.Result<readonly Worktree[], string>) => void,
 ): Promise<void> =>
   runEdge(
-    readEach(roots, limit, (root) => defectAsFailure(read(root)), keep),
+    readEach(
+      repos,
+      limit,
+      (repo) => defectAsFailure(read(repo.root)),
+      (repo, answer) => keep(repoKey(repo), answer),
+    ),
     () => undefined,
   );
 
@@ -770,7 +779,10 @@ export default class Worktrunk extends View {
         return this.refreshWithCi(cx, { scan: true });
       case "Hide":
         cx.spawn(async (cx) => {
-          const hid = await runEdge(hideInSettings(settingsFile(), action.root), Result.fail);
+          const hid = await runEdge(
+            hideInSettings(settingsFile(), { machine: action.machine, root: action.root }),
+            Result.fail,
+          );
           Result.match(hid, {
             onSuccess: () => undefined,
             onFailure: (body) =>
@@ -902,14 +914,14 @@ export default class Worktrunk extends View {
   }
 
   /** The repos the view shows: the only ones worth reading. */
-  reposToRead(): readonly string[] {
+  reposToRead(): readonly RepoId[] {
     return reposToRead({
       repos: this.repos,
       discovered: this.discovered,
       settings: this.settings,
       view: viewState(),
       current: this.currentRepo(),
-    }).map((repo) => repo.root);
+    });
   }
 
   /** The Current repo, with its group; Looking while it is first being looked up. */
@@ -946,9 +958,9 @@ export default class Worktrunk extends View {
     this.checking = true;
     this.ciAt = Option.some(Date.now());
     cx.spawn(async (cx) => {
-      await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
-        const old = Option.fromNullishOr(this.ci.get(root));
-        this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+      await readAll(this.reposToRead(), CI_LIMIT, readCi, (key, read) => {
+        const old = Option.fromNullishOr(this.ci.get(key));
+        this.ci = new Map([...this.ci, [key, foldCi(old, read)]]);
         cx.notify();
       });
       this.checking = false;
@@ -1019,9 +1031,9 @@ export default class Worktrunk extends View {
     this.discovered = true;
     cx.notify();
 
-    await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
-      const old = Option.fromNullishOr(this.lists.get(root));
-      this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
+    await readAll(this.reposToRead(), LIST_LIMIT, readList, (key, read) => {
+      const old = Option.fromNullishOr(this.lists.get(key));
+      this.lists = new Map([...this.lists, [key, foldList(old, read)]]);
       cx.notify();
     });
   }
@@ -1149,8 +1161,9 @@ export default class Worktrunk extends View {
       .children(this.renderFooter(style));
   }
 
-  worktreesOf(root: string): readonly Worktree[] {
-    return Option.match(Option.fromNullishOr(this.lists.get(root)), {
+  /** The worktrees of the repo kept under `key` (its `repoKey`). */
+  worktreesOf(key: string): readonly Worktree[] {
+    return Option.match(Option.fromNullishOr(this.lists.get(key)), {
       onNone: () => [],
       onSome: (list) => list.worktrees,
     });
@@ -1180,8 +1193,10 @@ export default class Worktrunk extends View {
     );
   }
 
-  openRepoMenu(root: string) {
-    openMenu(lastSegment(root), repoMenu(root, this.worktreesOf(root)));
+  /** The menu of the repo kept under `key` (its `repoKey`). */
+  openRepoMenu(key: string) {
+    const repo = repoOfKey(key);
+    openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
   }
 
   renderOverlay(style: Style, copy: OverlayCopy): Element {
@@ -1552,11 +1567,11 @@ export default class Worktrunk extends View {
           ),
         ),
     );
-    const hidden = settings.hidden.map((root, i) =>
+    const hidden = settings.hidden.map((repo, i) =>
       h_flex()
         .gap(8)
         .items_center()
-        .child(div().flex_none().font_medium().child(lastSegment(root)))
+        .child(div().flex_none().font_medium().child(lastSegment(repo.root)))
         .child(
           div()
             .flex_1()
@@ -1564,7 +1579,11 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(tildePath(root, home())),
+            .child(
+              repo.machine === null
+                ? tildePath(repo.root, home())
+                : `${repo.machine}: ${repo.root}`,
+            ),
         )
         .child(
           button(
@@ -1572,7 +1591,7 @@ export default class Worktrunk extends View {
             `unhide-${i}`,
             "Show again",
             "plain",
-            edit((s) => unhide(s, root)),
+            edit((s) => unhide(s, repo)),
           ),
         ),
     );
@@ -1982,7 +2001,9 @@ export default class Worktrunk extends View {
       .child(div().flex_1())
       .children(
         Option.toArray(
-          cleanupAction([{ root: repo.key, worktrees: this.worktreesOf(repo.key) }]),
+          cleanupAction([
+            { root: repoOfKey(repo.key).root, worktrees: this.worktreesOf(repo.key) },
+          ]),
         ).map((action) =>
           div()
             .id(`cleanup-${repo.key}`)

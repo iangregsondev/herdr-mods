@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { THIS_MACHINE } from "../src/machines.ts";
 import { Effect, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
@@ -25,6 +26,9 @@ import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
 import { DEFAULT_SETTINGS, parseSettings, serializeSettings } from "../src/settings.ts";
+
+/** A repo on this machine. */
+const here = (root: string) => ({ machine: THIS_MACHINE, root });
 
 /** The folder picker for fakes of tests that never open it. */
 const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
@@ -224,10 +228,10 @@ describe("findRepos", () => {
       assert.deepStrictEqual(
         found,
         Result.succeed({
-          scanned: [{ root: "/w/zed", count: 1 }],
+          scanned: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }],
           repos: [
-            { root: "/tmp/api", count: 2, group: "Other" },
-            { root: "/w/zed", count: 1, group: "Work" },
+            { machine: THIS_MACHINE, root: "/tmp/api", count: 2, group: "Other" },
+            { machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" },
           ],
         }),
       );
@@ -237,7 +241,7 @@ describe("findRepos", () => {
   it.effect("leaves out hidden repos, found by the scan or by an open space", () =>
     Effect.gen(function* () {
       const { api } = scripts({ scan: "/w\t/w/zed\t1\n/w\t/w/old\t1\n", owners: "/tmp/api\t2\n" });
-      const hiding = { ...settings, hidden: ["/w/old", "/tmp/api"] };
+      const hiding = { ...settings, hidden: [here("/w/old"), here("/tmp/api")] };
       const found = yield* findRepos(hiding, "/h", ["/tmp/api"], Option.none()).pipe(
         Effect.provide(Shell.layer(api)),
       );
@@ -251,13 +255,16 @@ describe("findRepos", () => {
   it.effect("with no scan due, keeps the last scan and runs only the open spaces' lookup", () =>
     Effect.gen(function* () {
       const { api, ran } = scripts({ scan: "/w\t/w/new\t1\n", owners: "" });
-      const last = [{ root: "/w/zed", count: 3 }];
+      const last = [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }];
       const found = yield* findRepos(settings, "/h", ["/tmp"], Option.some(last)).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
         found,
-        Result.succeed({ scanned: last, repos: [{ root: "/w/zed", count: 3, group: "Work" }] }),
+        Result.succeed({
+          scanned: last,
+          repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3, group: "Work" }],
+        }),
       );
       assert.deepStrictEqual(ran, ["owners"]);
     }),
@@ -266,15 +273,15 @@ describe("findRepos", () => {
   it.effect("lists the Current repo, though no open space is in it", () =>
     Effect.gen(function* () {
       const { api } = scripts({ scan: "/w\t/w/zed\t1\n", owners: "" });
-      const current = Option.some({ root: "/tmp/tool", count: 2 });
+      const current = Option.some({ machine: THIS_MACHINE, root: "/tmp/tool", count: 2 });
       const found = yield* findRepos(settings, "/h", [], Option.none(), current).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
         Result.map(found, (f) => f.repos),
         Result.succeed([
-          { root: "/tmp/tool", count: 2, group: "Other" },
-          { root: "/w/zed", count: 1, group: "Work" },
+          { machine: THIS_MACHINE, root: "/tmp/tool", count: 2, group: "Other" },
+          { machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" },
         ]),
       );
     }),
@@ -283,8 +290,8 @@ describe("findRepos", () => {
   it.effect("a hidden Current repo is left out of the list too", () =>
     Effect.gen(function* () {
       const { api } = scripts({ scan: "", owners: "" });
-      const hiding = { ...settings, hidden: ["/tmp/tool"] };
-      const current = Option.some({ root: "/tmp/tool", count: 2 });
+      const hiding = { ...settings, hidden: [here("/tmp/tool")] };
+      const current = Option.some({ machine: THIS_MACHINE, root: "/tmp/tool", count: 2 });
       const found = yield* findRepos(hiding, "/h", [], Option.none(), current).pipe(
         Effect.provide(Shell.layer(api)),
       );
@@ -311,7 +318,10 @@ describe("lookUpCurrent", () => {
     Effect.gen(function* () {
       const { api } = scripts({ owners: "/r/api\t2\n" });
       const found = yield* lookUpCurrent("/r/api.feat").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(found, Result.succeed(Option.some({ root: "/r/api", count: 2 })));
+      assert.deepStrictEqual(
+        found,
+        Result.succeed(Option.some({ machine: THIS_MACHINE, root: "/r/api", count: 2 })),
+      );
     }),
   );
 
@@ -661,13 +671,15 @@ describe("hideInSettings", () => {
   it.effect("adds the repo to the hidden list, over the file as it was read", () =>
     Effect.gen(function* () {
       const { api, writes } = disk({ [FILES.path]: WORK });
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       const hidden = serializeSettings({
         ...DEFAULT_SETTINGS,
         folders: [{ name: "Work", path: "~/w" }],
         depth: 2,
         skip: [],
-        hidden: ["/w/api"],
+        hidden: [here("/w/api")],
       });
       assert.deepStrictEqual(
         [hid, writes],
@@ -679,8 +691,10 @@ describe("hideInSettings", () => {
   it.effect("with no settings file yet, creates one hiding the repo", () =>
     Effect.gen(function* () {
       const { api, writes } = disk({});
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
-      const made = serializeSettings({ ...DEFAULT_SETTINGS, hidden: ["/w/api"] });
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
+      const made = serializeSettings({ ...DEFAULT_SETTINGS, hidden: [here("/w/api")] });
       assert.deepStrictEqual(
         [hid, writes],
         [Result.succeed(undefined), [[FILES.path, made, null]]],
@@ -690,9 +704,11 @@ describe("hideInSettings", () => {
 
   it.effect("a repo already hidden writes nothing", () =>
     Effect.gen(function* () {
-      const file = serializeSettings({ ...DEFAULT_SETTINGS, hidden: ["/w/api"] });
+      const file = serializeSettings({ ...DEFAULT_SETTINGS, hidden: [here("/w/api")] });
       const { api, writes } = disk({ [FILES.path]: file });
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       assert.deepStrictEqual([hid, writes], [Result.succeed(undefined), []]);
     }),
   );
@@ -700,7 +716,9 @@ describe("hideInSettings", () => {
   it.effect("a file that doesn't parse is left alone, and the answer says why", () =>
     Effect.gen(function* () {
       const { api, writes } = disk({ [FILES.path]: '{"depth": "4"}' });
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       assert.deepStrictEqual(
         [hid, writes],
         [Result.fail('iangregsondev-worktrunk.json: "depth" must be a number'), []],
@@ -720,7 +738,9 @@ describe("hideInSettings", () => {
         },
         pickFolder: noPicker,
       };
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       assert.deepStrictEqual(
         hid,
         Result.fail("iangregsondev-worktrunk.json changed while hiding the repo: try again."),
@@ -735,7 +755,9 @@ describe("hideInSettings", () => {
         writeTextFile: () => Promise.reject(new Error("disk full")),
         pickFolder: noPicker,
       };
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       assert.deepStrictEqual(
         hid,
         Result.fail("iangregsondev-worktrunk.json: couldn't save it (disk full)"),
@@ -754,7 +776,9 @@ describe("hideInSettings", () => {
         },
         pickFolder: noPicker,
       };
-      const hid = yield* hideInSettings(FILES, "/w/api").pipe(Effect.provide(Files.layer(api)));
+      const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
+        Effect.provide(Files.layer(api)),
+      );
       assert.deepStrictEqual(
         [hid, writes],
         [Result.fail("iangregsondev-worktrunk.json: couldn't read it (no access)"), []],

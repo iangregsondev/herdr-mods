@@ -9752,6 +9752,30 @@ const SPACE_ACTS = [
 	"Remove"
 ];
 
+// src/machines.ts
+/** This machine: the one the Herdr app runs on. */
+const THIS_MACHINE = null;
+/**
+* The key a repo is kept under (lists, CI, folded state): its folder on this machine, else
+* `<machine>:<folder>`. A folder is absolute, so no key from another machine starts with
+* `/` the way this machine's do.
+*/
+const repoKey = (repo) => repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`;
+/**
+* The repo a `repoKey` names. Herdr's machine names never hold `/` (its ids use
+* `<machine>/` as a prefix), so the first `/` starts the folder.
+*/
+const repoOfKey = (key) => {
+	const slash = key.indexOf("/");
+	return slash <= 0 ? {
+		machine: null,
+		root: key
+	} : {
+		machine: key.slice(0, slash - 1),
+		root: key.slice(slash)
+	};
+};
+
 // src/settings.ts
 const DEFAULT_SETTINGS = {
 	folders: [],
@@ -9761,6 +9785,7 @@ const DEFAULT_SETTINGS = {
 	noWrapper: false
 };
 const isFolderEntry = (value) => isObject(value) && isString(value.path) && (value.name === void 0 || isString(value.name));
+const isHiddenEntry = (value) => isString(value) || isObject(value) && isString(value.machine) && isString(value.path);
 const listOf$1 = (value, item) => Array.isArray(value) && value.every(item);
 /** The file's shape, or what is wrong with it. A wrong shape is never half read. */
 const readSettingsFile = (value) => {
@@ -9769,7 +9794,7 @@ const readSettingsFile = (value) => {
 	if (folders !== void 0 && !listOf$1(folders, isFolderEntry)) return fail$2("\"folders\" must be a list of { \"name\", \"path\" }");
 	if (depth !== void 0 && isNone(finite(depth))) return fail$2("\"depth\" must be a number");
 	if (skip !== void 0 && !listOf$1(skip, isString)) return fail$2("\"skip\" must be a list of folder names");
-	if (hidden !== void 0 && !listOf$1(hidden, isString)) return fail$2("\"hidden\" must be a list of repo folders");
+	if (hidden !== void 0 && !listOf$1(hidden, isHiddenEntry)) return fail$2("\"hidden\" must be a list of repo folders");
 	if (noWrapper !== void 0 && !isBoolean(noWrapper)) return fail$2("\"noWrapper\" must be true or false");
 	return succeed$3({
 		...folders === void 0 ? {} : { folders },
@@ -9799,7 +9824,13 @@ const normalize = (file) => ({
 	}),
 	depth: file.depth === void 0 ? DEFAULT_SETTINGS.depth : clampDepth(file.depth),
 	skip: file.skip === void 0 ? DEFAULT_SETTINGS.skip : file.skip.map((name) => name.trim()).filter((name) => name !== ""),
-	hidden: (file.hidden ?? DEFAULT_SETTINGS.hidden).filter((root) => root !== ""),
+	hidden: (file.hidden ?? []).map((entry) => isString(entry) ? {
+		machine: null,
+		root: entry
+	} : {
+		machine: entry.machine,
+		root: entry.path
+	}).filter((repo) => repo.root !== ""),
 	noWrapper: file.noWrapper ?? DEFAULT_SETTINGS.noWrapper
 });
 /**
@@ -9832,7 +9863,10 @@ const serializeSettings = ({ folders, depth, skip, hidden, noWrapper }) => {
 		})),
 		depth,
 		skip,
-		hidden,
+		hidden: hidden.map(({ machine, root }) => machine === null ? root : {
+			machine,
+			path: root
+		}),
 		noWrapper
 	};
 	return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -9857,18 +9891,18 @@ const planImport = (current, legacy, settled) => {
 	};
 };
 /**
-* The settings file's text with the repo at `root` hidden, from its text now (null when
+* The settings file's text with `repo` (by machine and folder) hidden, from its text now (null when
 * there is none). A file that doesn't parse is never replaced: the result is its error
 * instead, so a hand edit in progress is never lost to the defaults. A repo already
 * hidden leaves the text as it is.
 */
-const hideRepo = (current, root, fileName) => {
+const hideRepo = (current, repo, fileName) => {
 	const { settings, error } = parseSettings(current, fileName);
 	if (isSome(error)) return fail$2(error.value);
-	if (current !== null && settings.hidden.includes(root)) return succeed$3(current);
+	if (current !== null && settings.hidden.some((hidden) => repoKey(hidden) === repoKey(repo))) return succeed$3(current);
 	return succeed$3(serializeSettings({
 		...settings,
-		hidden: [...settings.hidden, root]
+		hidden: [...settings.hidden, repo]
 	}));
 };
 /**
@@ -9892,10 +9926,10 @@ const planSave = (opened, onDisk, settings, fileName) => {
 		expected: opened
 	};
 };
-/** The settings with `root` no longer hidden. */
-const unhide = (settings, root) => ({
+/** The settings with `repo` (by machine and folder) no longer hidden. */
+const unhide = (settings, repo) => ({
 	...settings,
-	hidden: settings.hidden.filter((hidden) => hidden !== root)
+	hidden: settings.hidden.filter((hidden) => repoKey(hidden) !== repoKey(repo))
 });
 /**
 * The settings with the folder picked at `picked` added as the last group, named after
@@ -9968,35 +10002,47 @@ const count$1 = (text) => {
 	const n = Number(text);
 	return Number.isInteger(n) && n > 0 ? n : 1;
 };
-/** The folder scan's output: one `group folder<TAB>repo<TAB>count` line per repo. */
-const parseScan = (stdout) => stdout.split("\n").flatMap((line) => {
+/**
+* The folder scan's output, from the scan run on `machine`: one
+* `group folder<TAB>repo<TAB>count` line per repo.
+*/
+const parseScan = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	const [, root, n] = line.split("	");
 	return root ? [{
+		machine,
 		root,
 		count: count$1(n)
 	}] : [];
 });
-/** The open spaces' repos: one `repo<TAB>count` line per repo. */
-const parseOwners = (stdout) => stdout.split("\n").flatMap((line) => {
+/** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
+const parseOwners = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	const [root, n] = line.split("	");
 	return root && line.includes("	") ? [{
+		machine,
 		root,
 		count: count$1(n)
 	}] : [];
 });
-/** The Current repo: the repo the owners script names for the focused folder, if any. */
-const currentRepo = (stdout) => fromNullishOr(parseOwners(stdout)[0]);
 /**
-* Every repo once, scanned or from an open space, with its group, by folder name.
-* An open space's count is fresher than the scan's, so it wins.
+* The Current repo: the repo the owners script, run on `machine`, names for the focused
+* folder, if any.
 */
-const reposFrom = (scanned, owners, folders, home) => Array.from(new Map([...scanned, ...owners].map((repo) => [repo.root, repo.count]))).map(([root, n]) => ({
+const currentRepo = (stdout, machine) => fromNullishOr(parseOwners(stdout, machine)[0]);
+/**
+* Every repo once (by machine and folder), scanned or from an open space, with its group,
+* by folder name. An open space's count is fresher than the scan's, so it wins.
+*/
+const reposFrom = (scanned, owners, folders, home) => Array.from(new Map([...scanned, ...owners].map((repo) => [repoKey(repo), repo])).values()).map(({ machine, root, count: n }) => ({
+	machine,
 	root,
 	count: n,
 	group: groupOf(root, folders, home)
 })).sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
-/** `repos` without the hidden ones (by main checkout folder), in their order. */
-const withoutHidden = (repos, hidden) => repos.filter((repo) => !hidden.includes(repo.root));
+/** `repos` without the hidden ones (by machine and main checkout folder), in their order. */
+const withoutHidden = (repos, hidden) => {
+	const keys = new Set(hidden.map(repoKey));
+	return repos.filter((repo) => !keys.has(repoKey(repo)));
+};
 
 // src/commands.ts
 /** The scan's arguments for these settings. */
@@ -10527,8 +10573,8 @@ const cleanupAction = (repos) => {
 		dirty: all.filter((w) => w.dirty).length
 	});
 };
-/** The right-click menu of the repo whose main checkout is `root`. */
-const repoMenu = (root, worktrees) => [
+/** The right-click menu of `repo`. */
+const repoMenu = ({ machine, root }, worktrees) => [
 	item("New or open worktree…", {
 		_tag: "NewOrOpen",
 		folder: root
@@ -10544,24 +10590,26 @@ const repoMenu = (root, worktrees) => [
 	}),
 	item("Hide this repo", {
 		_tag: "Hide",
+		machine,
 		root
 	})
 ];
-/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
-const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([root, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
-	root,
+/** The worktree at `path` in any repo's list (`lists`, by `repoKey`). */
+const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([key, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
+	...repoOfKey(key),
 	worktree
 })))[0]);
 /**
-* Removing the merged worktrees among those at `paths`, batched by repo in the order
+* Removing the merged worktrees among those at `paths`, batched by repo (machine and
+* folder) in the order
 * their repos first appear; none when none of them is merged.
 */
 const cleanupFor = (lists, paths) => {
 	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
-	const roots = Array.from(new Set(found.map(({ root }) => root)));
-	return cleanupAction(roots.map((root) => ({
+	const repos = Array.from(new Map(found.map((f) => [repoKey(f), f.root])));
+	return cleanupAction(repos.map(([key, root]) => ({
 		root,
-		worktrees: found.filter((f) => f.root === root).map((f) => f.worktree)
+		worktrees: found.filter((f) => repoKey(f) === key).map((f) => f.worktree)
 	})));
 };
 const DIRTY_LINE = "It has uncommitted changes: wt stops rather than lose them.";
@@ -10785,13 +10833,13 @@ const wtCi = fn("wtCi")(function* (root) {
 const scanRepos = fn("scanRepos")(function* (settings, home) {
 	if (settings.folders.length === 0) return [];
 	const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-	return parseScan(run.stdout);
+	return parseScan(run.stdout, null);
 });
 /** The repos the given folders are in (each once); none for no folders. */
 const reposOf = fn("reposOf")(function* (folders) {
 	if (folders.length === 0) return [];
 	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
-	return parseOwners(run.stdout);
+	return parseOwners(run.stdout, null);
 });
 /**
 * The repo the folder `folder` is in (the Current repo of the focused folder), through
@@ -10800,7 +10848,7 @@ const reposOf = fn("reposOf")(function* (folders) {
 const repoAt = fn("repoAt")(function* (folder) {
 	if (folder === "") return none();
 	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-	return currentRepo(run.stdout);
+	return currentRepo(run.stdout, null);
 });
 /** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
 const gitBranches = fn("gitBranches")(function* (root) {
@@ -10997,11 +11045,11 @@ const readCi = fn("readCi")(function* (root) {
 	return yield* wtCi(root);
 }, asReason);
 /**
-* Runs `read` on every repo root, at most `limit` at a time, handing each answer to
-* `keep` as it lands. Each read spawns processes, and Herdr runs out of open files when
-* every repo's list and CI start at once.
+* Runs `read` on every repo, at most `limit` at a time, handing each answer to `keep` as
+* it lands. Each read spawns processes, and Herdr runs out of open files when every
+* repo's list and CI start at once.
 */
-const readEach = (roots, limit, read, keep) => forEach(roots, (root) => read(root).pipe(tap((answer) => sync(() => keep(root, answer)))), {
+const readEach = (repos, limit, read, keep) => forEach(repos, (repo) => read(repo).pipe(tap((answer) => sync(() => keep(repo, answer)))), {
 	concurrency: limit,
 	discard: true
 });
@@ -11027,13 +11075,13 @@ const unreadableText = (name, failed) => `${name}: couldn't read it (${causeText
 /** What the panel says about a settings file it couldn't write. */
 const unsavedText = (name, failed) => `${name}: couldn't save it (${causeText(failed.cause)})`;
 /**
-* Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
+* Hides `repo` (by machine and folder) in the settings file (`files.path`), never over a hand edit
 * made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
 */
-const hideInSettings = fn("hideInSettings")(function* (files, root) {
+const hideInSettings = fn("hideInSettings")(function* (files, repo) {
 	const disk = yield* Files;
 	const current = yield* currentSettings(files.path);
-	const next = yield* fromResult(hideRepo(current, root, files.name)).pipe(mapError((reason) => new SettingsBroken({ reason })));
+	const next = yield* fromResult(hideRepo(current, repo, files.name)).pipe(mapError((reason) => new SettingsBroken({ reason })));
 	if (next === current) return succeed$3(void 0);
 	yield* current === null ? disk.create(files.path, next) : disk.replace(files.path, next, current);
 	return succeed$3(void 0);
@@ -11251,8 +11299,8 @@ const onRender = (reads, now) => {
 	};
 };
 /**
-* The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
-* hidden one, say), grouped by the group folders.
+* The Current repo from its lookup: the listed repo (same machine and folder), or one the
+* panel doesn't list (a hidden one, say), grouped by the group folders.
 */
 const currentRepoOf = (found, repos, folders, home) => match$5(found, {
 	onNone: () => ({ _tag: "Looking" }),
@@ -11265,7 +11313,7 @@ const currentRepoOf = (found, repos, folders, home) => match$5(found, {
 			onNone: () => ({ _tag: "NotInRepo" }),
 			onSome: (repo) => ({
 				_tag: "InRepo",
-				repo: repos.find((listed) => listed.root === repo.root) ?? {
+				repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
 					...repo,
 					group: groupOf(repo.root, folders, home)
 				}
@@ -11310,16 +11358,16 @@ const takeLookup = (follow, folder, answer) => contains(follow.folder, folder) ?
 	},
 	refresh: match$5(follow.found, {
 		onNone: () => true,
-		onSome: (before) => rootOf(before) !== rootOf(answer)
+		onSome: (before) => keyOf(before) !== keyOf(answer)
 	})
 } : {
 	follow,
 	refresh: false
 };
-/** The repo root an answer names; undefined for none or a failed lookup. */
-const rootOf = (answer) => match$4(answer, {
+/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
+const keyOf = (answer) => match$4(answer, {
 	onFailure: () => void 0,
-	onSuccess: (found) => getOrUndefined$1(found)?.root
+	onSuccess: (found) => getOrUndefined$1(map$3(found, repoKey))
 });
 
 // src/spaces.ts
@@ -11468,7 +11516,7 @@ const badgeOf = (ci) => {
 	}
 };
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
-const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)), () => worktree.ci);
+const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repoKey(repo))?.byPath.get(worktree.path)), () => worktree.ci);
 const rowView = (snapshot, repo, worktree, space) => ({
 	key: worktree.path,
 	repo: repo.root,
@@ -11503,7 +11551,7 @@ const statusOf = (list) => match$5(list, {
 		})
 	})
 });
-const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repo.root));
+const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repoKey(repo)));
 /** How many worktrees: wt list's answer once read, else the scan's. */
 const countOf = (repo, list) => match$5(list, {
 	onNone: () => repo.count,
@@ -11530,26 +11578,27 @@ const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => 
 	const query = queryOf(snapshot);
 	const worktrees = all.filter((w) => matches(query, repo, w));
 	const searching = isSome(query);
-	const folded = foldable && !searching && snapshot.folded[repo.root] === true;
+	const key = repoKey(repo);
+	const folded = foldable && !searching && snapshot.folded[key] === true;
 	const on = spacesOnWorktrees(places, all.map((w) => w.path));
 	const toRow = (worktree) => rowView(snapshot, repo, worktree, fromNullishOr(on.get(worktree.path)));
 	const inSection = (kind) => worktrees.filter((w) => contains(kindOf(w), kind)).sort(newestFirst);
 	return {
-		key: repo.root,
+		key,
 		name: lastSegment(repo.root),
 		group: repo.group === "Other" ? none() : some(repo.group),
 		count: map$3(list, () => countOf(repo, list)),
 		status: statusOf(list),
-		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
+		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(key)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
 		folded,
 		foldable,
 		main: folded ? [] : worktrees.filter((w) => isNone(kindOf(w))).map(toRow),
 		sections: folded ? [] : SECTIONS.flatMap(([kind, label]) => {
 			const rows = inSection(kind);
-			const key = `${repo.root}|${kind}`;
-			const sectionFolded = !searching && snapshot.folded[key] === true;
+			const sectionKey = `${key}|${kind}`;
+			const sectionFolded = !searching && snapshot.folded[sectionKey] === true;
 			return rows.length === 0 ? [] : [{
-				key,
+				key: sectionKey,
 				kind,
 				label,
 				count: rows.length,
@@ -11643,7 +11692,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 		}));
 	});
 	if (found.length === 0) {
-		const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
+		const unread = repos.some((repo) => !snapshot.lists.has(repoKey(repo)));
 		const empty = match$5(query, {
 			onSome: noMatch,
 			onNone: () => FLAT_EMPTY[show]
@@ -11653,7 +11702,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			text: unread ? "Reading…" : empty
 		};
 	}
-	const repoCount = new Set(found.map(({ repo }) => repo.root)).size;
+	const repoCount = new Set(found.map(({ repo }) => repoKey(repo))).size;
 	return {
 		_tag: "Flat",
 		summary: show === "merged" ? some(`${found.length} merged in ${plural(repoCount, "repo")}`) : none(),
@@ -11838,9 +11887,12 @@ const readAction = (value) => {
 			_tag: "Reveal",
 			path
 		}));
-		case "Hide": return map$3(text(f.root), (root) => ({
+		case "Hide": return map$3(all$2({
+			machine: textOrNull(f.machine),
+			root: text(f.root)
+		}), (repo) => ({
 			_tag: "Hide",
-			root
+			...repo
 		}));
 		case "Refresh": return some({ _tag: "Refresh" });
 		case "Settings": return some({ _tag: "Settings" });
@@ -12022,8 +12074,11 @@ const defectAsFailure = (read) => exit(read).pipe(map(match$1({
 	onSuccess: (answer) => answer,
 	onFailure: (cause) => fail$2(pretty(cause))
 })));
-/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
-const readAll = (roots, limit, read, keep) => runEdge(readEach(roots, limit, (root) => defectAsFailure(read(root)), keep), () => void 0);
+/**
+* Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
+* under the repo's `repoKey`.
+*/
+const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsFailure(read(repo.root)), (repo, answer) => keep(repoKey(repo), answer)), () => void 0);
 const viewState = () => readViewState(shared(VIEW_KEY));
 const setView = (change) => setShared(VIEW_KEY, writeViewState({
 	...viewState(),
@@ -12417,7 +12472,10 @@ var Worktrunk = class extends View {
 			case "Refresh": return this.refreshWithCi(cx, { scan: true });
 			case "Hide":
 				cx.spawn(async (cx) => {
-					const hid = await runEdge(hideInSettings(settingsFile(), action.root), fail$2);
+					const hid = await runEdge(hideInSettings(settingsFile(), {
+						machine: action.machine,
+						root: action.root
+					}), fail$2);
 					match$4(hid, {
 						onSuccess: () => void 0,
 						onFailure: (body) => notify({
@@ -12564,7 +12622,7 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			view: viewState(),
 			current: this.currentRepo()
-		}).map((repo) => repo.root);
+		});
 	}
 	/** The Current repo, with its group; Looking while it is first being looked up. */
 	currentRepo() {
@@ -12600,9 +12658,9 @@ var Worktrunk = class extends View {
 		this.checking = true;
 		this.ciAt = some(Date.now());
 		cx.spawn(async (cx) => {
-			await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
-				const old = fromNullishOr(this.ci.get(root));
-				this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+			await readAll(this.reposToRead(), CI_LIMIT, readCi, (key, read) => {
+				const old = fromNullishOr(this.ci.get(key));
+				this.ci = new Map([...this.ci, [key, foldCi(old, read)]]);
 				cx.notify();
 			});
 			this.checking = false;
@@ -12664,9 +12722,9 @@ var Worktrunk = class extends View {
 		} else this.discoverError = some(found.failure);
 		this.discovered = true;
 		cx.notify();
-		await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
-			const old = fromNullishOr(this.lists.get(root));
-			this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
+		await readAll(this.reposToRead(), LIST_LIMIT, readList, (key, read) => {
+			const old = fromNullishOr(this.lists.get(key));
+			this.lists = new Map([...this.lists, [key, foldList(old, read)]]);
 			cx.notify();
 		});
 	}
@@ -12725,8 +12783,9 @@ var Worktrunk = class extends View {
 		}))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
 		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body))).children(this.renderFooter(style));
 	}
-	worktreesOf(root) {
-		return match$5(fromNullishOr(this.lists.get(root)), {
+	/** The worktrees of the repo kept under `key` (its `repoKey`). */
+	worktreesOf(key) {
+		return match$5(fromNullishOr(this.lists.get(key)), {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		});
@@ -12738,8 +12797,10 @@ var Worktrunk = class extends View {
 	openRowMenu(row) {
 		map$3(findWorktree(this.lists, row.key), ({ root, worktree }) => openMenu(row.label, rowMenu(root, worktree, row.click)));
 	}
-	openRepoMenu(root) {
-		openMenu(lastSegment(root), repoMenu(root, this.worktreesOf(root)));
+	/** The menu of the repo kept under `key` (its `repoKey`). */
+	openRepoMenu(key) {
+		const repo = repoOfKey(key);
+		openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
 	}
 	renderOverlay(style, copy) {
 		const p = ownProps();
@@ -12847,7 +12908,7 @@ var Worktrunk = class extends View {
 		const heading = (text, hint) => v_flex().pt(6).gap(2).child(div().font_semibold().child(text)).child(div().text_size(sizes.label).text_color(t.muted).child(hint));
 		const hint = (text) => div().text_size(sizes.small).text_color(t.muted).child(text);
 		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.path)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
-		const hidden = settings.hidden.map((root, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(tildePath(root, home()))).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, root)))));
+		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repo.machine === null ? tildePath(repo.root, home()) : `${repo.machine}: ${repo.root}`)).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
 		const check = div().size(16).flex_none().rounded(4).border_1().border_color(settings.noWrapper ? t.accent : t.border).bg(settings.noWrapper ? t.accent : t.input);
 		const body = v_flex().gap(8).pr(6).child(heading("Groups", "Each folder is scanned for repos and names a group, in this order.")).children(folders).when(folders.length === 0, (el) => el.child(hint("No group folders yet."))).child(h_flex().child(button(t, "add-folder", "Add folder…", "plain", (_e, cx) => this.pickGroupFolder(cx, draft)))).child(heading("Scan", "How deep to look for repos, and folder names never to enter.")).child(h_flex().gap(6).items_center().child(div().w(150).flex_none().child("Depth")).child(small("depth-less", "−", edit((s) => ({
 			...s,
@@ -12915,7 +12976,7 @@ var Worktrunk = class extends View {
 	}
 	renderRepo({ t, sizes }, repo) {
 		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
-			root: repo.key,
+			root: repoOfKey(repo.key).root,
 			worktrees: this.worktreesOf(repo.key)
 		}])).map((action) => div().id(`cleanup-${repo.key}`).flex_none().px(6).rounded(4).text_size(sizes.label).text_color(t.done).hover((s) => s.bg(t.raised)).on_click((_event, cx) => {
 			cx.stop_propagation();

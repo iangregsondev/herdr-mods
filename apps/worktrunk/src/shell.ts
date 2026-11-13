@@ -19,6 +19,7 @@ import {
   shArgs,
 } from "./commands.ts";
 import { parseBranches } from "./dialog.ts";
+import { THIS_MACHINE } from "./machines.ts";
 import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
@@ -140,14 +141,14 @@ export const wtCi = Effect.fn("wtCi")(function* (root: string) {
 export const scanRepos = Effect.fn("scanRepos")(function* (settings: Settings, home: string) {
   if (settings.folders.length === 0) return [];
   const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-  return parseScan(run.stdout);
+  return parseScan(run.stdout, THIS_MACHINE);
 });
 
 /** The repos the given folders are in (each once); none for no folders. */
 export const reposOf = Effect.fn("reposOf")(function* (folders: readonly string[]) {
   if (folders.length === 0) return [];
   const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
-  return parseOwners(run.stdout);
+  return parseOwners(run.stdout, THIS_MACHINE);
 });
 
 /**
@@ -157,7 +158,7 @@ export const reposOf = Effect.fn("reposOf")(function* (folders: readonly string[
 export const repoAt = Effect.fn("repoAt")(function* (folder: string) {
   if (folder === "") return Option.none<FoundRepo>();
   const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-  return currentRepo(run.stdout);
+  return currentRepo(run.stdout, THIS_MACHINE);
 });
 
 /** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
