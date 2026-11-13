@@ -12196,7 +12196,8 @@ const groupsChanged = (groups, published) => {
 // src/orphans.ts
 const NO_ORPHANS = {
 	waiting: /* @__PURE__ */ new Map(),
-	removed: /* @__PURE__ */ new Map()
+	removed: /* @__PURE__ */ new Map(),
+	asked: /* @__PURE__ */ new Set()
 };
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
@@ -12260,6 +12261,39 @@ const orphanSpaces = (spaces, panes, machine, gone) => {
 		space: space.id,
 		step: closeOrAsk(space, panes)
 	}));
+};
+/**
+* The toasts for the orphan spaces on `machine` (as `orphanSpaces` finds them) where
+* something other than a shell runs and no toast has asked before: each names the space
+* and the gone folder it is on, and clicking it closes the space after Herdr's own
+* confirm. The spaces asked about are remembered, so a later check never asks again.
+*/
+const askToasts = (orphans, spaces, panes, machine, gone) => {
+	const asks = new Set(orphanSpaces(spaces, panes, machine, gone).filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space)).map((orphan) => orphan.space));
+	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+	const goneUnder = (path) => gone.find((folder) => isUnder(path, folder));
+	const toasts = spaces.filter((space) => asks.has(space.id)).map((space) => {
+		const folder = goneUnder(space.folder) ?? goneUnder(places.get(space.id) ?? "") ?? "";
+		return {
+			title: "Space on a removed worktree",
+			body: `${space.name} is on ${folder}, which is gone. Something is still running in it. Click to close it.`,
+			level: "warning",
+			action: {
+				name: "space.close",
+				args: {
+					id: space.id,
+					confirmed: false
+				}
+			}
+		};
+	});
+	return {
+		orphans: {
+			...orphans,
+			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks])
+		},
+		toasts
+	};
 };
 
 // src/view.ts
@@ -13643,7 +13677,8 @@ var Worktrunk = class extends View {
 	/**
 	* Checks the worktree paths dropped on `machine` in one run there, unless none wait or
 	* a check there is still running, then closes the orphan spaces on the gone ones where
-	* only shells run. Spaces where something else runs are left open.
+	* only shells run. Spaces where something else runs get one toast each, never repeated,
+	* that closes the space after Herdr's own confirm when clicked.
 	*/
 	checkOrphans(cx, machine) {
 		const asked = waitingOn(this.orphans, machine);
@@ -13653,13 +13688,16 @@ var Worktrunk = class extends View {
 			const answer = await runEdge(checkGone(asked, machine), fail$2);
 			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
 			const after = checked(this.orphans, machine, asked, answer);
-			this.orphans = after.orphans;
-			orphanSpaces(spaces(), panes(), machine, after.gone).forEach((orphan) => {
+			const [all, open] = [spaces(), panes()];
+			orphanSpaces(all, open, machine, after.gone).forEach((orphan) => {
 				if (orphan.step === "Close") run("space.close", {
 					id: orphan.space,
 					confirmed: true
 				});
 			});
+			const ask = askToasts(after.orphans, all, open, machine, after.gone);
+			this.orphans = ask.orphans;
+			ask.toasts.forEach((toast) => notify(toast));
 		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */
