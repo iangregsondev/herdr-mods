@@ -203,7 +203,7 @@ describe("runChangesetCheck, a PR with no mod change", () => {
 });
 
 describe("runChangesetCheck, a deleted mod", () => {
-  it.effect("fails a PR that deletes a mod and adds no changeset, on the every-PR rule", () => {
+  it.effect("fails a PR that deletes a mod and adds no changeset", () => {
     const repo = prRepo();
     git(repo, ["rm", "-q", "-r", "apps/hello"]);
     commitFiles(repo, {});

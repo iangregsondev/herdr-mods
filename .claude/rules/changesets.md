@@ -1,5 +1,7 @@
 # Every PR carries a changeset
 
+Always loaded: the changeset is decided while specs, tickets and PR bodies are written, before any file under `.changeset/` exists. It applies to every PR, whichever files it touches.
+
 Each mod is versioned on its own with changesets. Every PR adds at least one changeset: one naming the mods it releases, or an **Empty changeset** (no mods in its frontmatter) when it releases nothing. CI (`vp run check:changesets`) fails a PR that adds none. To write one, use the `changeset` skill. The human guide is the "Releases" section of `docs/develop.md`.
 
 - **Changed a file under `apps/<name>/`?** Add a changeset that names `<name>`. A mod the PR deletes is not named.

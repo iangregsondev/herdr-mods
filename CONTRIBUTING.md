@@ -4,7 +4,7 @@ Thanks for helping. This page says how work moves from an idea to a merged chang
 
 ## How work flows
 
-1. **Issue.** Open one with a template: [feature](.github/ISSUE_TEMPLATE/feature.md), [task](.github/ISSUE_TEMPLATE/task.md), [bug](.github/ISSUE_TEMPLATE/bug.md) or [idea](.github/ISSUE_TEMPLATE/idea.md). Fill in every section; write `None` where one doesn't apply.
+1. **Issue.** Open one with a template: [feature](.github/ISSUE_TEMPLATE/feature.md), [task](.github/ISSUE_TEMPLATE/task.md), [bug](.github/ISSUE_TEMPLATE/bug.md) or [idea](.github/ISSUE_TEMPLATE/idea.md). Fill in every section; write `None` where one doesn't apply, except **Changeset**: `<mod>: <bump>` per mod it releases, or `empty`.
 2. **Grill.** The idea is questioned until it's clear. New terms go into `GLOSSARY.md`; hard-to-reverse decisions become ADRs in `docs/adr/`.
 3. **Spec.** One issue that describes the whole change.
 4. **Tickets.** The spec is split into small issues, each buildable and testable on its own.
@@ -52,13 +52,17 @@ Before you push:
 vp run verify         # format, lint, type-check (needs the Herdr app for types), all tests, config audit
 vp run -r build       # commit the updated mods/
 vp run check:mods     # herdr-app check on every built mod
+vp run check:changesets  # the branch adds a changeset
 ```
 
-CI runs `vp run verify` and the build, and fails if `mods/` doesn't match the source. Two checks run only on your machine, because they need the Herdr app: the type-check (CI turns it off) and `herdr-app check`.
+Every PR carries a changeset: one naming the mods it releases, or an empty one when it releases nothing. See [Releases](docs/develop.md#releases).
+
+CI runs `vp run verify` and the build, and fails if `mods/` doesn't match the source. On a PR it also runs `vp run check:changesets`, and fails one that adds no changeset. Two checks run only on your machine, because they need the Herdr app: the type-check (CI turns it off) and `herdr-app check`.
 
 ## Opening a pull request
 
-- Fill in every section of the [pull request template](.github/pull_request_template.md). Write `None` where one doesn't apply.
+- Fill in every section of the [pull request template](.github/pull_request_template.md). Write `None` where one doesn't apply, except **Changeset**: `<mod>: <bump>` per mod the PR releases, or `empty`.
+- Add a changeset, an empty one when the PR releases nothing ([Releases](docs/develop.md#releases)).
 - Title it as a Conventional Commit. It becomes the squash commit on `main`.
 - Under **Related issues**, write `Closes #123` for each issue it completes. Write a plain `#123` for issues it only relates to.
 
