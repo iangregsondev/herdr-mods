@@ -25,7 +25,7 @@ import type { RepoList } from "./reads.ts";
 import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
 import type { Place } from "./spaces.ts";
-import type { Click } from "./view.ts";
+import type { Chip, Click, MachineChoice } from "./view.ts";
 import type { Worktree } from "./worktrees.ts";
 
 /**
@@ -84,6 +84,10 @@ export type Action =
   | { readonly _tag: "Hide"; readonly machine: Machine; readonly root: string }
   /** Open the Settings dialog. */
   | { readonly _tag: "Settings" }
+  /** Keep one machine in view (`{ name }`, null for this machine), or every one (null). */
+  | { readonly _tag: "PickMachine"; readonly machine: { readonly name: Machine } | null }
+  /** List one group's repos, or every group's (null). */
+  | { readonly _tag: "PickGroup"; readonly group: string | null }
 
   /** Give the panel the keyboard, in its search box. */
   | { readonly _tag: "Focus" };
@@ -103,12 +107,15 @@ export interface MenuItem {
   readonly label: string;
   /** Drawn in the theme's red: the action removes something. */
   readonly danger: boolean;
+  /** Marked as the current choice. */
+  readonly checked: boolean;
   readonly action: Action;
 }
 
 const item = (label: string, action: Action, danger = false): MenuItem => ({
   label,
   danger,
+  checked: false,
   action,
 });
 
@@ -468,3 +475,30 @@ export const spaceStep = (places: readonly Place[], space: string, act: SpaceAct
       }
     },
   });
+
+/** The machine filter's menu: All machines, then each machine, the current one checked. */
+export const machineMenu = (choices: readonly MachineChoice[]): readonly MenuItem[] =>
+  choices.map((choice) => ({
+    ...item(Option.isNone(choice.machine) ? "All machines" : choice.label, {
+      _tag: "PickMachine",
+      machine: Option.match(choice.machine, { onNone: () => null, onSome: (name) => ({ name }) }),
+    }),
+    checked: choice.selected,
+  }));
+
+/** The group filter's menu: All groups, then each group, the current one checked. */
+export const groupMenu = (chips: readonly Chip[]): readonly MenuItem[] =>
+  chips.map((chip) => ({
+    ...item(Option.isNone(chip.group) ? "All groups" : chip.label, {
+      _tag: "PickGroup",
+      group: Option.getOrNull(chip.group),
+    }),
+    checked: chip.selected,
+  }));
+
+/**
+ * A filter dropdown's button text: its menu's checked item, else the first (a saved group
+ * the first scan hasn't found yet is in no item).
+ */
+export const filterButton = (items: readonly MenuItem[]): string =>
+  (items.find((i) => i.checked) ?? items[0])?.label ?? "";

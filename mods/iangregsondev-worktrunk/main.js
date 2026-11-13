@@ -10687,6 +10687,7 @@ const cleanupCount = (action) => removedBy(action.batches);
 const item = (label, action, danger = false) => ({
 	label,
 	danger,
+	checked: false,
 	action
 });
 /** "Reveal in Finder" for a folder on `machine`: only this machine's Finder can show it. */
@@ -10955,6 +10956,30 @@ const spaceStep = (places, space, act) => match$5(fromNullishOr(places.find((p) 
 		}
 	}
 });
+/** The machine filter's menu: All machines, then each machine, the current one checked. */
+const machineMenu = (choices) => choices.map((choice) => ({
+	...item(isNone(choice.machine) ? "All machines" : choice.label, {
+		_tag: "PickMachine",
+		machine: match$5(choice.machine, {
+			onNone: () => null,
+			onSome: (name) => ({ name })
+		})
+	}),
+	checked: choice.selected
+}));
+/** The group filter's menu: All groups, then each group, the current one checked. */
+const groupMenu = (chips) => chips.map((chip) => ({
+	...item(isNone(chip.group) ? "All groups" : chip.label, {
+		_tag: "PickGroup",
+		group: getOrNull(chip.group)
+	}),
+	checked: chip.selected
+}));
+/**
+* A filter dropdown's button text: its menu's checked item, else the first (a saved group
+* the first scan hasn't found yet is in no item).
+*/
+const filterButton = (items) => (items.find((i) => i.checked) ?? items[0])?.label ?? "";
 
 // src/sync.ts
 const parseRecord$1 = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
@@ -12269,7 +12294,7 @@ const emptyText = (snapshot) => {
 	if (snapshot.settings.folders.length === 0) return `No repos yet. Add your repo folders in Settings, or in ${snapshot.settingsFile} in Herdr's folder.`;
 	return "No repos found in your group folders.";
 };
-/** Group names in chip order: Settings order, then unknown names sorted, then Other. */
+/** Group names in the group filter's order: Settings order, then unknown names sorted, then Other. */
 const orderGroups = (names, settings) => {
 	const have = new Set(names);
 	const order = settings.folders.map((folder) => folder.name);
@@ -12282,7 +12307,7 @@ const orderGroups = (names, settings) => {
 };
 /**
 * The selected group. A saved group no repo is in any more falls back to All, but only
-* once the repos are known, so a saved chip never flashes back to All at start.
+* once the repos are known, so a saved group never flashes back to All at start.
 */
 const selectedGroup = ({ repos, discovered, view }) => filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
 /** Every machine a repo or a group folder is on: this machine first, then by name. */
@@ -12297,7 +12322,7 @@ const reposOnMachine = (scope) => match$5(selectedMachine(scope), {
 	onNone: () => scope.repos,
 	onSome: (machine) => scope.repos.filter((repo) => repo.machine === machine)
 });
-/** The repos the machine filter and the selected group chip let through, in order. */
+/** The repos the machine filter and the group filter let through, in order. */
 const reposInGroup = (scope) => {
 	const repos = reposOnMachine(scope);
 	return match$5(selectedGroup({
@@ -12309,7 +12334,7 @@ const reposInGroup = (scope) => {
 	});
 };
 /**
-* The repos worth reading: the selected chip's; in the Current view the Current repo
+* The repos worth reading: the selected group's; in the Current view the Current repo
 * alone, or every repo on the filtered machines (for the Open list) when the focused
 * folder is in none. None on a machine that can't be read now.
 */
@@ -12390,7 +12415,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 	};
 };
 /**
-* The Current repo as one expanded repo of the tree, whatever the group chip. Outside
+* The Current repo as one expanded repo of the tree, whatever the group filter. Outside
 * every repo: a line saying so, over the Open view's list across all repos.
 */
 const currentBody = (snapshot, places) => {
@@ -12652,6 +12677,17 @@ const readAction = (value) => {
 		case "Refresh": return some({ _tag: "Refresh" });
 		case "Settings": return some({ _tag: "Settings" });
 		case "Focus": return some({ _tag: "Focus" });
+		case "PickMachine": return f.machine === null ? some({
+			_tag: "PickMachine",
+			machine: null
+		}) : map$3(readMachineFilter(f.machine), (name) => ({
+			_tag: "PickMachine",
+			machine: { name }
+		}));
+		case "PickGroup": return map$3(textOrNull(f.group), (group) => ({
+			_tag: "PickGroup",
+			group
+		}));
 		default: return none();
 	}
 };
@@ -12670,6 +12706,7 @@ const readMenuItem = (value) => {
 	return all$2({
 		label: text(f.label),
 		danger: bool(f.danger),
+		checked: bool(f.checked),
 		action: readAction(f.action)
 	});
 };
@@ -12748,7 +12785,7 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `iangregsondev-worktrunk.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `iangregsondev-worktrunk.folded.v1`;
-/** The machine filter, selected group chip, view and toggle, remembered across restarts. */
+/** The machine filter, group filter, view and toggle, remembered across restarts. */
 const VIEW_KEY = `iangregsondev-worktrunk.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `iangregsondev-sync.json`;
@@ -13311,6 +13348,8 @@ var Worktrunk = class extends View {
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
 				return;
+			case "PickMachine": return setView({ machine: map$3(fromNullishOr(action.machine), ({ name }) => name) });
+			case "PickGroup": return setView({ group: fromNullishOr(action.group) });
 			case "Create": return this.createWorktree(cx, action);
 			case "Settings":
 				cx.spawn(async () => {
@@ -13736,7 +13775,7 @@ var Worktrunk = class extends View {
 				cx.notify();
 			} else if (e.key === "enter") choose(items[menu.selected]);
 			else if (e.key === "escape") closeSelf();
-		}).child(div().h(28).px(8).flex().items_center().truncate().text_size(sizes.label).text_color(t.muted).child(title)).children(items.map((item, i) => h_flex().id(`item-${i}`).h(30).flex_none().px(8).items_center().rounded(6).cursor_pointer().text_color(item.danger ? t.ansi1 : t.foreground).when(i === menu.selected, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click(() => choose(item)).child(item.label))));
+		}).child(div().h(28).px(8).flex().items_center().truncate().text_size(sizes.label).text_color(t.muted).child(title)).children(items.map((item, i) => h_flex().id(`item-${i}`).h(30).flex_none().px(8).items_center().rounded(6).cursor_pointer().text_color(item.danger ? t.ansi1 : t.foreground).when(i === menu.selected, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click(() => choose(item)).child(div().flex_1().min_w(0).truncate().child(item.label)).when(item.checked, (el) => el.child(icon("check", 13, t.accent))))));
 	}
 	renderConfirm({ t, sizes }, { confirm, action }) {
 		const go = () => {
@@ -13854,18 +13893,14 @@ var Worktrunk = class extends View {
 		return h_flex().id("titlebar").size_full().px(12).gap(8).items_center().bg(t.chrome).border_b(1).border_color(t.border).text_size(sizes.label).child(icon("git", 14, t.accent)).child(div().flex_1().min_w(0).truncate().font_semibold().child(title)).child(div().text_color(t.dim).child("drag to move")).child(div().id("stop").px(10).py(3).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(addr, stop)).child("Stop"));
 	}
 	/**
-	* The machine filter (with more than one machine), group chips, the view picker, the
-	* search box and the All repos / With worktrees toggle.
+	* The machine and group dropdowns on one row (the machine one only with more than one
+	* machine), the view picker, the search box and the All repos / With worktrees toggle.
 	*/
 	renderControls({ t, sizes }, view) {
-		const chip = (id, label, on, onClick) => h_flex().id(id).h(24).px(9).flex_none().items_center().rounded(12).cursor_pointer().border_1().border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).hover((s) => s.text_color(t.foreground)).on_click(onClick).child(label);
+		const dropdown = (id, title, items) => h_flex().id(id).flex_1().min_w(0).h(26).px(9).gap(6).items_center().rounded(6).cursor_pointer().border_1().border_color(t.border).bg(t.chrome).text_size(sizes.label).text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click(() => openMenu(title, items)).child(div().flex_1().min_w(0).truncate().child(filterButton(items))).child(icon("chevron-down", 12, t.muted));
 		const segment = (id, options, onPick) => h_flex().id(id).w_full().p(2).gap(2).rounded(8).bg(t.chrome).border_1().border_color(t.border).children(options.map(({ key, label, on }) => h_flex().id(`${id}-${key}`).flex_1().min_w(0).h(24).justify_center().items_center().rounded(6).bg(on ? t.raised : t.chrome).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => onPick(key)).child(div().truncate().child(label))));
 		const search = h_flex().flex_1().min_w(0).h(28).px(8).gap(6).items_center().rounded(6).border_1().border_color(t.border).bg(t.chrome).child(icon("search", 13, t.muted)).children(toArray(this.searchBox).map((box) => Input.new(box).flex_1().min_w(0).h_full().text_size(sizes.small).text_color(t.foreground)));
-		return v_flex().flex_none().px(12).py(8).gap(7).border_b(1).border_color(t.border).when(view.machineFilter.length > 0, (el) => el.child(segment("machine", view.machineFilter.map((m, i) => ({
-			key: `${i}`,
-			label: m.label,
-			on: m.selected
-		})), (key) => map$3(fromNullishOr(view.machineFilter[Number(key)]), (picked) => setView({ machine: picked.machine }))))).child(h_flex().flex_wrap().gap(5).items_center().children(view.chips.map((c) => chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group }))))).child(segment("show", view.views.map((v) => ({
+		return v_flex().flex_none().px(12).py(8).gap(7).border_b(1).border_color(t.border).child(h_flex().gap(6).items_center().when(view.machineFilter.length > 0, (el) => el.child(dropdown("machine", "Machine", machineMenu(view.machineFilter)))).child(dropdown("group", "Group", groupMenu(view.chips)))).child(segment("show", view.views.map((v) => ({
 			key: v.show,
 			label: v.label,
 			on: v.selected

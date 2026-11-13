@@ -2,7 +2,7 @@ import { Option } from "effect";
 import { THIS_MACHINE } from "../src/machines.ts";
 import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_VIEW_STATE } from "../src/view.ts";
-import { confirmFor, repoMenu, rowMenu } from "../src/menus.ts";
+import { confirmFor, groupMenu, machineMenu, repoMenu, rowMenu } from "../src/menus.ts";
 import { roleOf, SPACE_ACTS } from "worktrunk-mailbox";
 import {
   confirmProps,
@@ -182,6 +182,17 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test("reads back the filter menus' picks: a machine, this machine, a group, or All", () => {
+    const picks = [
+      { _tag: "PickMachine", machine: { name: "box" } },
+      { _tag: "PickMachine", machine: { name: THIS_MACHINE } },
+      { _tag: "PickMachine", machine: null },
+      { _tag: "PickGroup", group: "Work" },
+      { _tag: "PickGroup", group: null },
+    ];
+    expect(picks.map((pick) => readAction(overTheWire(pick)))).toEqual(picks.map(Option.some));
+  });
+
   test("reads back a Focus action, as the toggle copy hands on the focus key", () => {
     const action = { _tag: "Focus" } as const;
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
@@ -280,8 +291,26 @@ describe("readMenuProps", () => {
     });
   });
 
+  test("reads the filter menus back, the checked choice and what each picks", () => {
+    const machines = machineMenu([
+      { label: "All", machine: Option.none(), selected: false },
+      { label: "this machine", machine: Option.some(THIS_MACHINE), selected: true },
+      { label: "box", machine: Option.some("box"), selected: false },
+    ]);
+    const groups = groupMenu([
+      { label: "All", group: Option.none(), selected: false },
+      { label: "Work", group: Option.some("Work"), selected: true },
+    ]);
+    for (const items of [machines, groups]) {
+      expect(readMenuProps(overTheWire(menuProps("Filter", items)))).toEqual({
+        title: "Filter",
+        items,
+      });
+    }
+  });
+
   test("leaves out items it can't read, and has no title when none is given", () => {
-    const good = { label: "Refresh", danger: false, action: { _tag: "Refresh" } };
+    const good = { label: "Refresh", danger: false, checked: false, action: { _tag: "Refresh" } };
     expect(readMenuProps({ items: [good, { label: "Bad", action: { _tag: "?" } }, 3] })).toEqual({
       title: "",
       items: [good],

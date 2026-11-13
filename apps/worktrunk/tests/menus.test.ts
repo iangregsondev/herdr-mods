@@ -6,8 +6,11 @@ import {
   cleanupFor,
   confirmFor,
   dialogHeight,
+  filterButton,
   findWorktree,
+  groupMenu,
   jobsFor,
+  machineMenu,
   menuHeight,
   repoMenu,
   rowMenu,
@@ -18,7 +21,7 @@ import { mergeScript, removeScript, cleanupScript } from "../src/commands.ts";
 import { repoKey, THIS_MACHINE } from "../src/machines.ts";
 import type { RepoList } from "../src/reads.ts";
 import type { Place } from "../src/spaces.ts";
-import type { Click } from "../src/view.ts";
+import type { Chip, Click, MachineChoice } from "../src/view.ts";
 import type { Worktree, WorktreeState } from "../src/worktrees.ts";
 
 const wt = (
@@ -148,6 +151,69 @@ describe("rowMenu on another machine", () => {
       ["Merge feat/x into main", "linux"],
       ["Remove feat/x", "linux"],
     ]);
+  });
+});
+
+/** The machine filter's choices: All, this machine and box, with `selected` picked. */
+const machineChoices = (selected: number): readonly MachineChoice[] =>
+  [
+    { label: "All", machine: Option.none<string | null>() },
+    { label: "this machine", machine: Option.some(THIS_MACHINE) },
+    { label: "box", machine: Option.some("box") },
+  ].map((choice, i) => ({ ...choice, selected: i === selected }));
+
+describe("machineMenu", () => {
+  test("lists All machines, then each machine, the current one checked", () => {
+    expect(machineMenu(machineChoices(2)).map((i) => [i.label, i.checked])).toEqual([
+      ["All machines", false],
+      ["this machine", false],
+      ["box", true],
+    ]);
+  });
+
+  test("each item keeps its machine in view; All machines keeps every one", () => {
+    expect(machineMenu(machineChoices(0)).map((i) => i.action)).toEqual([
+      { _tag: "PickMachine", machine: null },
+      { _tag: "PickMachine", machine: { name: THIS_MACHINE } },
+      { _tag: "PickMachine", machine: { name: "box" } },
+    ]);
+  });
+});
+
+/** The group filter's choices: All, Work and Other, with `selected` picked. */
+const groupChips = (selected: number): readonly Chip[] =>
+  [
+    { label: "All", group: Option.none<string>() },
+    { label: "Work", group: Option.some("Work") },
+    { label: "Other", group: Option.some("Other") },
+  ].map((chip, i) => ({ ...chip, selected: i === selected }));
+
+describe("groupMenu", () => {
+  test("lists All groups, then each group, the current one checked", () => {
+    expect(groupMenu(groupChips(1)).map((i) => [i.label, i.checked])).toEqual([
+      ["All groups", false],
+      ["Work", true],
+      ["Other", false],
+    ]);
+  });
+
+  test("each item lists its group's repos; All groups lists every group's", () => {
+    expect(groupMenu(groupChips(0)).map((i) => i.action)).toEqual([
+      { _tag: "PickGroup", group: null },
+      { _tag: "PickGroup", group: "Work" },
+      { _tag: "PickGroup", group: "Other" },
+    ]);
+  });
+});
+
+describe("filterButton", () => {
+  test("reads the checked choice", () => {
+    expect(filterButton(machineMenu(machineChoices(2)))).toBe("box");
+    expect(filterButton(groupMenu(groupChips(0)))).toBe("All groups");
+  });
+
+  test("with nothing checked, reads the first choice", () => {
+    expect(filterButton(groupMenu(groupChips(-1)))).toBe("All groups");
   });
 });
 

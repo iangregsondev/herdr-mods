@@ -102,8 +102,11 @@ import {
   cleanupFor,
   confirmFor,
   dialogHeight,
+  filterButton,
   findWorktree,
+  groupMenu,
   jobsFor,
+  machineMenu,
   spaceStep,
   menuHeight,
   repoMenu,
@@ -218,7 +221,7 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `${__MOD_ID__}.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `${__MOD_ID__}.folded.v1`;
-/** The machine filter, selected group chip, view and toggle, remembered across restarts. */
+/** The machine filter, group filter, view and toggle, remembered across restarts. */
 const VIEW_KEY = `${__MOD_ID__}.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
@@ -895,6 +898,12 @@ export default class Worktrunk extends View {
       case "Focus":
         Option.map(this.searchBox, (box) => box.focus());
         return;
+      case "PickMachine":
+        return setView({
+          machine: Option.map(Option.fromNullishOr(action.machine), ({ name }) => name),
+        });
+      case "PickGroup":
+        return setView({ group: Option.fromNullishOr(action.group) });
       case "Create":
         return this.createWorktree(cx, action);
       case "Settings":
@@ -1259,7 +1268,7 @@ export default class Worktrunk extends View {
     const rendered = onRender(this.reads, { shown: shown(), group });
     this.reads = rendered.reads;
     if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
-    // Another group chip: its repos may not have been read yet, CI included.
+    // Another group picked: its repos may not have been read yet, CI included.
     if (rendered.step === "NewGroup") {
       later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
     }
@@ -1474,7 +1483,8 @@ export default class Worktrunk extends View {
               .when(i === menu.selected, (el) => el.bg(t.hover))
               .hover((s) => s.bg(t.hover))
               .on_click(() => choose(item))
-              .child(item.label),
+              .child(div().flex_1().min_w(0).truncate().child(item.label))
+              .when(item.checked, (el) => el.child(icon("check", 13, t.accent))),
           ),
         ),
     );
@@ -1982,28 +1992,30 @@ export default class Worktrunk extends View {
   }
 
   /**
-   * The machine filter (with more than one machine), group chips, the view picker, the
-   * search box and the All repos / With worktrees toggle.
+   * The machine and group dropdowns on one row (the machine one only with more than one
+   * machine), the view picker, the search box and the All repos / With worktrees toggle.
    */
   renderControls({ t, sizes }: Style, view: PanelView): Element {
-    const chip = (id: string, label: string, on: boolean, onClick: () => void) =>
+    const dropdown = (id: string, title: string, items: readonly MenuItem[]) =>
       h_flex()
         .id(id)
-        .h(24)
+        .flex_1()
+        .min_w(0)
+        .h(26)
         .px(9)
-        .flex_none()
+        .gap(6)
         .items_center()
-        .rounded(12)
+        .rounded(6)
         .cursor_pointer()
         .border_1()
-        .border_color(on ? t.accent : t.border)
-        .bg(on ? t.selected : t.background)
+        .border_color(t.border)
+        .bg(t.chrome)
         .text_size(sizes.label)
-        .text_color(on ? t.foreground : t.muted)
-        .when(on, (el) => el.font_semibold())
-        .hover((s) => s.text_color(t.foreground))
-        .on_click(onClick)
-        .child(label);
+        .text_color(t.foreground)
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => openMenu(title, items))
+        .child(div().flex_1().min_w(0).truncate().child(filterButton(items)))
+        .child(icon("chevron-down", 12, t.muted));
     const segment = (
       id: string,
       options: readonly { readonly key: string; readonly label: string; readonly on: boolean }[],
@@ -2062,28 +2074,14 @@ export default class Worktrunk extends View {
       .gap(7)
       .border_b(1)
       .border_color(t.border)
-      .when(view.machineFilter.length > 0, (el) =>
-        el.child(
-          segment(
-            "machine",
-            view.machineFilter.map((m, i) => ({ key: `${i}`, label: m.label, on: m.selected })),
-            (key) =>
-              Option.map(Option.fromNullishOr(view.machineFilter[Number(key)]), (picked) =>
-                setView({ machine: picked.machine }),
-              ),
-          ),
-        ),
-      )
       .child(
         h_flex()
-          .flex_wrap()
-          .gap(5)
+          .gap(6)
           .items_center()
-          .children(
-            view.chips.map((c) =>
-              chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group })),
-            ),
-          ),
+          .when(view.machineFilter.length > 0, (el) =>
+            el.child(dropdown("machine", "Machine", machineMenu(view.machineFilter))),
+          )
+          .child(dropdown("group", "Group", groupMenu(view.chips))),
       )
       .child(
         segment(
