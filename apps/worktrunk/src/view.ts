@@ -38,9 +38,16 @@ export interface ViewState {
   readonly show: Show;
   /** "With worktrees": the Repos view hides repos with only a main checkout. */
   readonly only: boolean;
+  /** The machine filter: the one machine in view; none for All. */
+  readonly machine: Option.Option<Machine>;
 }
 
-export const DEFAULT_VIEW_STATE: ViewState = { group: Option.none(), show: "repos", only: true };
+export const DEFAULT_VIEW_STATE: ViewState = {
+  group: Option.none(),
+  show: "repos",
+  only: true,
+  machine: Option.none(),
+};
 
 export interface Snapshot {
   /** The repos to list, in order. */
@@ -185,9 +192,19 @@ export interface Chip {
   readonly selected: boolean;
 }
 
+/** One choice in the machine filter. */
+export interface MachineChoice {
+  readonly label: string;
+  /** The machine it keeps in view; none for All. */
+  readonly machine: Option.Option<Machine>;
+  readonly selected: boolean;
+}
+
 export interface PanelView {
   /** Show the spinner. */
   readonly loading: boolean;
+  /** The machine filter: All, then each machine. */
+  readonly machineFilter: readonly MachineChoice[];
   /** All, then one per group. */
   readonly chips: readonly Chip[];
   /** The view picker. */
@@ -488,17 +505,45 @@ type Scope = Pick<Snapshot, "repos" | "discovered" | "settings" | "view">;
 const selectedGroup = ({ repos, discovered, view }: Scope): Option.Option<string> =>
   Option.filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
 
-/** The repos the selected group chip lets through, in order: the ones worth reading. */
-export const reposInGroup = (scope: Scope): readonly Repo[] =>
-  Option.match(selectedGroup(scope), {
+/** Every machine a repo or a group folder is on: this machine first, then by name. */
+const machinesOf = ({ repos, settings }: Pick<Scope, "repos" | "settings">): readonly Machine[] =>
+  Array.from(
+    new Set([
+      ...repos.map((repo) => repo.machine),
+      ...settings.folders.map((folder) => folder.machine),
+    ]),
+  ).sort(byMachine);
+
+/**
+ * The filtered machine. One no repo or folder is on any more falls back to All, but only
+ * once the repos are known, so a saved filter never flashes back to All at start.
+ */
+const selectedMachine = (scope: Scope): Option.Option<Machine> =>
+  Option.filter(
+    scope.view.machine,
+    (machine) => !scope.discovered || machinesOf(scope).includes(machine),
+  );
+
+/** The repos the machine filter lets through, in order. */
+const reposOnMachine = (scope: Scope): readonly Repo[] =>
+  Option.match(selectedMachine(scope), {
     onNone: () => scope.repos,
-    onSome: (group) => scope.repos.filter((repo) => repo.group === group),
+    onSome: (machine) => scope.repos.filter((repo) => repo.machine === machine),
   });
+
+/** The repos the machine filter and the selected group chip let through, in order. */
+export const reposInGroup = (scope: Scope): readonly Repo[] => {
+  const repos = reposOnMachine(scope);
+  return Option.match(selectedGroup({ ...scope, repos }), {
+    onNone: () => repos,
+    onSome: (group) => repos.filter((repo) => repo.group === group),
+  });
+};
 
 /**
  * The repos worth reading: the selected chip's; in the Current view the Current repo
- * alone, or every repo (for the Open list) when the focused folder is in none. None on a
- * machine that can't be read now.
+ * alone, or every repo on the filtered machines (for the Open list) when the focused
+ * folder is in none. None on a machine that can't be read now.
  */
 export const reposToRead = (
   scope: Scope & Pick<Snapshot, "current" | "machines">,
@@ -508,7 +553,7 @@ export const reposToRead = (
       ? reposInGroup(scope)
       : scope.current._tag === "InRepo"
         ? [scope.current.repo]
-        : scope.repos;
+        : reposOnMachine(scope);
   return repos.filter((repo) => !scope.machines.has(repo.machine));
 };
 
@@ -646,6 +691,28 @@ const bodyOf = (snapshot: Snapshot, places: readonly Place[]): Body => {
   return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
 };
 
+/** Machines in the filter's order: this machine first, then the others by name. */
+const byMachine = (a: Machine, b: Machine): number =>
+  a === b ? 0 : a === null ? -1 : b === null ? 1 : a.localeCompare(b);
+
+/**
+ * The machine filter's choices: All, then every machine a repo or a group folder is on.
+ * None while there is only one machine, as there is nothing to filter.
+ */
+const machineFilterOf = (snapshot: Snapshot): readonly MachineChoice[] => {
+  const machines = machinesOf(snapshot);
+  const selected = selectedMachine(snapshot);
+  if (machines.length < 2) return [];
+  return [
+    { label: "All", machine: Option.none(), selected: Option.isNone(selected) },
+    ...machines.map((machine) => ({
+      label: machineName(machine),
+      machine: Option.some(machine),
+      selected: Option.contains(selected, machine),
+    })),
+  ];
+};
+
 /** The one line for a machine that can't be read now. */
 const machineLine = (machine: Machine, status: MachineStatus): string =>
   status._tag === "Connecting"
@@ -654,14 +721,16 @@ const machineLine = (machine: Machine, status: MachineStatus): string =>
 
 /** Everything the panel draws for `snapshot`. */
 export const buildView = (whole: Snapshot): PanelView => {
-  // A machine that can't be read has its one line instead of repos, so none shows stale.
+  // Only the filtered machine's repos are in view, so machine labels follow the filter. A
+  // machine that can't be read has its one line instead of repos, so none shows stale.
   const snapshot: Snapshot = {
     ...whole,
-    repos: whole.repos.filter((repo) => !whole.machines.has(repo.machine)),
+    repos: reposOnMachine(whole).filter((repo) => !whole.machines.has(repo.machine)),
   };
   const places = spacePlaces(snapshot.spaces, snapshot.panes);
   return {
     loading: snapshot.loading,
+    machineFilter: machineFilterOf(whole),
     chips: chipsOf(snapshot),
     views: SHOWS.map(([show, label]) => ({ show, label, selected: show === snapshot.view.show })),
     toggle: snapshot.view.show === "repos" ? Option.some(snapshot.view.only) : Option.none(),

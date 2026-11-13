@@ -206,7 +206,7 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `${__MOD_ID__}.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `${__MOD_ID__}.folded.v1`;
-/** The selected group chip, view and toggle, remembered across restarts. */
+/** The machine filter, selected group chip, view and toggle, remembered across restarts. */
 const VIEW_KEY = `${__MOD_ID__}.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
@@ -1881,7 +1881,10 @@ export default class Worktrunk extends View {
       );
   }
 
-  /** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
+  /**
+   * The machine filter (with more than one machine), group chips, the view picker, the
+   * search box and the All repos / With worktrees toggle.
+   */
   renderControls({ t, sizes }: Style, view: PanelView): Element {
     const chip = (id: string, label: string, on: boolean, onClick: () => void) =>
       h_flex()
@@ -1959,6 +1962,18 @@ export default class Worktrunk extends View {
       .gap(7)
       .border_b(1)
       .border_color(t.border)
+      .when(view.machineFilter.length > 0, (el) =>
+        el.child(
+          segment(
+            "machine",
+            view.machineFilter.map((m, i) => ({ key: `${i}`, label: m.label, on: m.selected })),
+            (key) =>
+              Option.map(Option.fromNullishOr(view.machineFilter[Number(key)]), (picked) =>
+                setView({ machine: picked.machine }),
+              ),
+          ),
+        ),
+      )
       .child(
         h_flex()
           .flex_wrap()

@@ -26,24 +26,34 @@ export interface StoredViewState {
   readonly group: string | null;
   readonly show: Show;
   readonly only: boolean;
+  /** The machine filter: null for All, else the machine in view (its name null for this one). */
+  readonly machine: { readonly name: Machine } | null;
 }
 
 export const writeViewState = (state: ViewState): StoredViewState => ({
   group: Option.getOrNull(state.group),
   show: state.show,
   only: state.only,
+  machine: Option.match(state.machine, { onNone: () => null, onSome: (name) => ({ name }) }),
 });
 
 const readShow = (value: unknown): Option.Option<Show> =>
   Option.fromNullishOr(SHOWS.find(([show]) => show === value)?.[0]);
 
+/** A stored machine filter; anything but `{ name }` with a text or null name is All. */
+const readMachineFilter = (value: unknown): Option.Option<Machine> => {
+  const { name } = fields(value);
+  return name === null || Predicate.isString(name) ? Option.some(name) : Option.none();
+};
+
 /** The view state kept in shared state; anything missing or unreadable is the default. */
 export const readViewState = (value: unknown): ViewState => {
-  const { group, show, only } = fields(value);
+  const { group, show, only, machine } = fields(value);
   return {
     group: text(group),
     show: Option.getOrElse(readShow(show), () => DEFAULT_VIEW_STATE.show),
     only: Predicate.isBoolean(only) ? only : DEFAULT_VIEW_STATE.only,
+    machine: readMachineFilter(machine),
   };
 };
 
