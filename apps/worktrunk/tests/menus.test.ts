@@ -48,9 +48,12 @@ const FEAT = wt("/r/app.feat-x", "feat/x", ACTIVE);
 
 const labels = (items: readonly { readonly label: string }[]) => items.map((i) => i.label);
 
+/** The app repo, on this machine. */
+const APP = { machine: THIS_MACHINE, root: "/r/app" };
+
 describe("rowMenu", () => {
   test("a linked worktree: open, both merges, remove, copy path, reveal", () => {
-    expect(labels(rowMenu("/r/app", FEAT, CLICK))).toEqual([
+    expect(labels(rowMenu(APP, FEAT, CLICK))).toEqual([
       "Open",
       "Merge into main (squash)",
       "Merge, keeping every commit",
@@ -61,7 +64,7 @@ describe("rowMenu", () => {
   });
 
   test("the main checkout can't be merged or removed", () => {
-    expect(labels(rowMenu("/r/app", wt("/r/app", "main", MAIN), CLICK))).toEqual([
+    expect(labels(rowMenu(APP, wt("/r/app", "main", MAIN), CLICK))).toEqual([
       "Open",
       "Copy path",
       "Reveal in Finder",
@@ -69,7 +72,7 @@ describe("rowMenu", () => {
   });
 
   test("only Remove is marked as destructive", () => {
-    const danger = rowMenu("/r/app", FEAT, CLICK).filter((i) => i.danger);
+    const danger = rowMenu(APP, FEAT, CLICK).filter((i) => i.danger);
     expect(labels(danger)).toEqual(["Remove…"]);
   });
 
@@ -77,7 +80,7 @@ describe("rowMenu", () => {
     const dirty = wt("/r/app.feat-x", "feat/x", ACTIVE, { dirty: true });
     const target = { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
     expect(
-      rowMenu("/r/app", dirty, CLICK)
+      rowMenu(APP, dirty, CLICK)
         .slice(1, 4)
         .map((i) => i.action),
     ).toEqual([
@@ -88,7 +91,7 @@ describe("rowMenu", () => {
   });
 
   test("open does what a click on the row does; copy and reveal act on its folder", () => {
-    const actions = rowMenu("/r/app", FEAT, CLICK).map((i) => i.action);
+    const actions = rowMenu(APP, FEAT, CLICK).map((i) => i.action);
     expect([actions[0], actions[4], actions[5]]).toEqual([
       { _tag: "Open", click: CLICK },
       { _tag: "CopyPath", path: "/r/app.feat-x" },
@@ -98,13 +101,20 @@ describe("rowMenu", () => {
 
   test("a detached worktree can be removed by its folder, but not merged", () => {
     const detached = wt("/r/app.tmp", null, ACTIVE);
-    const items = rowMenu("/r/app", detached, CLICK);
+    const items = rowMenu(APP, detached, CLICK);
     expect(labels(items)).toEqual(["Open", "Remove…", "Copy path", "Reveal in Finder"]);
     expect(items[1]?.action).toEqual({
       _tag: "Remove",
       target: { main: "/r/app", path: "/r/app.tmp", branch: "/r/app.tmp" },
       dirty: false,
     });
+  });
+});
+
+describe("rowMenu on another machine", () => {
+  test("offers no Reveal in Finder: the folder isn't on this machine", () => {
+    const items = rowMenu({ machine: "linux", root: "/r/app" }, FEAT, CLICK);
+    expect(labels(items)).not.toContain("Reveal in Finder");
   });
 });
 
@@ -165,8 +175,6 @@ describe("cleanupAction", () => {
   });
 });
 
-const APP = { machine: THIS_MACHINE, root: "/r/app" };
-
 describe("repoMenu", () => {
   const worktrees = [wt("/r/app", "main", MAIN), wt("/r/app.a", "a", MERGED), FEAT];
 
@@ -210,6 +218,11 @@ describe("repoMenu on another machine", () => {
       machine: "linux",
       root: "/r/app",
     });
+  });
+
+  test("offers no Reveal in Finder: the folder isn't on this machine", () => {
+    const items = repoMenu({ machine: "linux", root: "/r/app" }, [FEAT]);
+    expect(labels(items)).not.toContain("Reveal in Finder");
   });
 });
 

@@ -1226,8 +1226,8 @@ export default class Worktrunk extends View {
   }
 
   openRowMenu(row: RowView) {
-    Option.map(findWorktree(this.lists, row.key), ({ root, worktree }) =>
-      openMenu(row.label, rowMenu(root, worktree, row.click)),
+    Option.map(findWorktree(this.lists, row.key), ({ machine, root, worktree }) =>
+      openMenu(row.label, rowMenu({ machine, root }, worktree, row.click)),
     );
   }
 
