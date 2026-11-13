@@ -54,6 +54,7 @@ import {
 import {
   Files,
   findModBlock,
+  groupsKey,
   requestKey,
   roleOf,
   type Role,
@@ -145,7 +146,15 @@ import {
   type Settings,
 } from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
-import { clickCommand, focusedFolder, goTo, placeOf, spacePlaces, spacesInGone } from "./spaces.ts";
+import {
+  clickCommand,
+  focusedFolder,
+  goTo,
+  placeOf,
+  spaceGroups,
+  spacePlaces,
+  spacesInGone,
+} from "./spaces.ts";
 import {
   buildView,
   reposToRead,
@@ -199,6 +208,8 @@ const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
 const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
 const REQUEST_KEY = requestKey(__MOD_ID__);
+/** Each space's group, by space id, for the menus mod's sidebar labels. */
+const GROUPS_KEY = groupsKey(__MOD_ID__);
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `${__MOD_ID__}-job`;
 
@@ -1119,6 +1130,19 @@ export default class Worktrunk extends View {
     this.refresh(cx, ask);
   }
 
+  /**
+   * Publishes each space's group, on every machine, for the sidebar's labels. Only once
+   * repos are found, so a start doesn't clear the labels, and only when it changed: every
+   * mod renders again on a shared-state change.
+   */
+  publishGroups() {
+    if (!this.discovered) return;
+    const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
+    if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) {
+      setShared(GROUPS_KEY, groups);
+    }
+  }
+
   render(cx: Context) {
     // theme() is typed as plain strings, but the style methods want hex colours.
     const style: Style = { t: theme() as Colors, sizes: fontSizes() };
@@ -1145,6 +1169,7 @@ export default class Worktrunk extends View {
       later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
     }
     this.followFocus(cx, shown() && state.show === "current");
+    this.publishGroups();
 
     const view = buildView({
       repos: this.repos,

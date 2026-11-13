@@ -9554,6 +9554,8 @@ const SPACE_ACTS = [
 	"Merge",
 	"Remove"
 ];
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
+const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 
 // src/machines.ts
 /** This machine: the one the Herdr app runs on. */
@@ -11462,6 +11464,18 @@ const goTo = (places, wanted) => match$5(fromNullishOr(spacesOnWorktrees(places,
 		...wanted
 	})
 });
+/**
+* Each space's group, by space id, for the sidebar's labels: the group of the repo whose
+* worktree the space sits on, on the space's machine. As in `spacesOnWorktrees`, the
+* longest worktree path holding the space's place wins, across every repo there, so a
+* repo nested in another's folder keeps its own group. A repo whose list isn't read yet
+* counts its main checkout. Spaces on no repo, or on a repo in Other (which the panel
+* shows with no group), are left out.
+*/
+const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(({ space, machine, place }) => repos.filter((repo) => repo.machine === machine).flatMap((repo) => (lists.get(repoKey(repo))?.worktrees.map((w) => w.path) ?? [repo.root]).filter((path) => isUnder(place, path)).map((path) => ({
+	path,
+	group: repo.group
+}))).reduce((best, on) => best[0] && best[0].path.length >= on.path.length ? best : [on], []).filter((on) => on.group !== OTHER).map((on) => [space.id, on.group])));
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -12065,6 +12079,8 @@ const SYNC_RECORD = `iangregsondev-sync.json`;
 const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
 const REQUEST_KEY = requestKey("iangregsondev-worktrunk");
+/** Each space's group, by space id, for the menus mod's sidebar labels. */
+const GROUPS_KEY = groupsKey("iangregsondev-worktrunk");
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
@@ -12853,6 +12869,16 @@ var Worktrunk = class extends View {
 		this.ciAt = none();
 		this.refresh(cx, ask);
 	}
+	/**
+	* Publishes each space's group, on every machine, for the sidebar's labels. Only once
+	* repos are found, so a start doesn't clear the labels, and only when it changed: every
+	* mod renders again on a shared-state change.
+	*/
+	publishGroups() {
+		if (!this.discovered) return;
+		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
+		if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
+	}
 	render(cx) {
 		const style = {
 			t: theme(),
@@ -12878,6 +12904,7 @@ var Worktrunk = class extends View {
 		if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
 		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
 		this.followFocus(cx, shown() && state.show === "current");
+		this.publishGroups();
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,
