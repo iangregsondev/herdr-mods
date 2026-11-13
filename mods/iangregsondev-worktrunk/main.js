@@ -10541,6 +10541,14 @@ const dialogTitle = (state) => {
 		onSome: ({ machine, root }) => `${what} ${where} ${lastSegment(root)}${machine === null ? "" : ` on ${machine}`}`
 	});
 };
+/** What the dialog says at its step: see `DialogCopy`. */
+const dialogCopy = (state) => ({
+	placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link",
+	empty: isNone(state.repo) ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : state.mode === "open" ? "No worktree matches." : "Type a branch name to create it.",
+	footer: isNone(state.repo) ? "↑↓ choose · Enter picks the repo · Esc closes" : state.mode === "open" ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+	offersBase: isSome(state.repo) && state.mode === "new",
+	worktreeHint: (path) => state.mode === "open" ? lastSegment(path) : "open worktree"
+});
 /** The hint beside a repo the dialog offers: where it is, and on which machine. */
 const repoHint = ({ machine, root }, home) => machine === null ? tildePath(root, home) : `${machine}: ${root}`;
 
@@ -13049,7 +13057,7 @@ var Worktrunk = class extends View {
 	}
 	/** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
 	newInput(dialog, state) {
-		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link" });
+		const input = InputState.new({ placeholder: dialogCopy(state).placeholder });
 		input.on("change", (_event, cx) => {
 			dialog().state = retyped(dialog().state);
 			cx.notify();
@@ -13699,12 +13707,12 @@ var Worktrunk = class extends View {
 		const lines = linesFor(state, dialog.input.value());
 		const at = highlight(state, lines);
 		const picking = isNone(state.repo);
-		const opening = state.mode === "open";
+		const copy = dialogCopy(state);
 		const title = dialogTitle(state);
 		const describe = (line) => {
 			switch (line._tag) {
 				case "Repo": return [lastSegment(line.repo.root), repoHint(line.repo, home())];
-				case "Worktree": return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
+				case "Worktree": return [line.branch, copy.worktreeHint(line.path)];
 				case "Branch": return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
 				case "Typed": return [line.name, line.shortcut ? "ask wt" : "new branch"];
 			}
@@ -13713,7 +13721,6 @@ var Worktrunk = class extends View {
 			const [label, hint] = describe(line);
 			return h_flex().id(`line-${i}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer().when(i === at, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pickNew(cx, dialog, some(line))).child(line._tag === "Typed" && !line.shortcut ? icon("plus", 12, t.accent) : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree")).child(div().flex_none().max_w(300).truncate().child(label)).child(div().flex_1()).child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint));
 		};
-		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : opening ? "No worktree matches." : "Type a branch name to create it.";
 		const baseOption = (key, label) => h_flex().id(`base-${key}`).h(24).px(9).when(key === "default", (el) => el.flex_none()).min_w(0).items_center().rounded(12).cursor_pointer().border_1().border_color(state.base === key ? t.accent : t.border).bg(state.base === key ? t.selected : t.popover).text_size(sizes.label).text_color(state.base === key ? t.foreground : t.muted).on_click((_e, cx) => {
 			if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
 			cx.notify();
@@ -13726,7 +13733,7 @@ var Worktrunk = class extends View {
 			else return;
 			cx.stop_propagation();
 			cx.notify();
-		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking && !opening, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : opening ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
+		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(copy.offersBase, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)));
 	}
 	/**
 	* The Settings dialog: group folders (name, order, remove, add), the scan's depth and

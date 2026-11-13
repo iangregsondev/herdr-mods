@@ -42,6 +42,7 @@ import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import {
   flippedBase,
   highlight,
+  dialogCopy,
   dialogTitle,
   linesFor,
   moved,
@@ -672,11 +673,7 @@ export default class Worktrunk extends View {
   /** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
   newInput(dialog: () => NewDialog, state: DialogState): InputState {
     const input = InputState.new({
-      placeholder: Option.isNone(state.repo)
-        ? "Repo name"
-        : state.mode === "open"
-          ? "Worktree's branch"
-          : "Branch name, pr:123 or a PR link",
+      placeholder: dialogCopy(state).placeholder,
     });
     input.on("change", (_event, cx) => {
       dialog().state = retyped(dialog().state);
@@ -1533,14 +1530,14 @@ export default class Worktrunk extends View {
     const lines = linesFor(state, dialog.input.value());
     const at = highlight(state, lines);
     const picking = Option.isNone(state.repo);
-    const opening = state.mode === "open";
+    const copy = dialogCopy(state);
     const title = dialogTitle(state);
     const describe = (line: Line): readonly [string, string] => {
       switch (line._tag) {
         case "Repo":
           return [lastSegment(line.repo.root), repoHint(line.repo, home())];
         case "Worktree":
-          return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
+          return [line.branch, copy.worktreeHint(line.path)];
         case "Branch":
           return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
         case "Typed":
@@ -1573,13 +1570,6 @@ export default class Worktrunk extends View {
           .child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint))
       );
     };
-    const empty = picking
-      ? "No repo matches."
-      : state.reading
-        ? "Reading worktrees and branches…"
-        : opening
-          ? "No worktree matches."
-          : "Type a branch name to create it.";
     const baseOption = (key: Base, label: string) =>
       h_flex()
         .id(`base-${key}`)
@@ -1646,7 +1636,7 @@ export default class Worktrunk extends View {
             .overflow_y_scrollbar()
             .children(lines.map(row))
             .when(lines.length === 0, (el) =>
-              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)),
+              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)),
             ),
         )
         .children(
@@ -1654,7 +1644,7 @@ export default class Worktrunk extends View {
             div().text_size(sizes.label).text_color(t.ansi1).child(error),
           ),
         )
-        .when(!picking && !opening, (el) =>
+        .when(copy.offersBase, (el) =>
           el.child(
             h_flex()
               .w_full()
@@ -1671,18 +1661,7 @@ export default class Worktrunk extends View {
               .children(bases),
           ),
         )
-        .child(
-          div()
-            .text_size(sizes.label)
-            .text_color(t.dim)
-            .child(
-              picking
-                ? "↑↓ choose · Enter picks the repo · Esc closes"
-                : opening
-                  ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes"
-                  : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
-            ),
-        ),
+        .child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)),
     );
   }
 
