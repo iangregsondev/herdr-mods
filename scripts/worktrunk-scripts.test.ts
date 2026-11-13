@@ -34,16 +34,46 @@ import {
   writeFile,
 } from "./test-support.ts";
 
-/** `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. */
-const scriptFile = (body: string): string =>
-  writeFile(tempDir(), "script.sh", shArgs(body, [])[1] ?? "");
+/**
+ * `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. Its
+ * login shell is `shell`; by default one that keeps the PATH the test gives, so a test's
+ * stand-in commands are found.
+ */
+const scriptFile = (body: string, shell: string = keepPathShell()): string =>
+  writeFile(tempDir(), "script.sh", `SHELL=${quote(shell)}\n${shArgs(body, [])[1] ?? ""}`);
+
+/** A login shell whose PATH is the one it was started with. */
+const keepPathShell = (): string => {
+  const bin = join(tempDir(), "bin");
+  fakeBin(bin, "loginsh", 'exec /bin/sh -c "$3"');
+  return join(bin, "loginsh");
+};
 
 describe("shArgs's script", () => {
-  test("appends the folders wt and git are usually installed in to PATH", () => {
-    const run = runSh(scriptFile('printf %s "$PATH"'), {
-      env: { PATH: "/usr/bin:/bin", HOME: "/home/me" },
+  test("runs with the PATH of the person's login shell, whatever its profile prints", () => {
+    const bin = join(tempDir(), "bin");
+    fakeBin(
+      bin,
+      "loginsh",
+      [
+        '[ "$1" = -l ] || { printf "not a login shell"; exit 1; }',
+        "printf 'welcome\\n'",
+        'PATH=/login/bin exec /bin/sh -c "$3"',
+      ].join("\n"),
+    );
+    const run = runSh(scriptFile('printf %s "$PATH"', join(bin, "loginsh")), {
+      env: { PATH: "/usr/bin:/bin" },
     });
-    expect(run.stdout).toBe("/usr/bin:/bin:/home/me/.local/bin:/opt/homebrew/bin:/usr/local/bin");
+    expect(run.stdout).toBe("/login/bin");
+  });
+
+  test("with no login shell in $SHELL, runs nothing and fails saying why", () => {
+    const run = runSh(scriptFile("printf ran", ""), { env: { PATH: "/usr/bin:/bin" } });
+    expect([run.code, run.stdout, run.stderr]).toEqual([
+      127,
+      "",
+      "worktrunk: $SHELL is empty, so the login shell's PATH is unknown\n",
+    ]);
   });
 });
 
