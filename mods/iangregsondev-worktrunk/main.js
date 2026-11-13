@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { Input, InputState, h_flex, v_flex } from "gpui-base";
-import { appHome, closeOverlay, exec, focused, hc, home, layout, nextCommand, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, focused, hc, home, layout, machines, nextCommand, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -6447,6 +6447,8 @@ const tapEffectCont = function(value) {
 /** @internal */
 const asSome$1 = (self) => map$1(self, some);
 /** @internal */
+const andThen$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? returnPayload : andThenCont, f));
+/** @internal */
 const tap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? tapEffectCont : tapCont, f));
 /** @internal */
 const asVoid$1 = (self) => new ContImpl(self, returnPayload, exitVoid);
@@ -6510,6 +6512,13 @@ const OnFailureImpl = function(self, f) {
 	this[contE] = f;
 };
 OnFailureImpl.prototype = OnFailureProto;
+/** @internal */
+const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(self, (cause) => {
+	const eb = filter(cause);
+	return isFailure(eb) ? failCause(eb.failure) : f(eb.success, cause);
+}));
+/** @internal */
+const catch_$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
 /** @internal */
 const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
@@ -8526,6 +8535,89 @@ const fromOption = fromOption$1;
 */
 const flatMap = flatMap$1;
 /**
+* Runs this effect and then runs another effect, optionally using the first
+* effect's success value to choose the next effect.
+*
+* **When to use**
+*
+* Use when you need one effect to run after another and the second effect may
+* depend on the first effect's success value.
+*
+* **Details**
+*
+* When the second argument is an `Effect`, the first success value is discarded
+* and the returned effect produces the second effect's value. When the second
+* argument is a function, it receives the first success value and must return
+* the next `Effect`.
+*
+* Failures or requirements from either effect are preserved in the returned
+* effect.
+*
+* **Example** (Choosing andThen syntax variants)
+*
+* ```ts import.meta.vitest
+* import { Effect, pipe } from "effect"
+* const output: Array<unknown> = []
+*
+* const myEffect = Effect.succeed(1)
+* const anotherEffect = Effect.succeed("done")
+*
+* const transformedWithPipe = pipe(myEffect, Effect.andThen(anotherEffect))
+* const transformedWithDataFirst = Effect.andThen(myEffect, anotherEffect)
+* const transformedWithMethod = myEffect.pipe(Effect.andThen(anotherEffect))
+*
+* void output.push(Effect.runSync(Effect.all([
+*   transformedWithPipe,
+*   transformedWithDataFirst,
+*   transformedWithMethod
+* ])))
+* output // => [['done', 'done', 'done']]
+* ```
+*
+* **Example** (Sequencing a discount calculation after fetching a total)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, pipe } from "effect"
+*
+* class DiscountRateError extends Data.TaggedError("DiscountRateError")<{}> {}
+*
+* // Function to apply a discount safely to a transaction amount
+* const applyDiscount = (
+*   total: number,
+*   discountRate: number
+* ): Effect.Effect<number, DiscountRateError> =>
+*   discountRate === 0
+*     ? Effect.fail(new DiscountRateError())
+*     : Effect.succeed(total - (total * discountRate) / 100)
+*
+* // Simulated asynchronous task to fetch a transaction amount from database
+* const fetchTransactionAmount = Effect.promise(() => Promise.resolve(100))
+*
+* // Using Effect.map and Effect.flatMap
+* const result1 = pipe(
+*   fetchTransactionAmount,
+*   Effect.map((amount) => amount * 2),
+*   Effect.flatMap((amount) => applyDiscount(amount, 5))
+* )
+*
+* await Effect.runPromise(result1) // => 190
+*
+* // Using Effect.andThen
+* const result2 = pipe(
+*   fetchTransactionAmount,
+*   Effect.andThen((amount) => Effect.succeed(amount * 2)),
+*   Effect.andThen((amount) => applyDiscount(amount, 5))
+* )
+*
+* await Effect.runPromise(result2) // => 190
+* ```
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const andThen = andThen$1;
+/**
 * Runs a side effect with the result of an effect without changing the original
 * value.
 *
@@ -8822,6 +8914,7 @@ const asSome = asSome$1;
 * @since 2.0.0
 */
 const asVoid = asVoid$1;
+const catch_ = catch_$1;
 /**
 * Catches and handles specific errors by their `_tag` field, which is used as a
 * discriminator.
@@ -9583,6 +9676,22 @@ const repoOfKey = (key) => {
 		root: key.slice(slash)
 	};
 };
+/** Herdr's machine list (`machines()`) by machine. */
+const machineStates = (list) => new Map(list.map((machine) => [machine.name, machine.layout]));
+/**
+* What a machine's state says before anything runs there; none when it can be read. This
+* machine is always read: its commands run here, whatever its layout's state.
+*/
+const statusOf$1 = (states, machine) => {
+	switch (machine === null ? "ready" : states.get(machine)) {
+		case "loading": return some({ _tag: "Connecting" });
+		case "unavailable": return some({
+			_tag: "Down",
+			reason: "Herdr can't reach it"
+		});
+		default: return none();
+	}
+};
 
 // src/settings.ts
 const DEFAULT_SETTINGS = {
@@ -9942,6 +10051,32 @@ const OWNERS_SCRIPT = `for dir in "$@"; do
 done | sort -u`;
 /** Lists the worktrees of the repo at $1. */
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
+/** How many repos the batched list reads at once. */
+const LISTS_AT_ONCE = 4;
+/**
+* Lists the worktrees of every repo in the arguments, in one run: a few repos at a time,
+* each answer kept in a private temp folder, then printed in the arguments' order. Each
+* repo's record starts with the ASCII record separator, then `<exit code><TAB><folder>`
+* on its own line, then what \`wt list --format=json\` printed: its JSON, or its errors
+* when it failed.
+*/
+const LISTS_SCRIPT = `tmp=$(mktemp -d) || exit
+trap 'rm -rf "$tmp"' EXIT
+i=0
+for repo in "$@"; do
+  i=$((i + 1))
+  { (cd "$repo" && wt list --format=json) >"$tmp/$i.out" 2>"$tmp/$i.err"; echo $? >"$tmp/$i.code"; } &
+  [ $((i % ${LISTS_AT_ONCE})) -eq 0 ] && wait
+done
+wait
+i=0
+rs=$(printf '\\036')
+for repo in "$@"; do
+  i=$((i + 1))
+  code=$(cat "$tmp/$i.code" 2>/dev/null) || code=127
+  printf '%s%s\\t%s\\n' "$rs" "$code" "$repo"
+  if [ "$code" = 0 ]; then cat "$tmp/$i.out"; else cat "$tmp/$i.err"; fi
+done`;
 /** Lists the worktrees of the repo at $1 with their CI. */
 const CI_SCRIPT = `${LIST_SCRIPT} --full`;
 /** The local and origin branches of the repo at $1, one full ref name per line. */
@@ -10622,7 +10757,7 @@ const spaceStep = (places, space, act) => match$5(fromNullishOr(places.find((p) 
 });
 
 // src/sync.ts
-const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
+const parseRecord$1 = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
 	layout: text(at(json, "layout")),
 	version: text(at(json, "version"))
 }));
@@ -10632,7 +10767,7 @@ const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all
 * the panel last showed this toast for, so it shows once per version. None when there is
 * no readable record, the versions match, or the installed version is unknown.
 */
-const syncNotice = (record, installed, told) => record.pipe(flatMap$3(parseRecord), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
+const syncNotice = (record, installed, told) => record.pipe(flatMap$3(parseRecord$1), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
 	title: "Herdr updated: run herdr:sync",
 	body: `Your "${built.layout}" layout was built from Herdr ${built.version}; Herdr is now ${installed}. Run \`vp run herdr:sync\` in herdr-mods.`
 })));
@@ -10708,6 +10843,29 @@ const parseList = (output) => parseJson(output).pipe(flatMap$2((list) => map$2(i
 	const asked = at(list, "collected", "ci") === true;
 	return items.flatMap((item) => toArray(toWorktree(item, asked)));
 })));
+/** The last line of `text` that has anything on it; empty when none does. */
+const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+/** Starts each repo's record in the batched read's output (ASCII record separator). */
+const RECORD_START = "";
+/** One record: `<exit code><TAB><folder>`, then on the next lines what `wt list` printed. */
+const parseRecord = (record) => {
+	const newline = record.indexOf("\n");
+	const head = newline < 0 ? record : record.slice(0, newline);
+	const body = newline < 0 ? "" : record.slice(newline + 1);
+	const tab = head.indexOf("	");
+	if (tab < 0) return [];
+	const code = head.slice(0, tab);
+	return [[head.slice(tab + 1), code === "0" ? parseList(body) : fail$2(lastLine(body) || `wt list failed (exit ${code})`)]];
+};
+/**
+* Each repo's `wt list` from the batched read's output, by its folder: its worktrees, or
+* the failed read's last error line.
+*/
+const parseLists = (stdout, roots) => {
+	const read = new Map(stdout.split("").flatMap(parseRecord));
+	const unanswered = fail$2("wt list gave no answer for it");
+	return new Map(roots.map((root) => [root, read.get(root) ?? unanswered]));
+};
 
 // src/shell.ts
 /** The promise rejected: the program couldn't start (not installed, no such folder). */
@@ -10770,6 +10928,19 @@ const worktreesFrom = fnUntraced(function* (label, body, repo, timeout) {
 /** The worktrees of `repo`, from `wt list --format=json` on its machine. */
 const wtList = fn("wtList")(function* (repo) {
 	return yield* worktreesFrom("wt list", LIST_SCRIPT, repo);
+});
+/** The batched list reads a machine's repos a few at a time, so it gets longer than one script. */
+const LISTS_TIMEOUT = 18e4;
+/**
+* The worktrees of every repo in `roots` on `machine`, from one batched `wt list` run
+* there, by folder: each repo's list, or its read's one-line reason.
+*/
+const wtLists = fn("wtLists")(function* (machine, roots) {
+	const run = yield* runScript("wt list", LISTS_SCRIPT, roots, {
+		on: machine,
+		timeout: LISTS_TIMEOUT
+	});
+	return parseLists(run.stdout, roots);
 });
 /** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
 const CI_TIMEOUT = 24e4;
@@ -10839,8 +11010,6 @@ const failureText = (error) => {
 };
 /** A rejection's reason as text. */
 const causeText = (cause) => cause instanceof Error ? cause.message : String(cause);
-/** The last line of `text` that has anything on it; empty when none does. */
-const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
 /**
 * The person's login shell couldn't be found, so a job would run with the wrong PATH.
 * `reason` says why.
@@ -10961,39 +11130,77 @@ const defaultsBecause = (what, failed, settled) => ({
 });
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
-/** The machines the group folders are on, each once, in the settings' order. */
-const folderMachines = (settings) => Array.from(new Set(settings.folders.map((folder) => folder.machine)));
 /**
-* Scans the group folders on every machine they are on, each on its own machine, after
-* reading that machine's home there (this machine's is `home`).
+* Searches `machine`: scans its group folders when `scan` says to (after reading its
+* home there; this machine's is `home`), and looks up the repos its open spaces
+* (`places`) are in.
 */
-const scanAll = fnUntraced(function* (settings, home) {
-	const machines = folderMachines(settings);
-	const homes = new Map(yield* forEach(machines, (machine) => machine === null ? succeed([machine, home]) : map(machineHome(machine), (found) => [machine, found])));
-	const scans = yield* forEach(machines, (machine) => scanRepos(settings, machine, homes));
+const searchOn = fnUntraced(function* (settings, machine, home, places, scan) {
+	const found = !(scan && settings.folders.some((folder) => folder.machine === machine)) ? none() : some(machine === null ? home : yield* machineHome(machine));
 	return {
-		repos: scans.flatMap((scan) => scan.repos),
-		missing: scans.flatMap((scan) => scan.missing),
-		homes: new Map([[null, home], ...homes])
+		machine,
+		home: found,
+		scan: isSome(found) ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, found.value]])) : {
+			repos: [],
+			missing: []
+		},
+		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
 	};
 });
-/** The repos the folders are in, each looked up on its own machine. */
-const ownersOf = fnUntraced(function* (places) {
-	const machines = Array.from(new Set(places.map((place) => place.machine)));
-	return (yield* forEach(machines, (machine) => reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine))).flat();
-});
 /**
-* The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
-* repos the open spaces are in (`places`, each on its machine) and the Current repo (`current`), less the
-* hidden ones. A failure is its one-line reason.
+* `machine`'s search, or the status saying why it couldn't run there: its state in
+* `states`, or its failure. This machine's failure fails the search as a whole; another
+* machine's is that machine's alone.
 */
-const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none()) {
-	const scanned = isSome(lastScan) ? lastScan.value : yield* scanAll(settings, home);
-	const owners = yield* ownersOf(places);
-	const repos = reposFrom(scanned.repos, [...owners, ...toArray(current)], settings.folders, scanned.homes);
+const searchOrStatus = (settings, machine, home, places, scan, states) => {
+	const held = statusOf$1(states, machine);
+	if (isSome(held)) return succeed(fail$2(held.value));
+	const search = searchOn(settings, machine, home, places, scan).pipe(map((found) => succeed$3(found)));
+	return machine === null ? search : search.pipe(catch_((failed) => succeed(fail$2({
+		_tag: "Down",
+		reason: failureText(failed)
+	}))));
+};
+/**
+* The repos to list: the folder scan's (run again on every machine when `lastScan` is
+* none, else only on the machines it lacks) plus the repos the open spaces are in
+* (`places`, each on its machine) and the Current repo (`current`), less the hidden ones.
+* Each machine is searched on its own, side by side. A machine Herdr's machine list
+* (`states`) says is connecting or unavailable runs nothing, and one whose search fails
+* gives up only its own repos: each gets its status. A failure on this machine is its
+* one-line reason.
+*/
+const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none(), states = /* @__PURE__ */ new Map()) {
+	const machines = Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
+	const searched = yield* forEach(machines, (machine) => searchOrStatus(settings, machine, home, places, match$5(lastScan, {
+		onNone: () => true,
+		onSome: (last) => !last.machines.includes(machine)
+	}), states).pipe(map((result) => ({
+		machine,
+		result
+	}))), { concurrency: "unbounded" });
+	const ok = searched.flatMap(({ result }) => toArray(getSuccess(result)));
+	const last = getOrElse$1(lastScan, () => ({
+		repos: [],
+		missing: [],
+		homes: /* @__PURE__ */ new Map([[null, home]]),
+		machines: []
+	}));
+	const scans = ok.flatMap((found) => toArray(map$3(found.home, (at) => ({
+		...found,
+		home: at
+	}))));
+	const scanned = {
+		repos: [...last.repos, ...scans.flatMap((found) => found.scan.repos)],
+		missing: [...last.missing, ...scans.flatMap((found) => found.scan.missing)],
+		homes: new Map([...last.homes, ...scans.map((found) => [found.machine, found.home])]),
+		machines: [...last.machines, ...scans.map((found) => found.machine)]
+	};
+	const repos = reposFrom(scanned.repos, [...ok.flatMap((found) => found.owners), ...toArray(current)], settings.folders, scanned.homes);
 	return {
 		scanned,
-		repos: withoutHidden(repos, settings.hidden)
+		repos: withoutHidden(repos, settings.hidden),
+		statuses: new Map(searched.flatMap(({ machine, result }) => toArray(map$3(getFailure(result), (status) => [machine, status]))))
 	};
 }, asReason);
 /**
@@ -11058,6 +11265,27 @@ const holderRepo = fn("holderRepo")(function* (folder, machine) {
 		worktrees
 	});
 }, asReason);
+/**
+* Reads every repo's worktrees with one batched `wt list` per machine, the machines side
+* by side, handing each machine's answer to `keep` as it lands. A machine in `skip`
+* (connecting, or found down) runs nothing and gets that status.
+*/
+const readLists = (repos, skip, keep) => {
+	const machines = Array.from(new Set(repos.map((repo) => repo.machine)));
+	const held = machines.flatMap((machine) => toArray(map$3(fromNullishOr(skip.get(machine)), (status) => [machine, status])));
+	return sync(() => held.forEach(([machine, status]) => keep(machine, fail$2(status)))).pipe(andThen(forEach(machines.filter((machine) => !skip.has(machine)), (machine) => machineLists(machine, repos.filter((repo) => repo.machine === machine).map((repo) => repo.root)).pipe(tap((answer) => sync(() => keep(machine, answer)))), {
+		concurrency: "unbounded",
+		discard: true
+	})));
+};
+/** The batched list read of `roots` on `machine`, keyed by `repoKey`. */
+const machineLists = (machine, roots) => wtLists(machine, roots).pipe(map((lists) => succeed$3(new Map(Array.from(lists, ([root, list]) => [repoKey({
+	machine,
+	root
+}), list])))), catch_((failed) => succeed(fail$2({
+	_tag: "Down",
+	reason: failureText(failed)
+}))));
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 const readCi = fn("readCi")(function* (repo) {
 	return yield* wtCi(repo);
@@ -11260,6 +11488,17 @@ const foldList = (old, read) => match$4(read, {
 			onSome: (list) => list.worktrees
 		}),
 		error: some(error)
+	})
+});
+/** What the panel keeps after `machine`'s batched list read answers. */
+const keepLists = (kept, machine, answer) => match$4(answer, {
+	onFailure: (status) => ({
+		...kept,
+		machines: new Map([...kept.machines, [machine, status]])
+	}),
+	onSuccess: (read) => ({
+		...kept,
+		lists: new Map([...kept.lists, ...Array.from(read, ([key, list]) => [key, foldList(fromNullishOr(kept.lists.get(key)), list)])])
 	})
 });
 /** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
@@ -11759,11 +11998,11 @@ const reposInGroup = (scope) => match$5(selectedGroup(scope), {
 });
 /**
 * The repos worth reading: the selected chip's; in the Current view the Current repo
-* alone, or every repo (for the Open list) when the focused folder is in none.
+* alone, or every repo (for the Open list) when the focused folder is in none. None on a
+* machine that can't be read now.
 */
 const reposToRead = (scope) => {
-	if (scope.view.show !== "current") return reposInGroup(scope);
-	return scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos;
+	return (scope.view.show !== "current" ? reposInGroup(scope) : scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos).filter((repo) => !scope.machines.has(repo.machine));
 };
 const chipsOf = (snapshot) => {
 	const selected = selectedGroup(snapshot);
@@ -11882,8 +12121,14 @@ const bodyOf = (snapshot, places) => {
 	};
 	return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
 };
+/** The one line for a machine that can't be read now. */
+const machineLine = (machine, status) => status._tag === "Connecting" ? `${machineName(machine)}: connecting…` : `Can't reach ${machineName(machine)}: ${status.reason}`;
 /** Everything the panel draws for `snapshot`. */
-const buildView = (snapshot) => {
+const buildView = (whole) => {
+	const snapshot = {
+		...whole,
+		repos: whole.repos.filter((repo) => !whole.machines.has(repo.machine))
+	};
 	const places = spacePlaces(snapshot.spaces, snapshot.panes);
 	return {
 		loading: snapshot.loading,
@@ -11897,7 +12142,8 @@ const buildView = (snapshot) => {
 		banners: [
 			...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)),
 			...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`)),
-			...snapshot.missingFolders.map((folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`)
+			...snapshot.missingFolders.map((folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`),
+			...Array.from(snapshot.machines, ([machine, status]) => machineLine(machine, status))
 		],
 		body: bodyOf(snapshot, places)
 	};
@@ -12175,10 +12421,10 @@ const LIST_EVERY = 2e4;
 const SCAN_EVERY = 6e5;
 const CI_EVERY = 3e5;
 /**
-* How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
-* runs out of open files when every repo's start together.
+* How many repos' CI is read at once. Each read spawns processes, and Herdr runs out of
+* open files when every repo's start together. Lists need no limit: each machine's are
+* read in one batched run.
 */
-const LIST_LIMIT = 6;
 const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
 const services = mergeAll(Shell.layer({
@@ -12371,6 +12617,8 @@ var Worktrunk = class extends View {
 	discovered = false;
 	discoverError = none();
 	lists = /* @__PURE__ */ new Map();
+	/** The machines that can't be read now, and why; their repos aren't listed or read. */
+	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
 	reads = NO_READS;
 	ci = /* @__PURE__ */ new Map();
@@ -12830,7 +13078,8 @@ var Worktrunk = class extends View {
 			discovered: this.discovered,
 			settings: this.settings,
 			view: viewState(),
-			current: this.currentRepo()
+			current: this.currentRepo(),
+			machines: this.machineStatus
 		});
 	}
 	/** The Current repo, with its group; Looking while it is first being looked up. */
@@ -12939,7 +13188,7 @@ var Worktrunk = class extends View {
 			machine: p.machine,
 			folder: p.place
 		}));
-		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess))), fail$2);
+		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess)), machineStates(machines())), fail$2);
 		if (isSuccess(found)) {
 			this.repos = found.success.repos;
 			this.scanned = some(found.success.scanned);
@@ -12948,14 +13197,19 @@ var Worktrunk = class extends View {
 				at: now
 			});
 			this.discoverError = none();
+			this.machineStatus = found.success.statuses;
 		} else this.discoverError = some(found.failure);
 		this.discovered = true;
 		cx.notify();
-		await readAll(this.reposToRead(), LIST_LIMIT, readList, (key, read) => {
-			const old = fromNullishOr(this.lists.get(key));
-			this.lists = new Map([...this.lists, [key, foldList(old, read)]]);
+		await runEdge(readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
+			const kept = keepLists({
+				lists: this.lists,
+				machines: this.machineStatus
+			}, machine, answer);
+			this.lists = kept.lists;
+			this.machineStatus = kept.machines;
 			cx.notify();
-		});
+		}), () => void 0);
 	}
 	/** Reads CI again with the next refresh, which `ask` starts. */
 	refreshWithCi(cx, ask) {
@@ -13010,6 +13264,7 @@ var Worktrunk = class extends View {
 				onNone: () => [],
 				onSome: (scan) => scan.missing
 			}),
+			machines: this.machineStatus,
 			settingsFile: SETTINGS_FILE,
 			spaces: spaces(),
 			panes: panes(),

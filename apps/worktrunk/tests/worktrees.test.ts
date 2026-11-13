@@ -1,6 +1,6 @@
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { parseList, type Worktree } from "../src/worktrees.ts";
+import { parseList, parseLists, type Worktree } from "../src/worktrees.ts";
 import ciStates from "./fixtures/ci-states.json?raw";
 import ci from "./fixtures/ci.json?raw";
 import reasons from "./fixtures/reasons.json?raw";
@@ -204,5 +204,34 @@ describe("parseList", () => {
   test("text that isn't wt's JSON is an error", () => {
     expect(Result.isFailure(parseList("not json"))).toBe(true);
     expect(parseList('{"items": 3}')).toEqual(Result.fail("wt list printed no list of worktrees"));
+  });
+});
+
+describe("parseLists", () => {
+  /** One repo's record in the batched read's output: its exit code and folder, then what it printed. */
+  const record = (code: number, root: string, body: string) => `\u001e${code}\t${root}\n${body}`;
+
+  test("each repo's worktrees by its folder, and a failed read as its last error line", () => {
+    const stdout = [
+      record(0, "/work/repo", FIXTURES.states),
+      record(1, "/work/gone", "warning: slow\nfatal: not a git repository\n"),
+    ].join("");
+    expect(parseLists(stdout, ["/work/repo", "/work/gone"])).toEqual(
+      new Map([
+        ["/work/repo", parseList(FIXTURES.states)],
+        ["/work/gone", Result.fail("fatal: not a git repository")],
+      ]),
+    );
+  });
+
+  test("a repo the output has no record for failed: the batch ended before it", () => {
+    expect(
+      parseLists(record(0, "/work/repo", FIXTURES.states), ["/work/repo", "/work/next"]),
+    ).toEqual(
+      new Map([
+        ["/work/repo", parseList(FIXTURES.states)],
+        ["/work/next", Result.fail("wt list gave no answer for it")],
+      ]),
+    );
   });
 });

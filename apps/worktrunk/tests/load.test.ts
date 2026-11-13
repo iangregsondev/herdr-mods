@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
-import { THIS_MACHINE } from "../src/machines.ts";
-import { Effect, Layer, Option, Result } from "effect";
+import { machineStates, THIS_MACHINE } from "../src/machines.ts";
+import { Effect, Fiber, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
   dialogFor,
@@ -14,6 +14,7 @@ import {
   readDialogRepo,
   readEach,
   readList,
+  readLists,
   runJob,
   saveSettings,
   settingsText,
@@ -318,11 +319,13 @@ describe("findRepos", () => {
             repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }],
             missing: [],
             homes: new Map([[THIS_MACHINE, "/h"]]),
+            machines: [THIS_MACHINE],
           },
           repos: [
             { machine: THIS_MACHINE, root: "/tmp/api", count: 2, group: "Other" },
             { machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" },
           ],
+          statuses: new Map(),
         }),
       );
     }),
@@ -349,6 +352,7 @@ describe("findRepos", () => {
         repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }],
         missing: [],
         homes: new Map([[THIS_MACHINE, "/h"]]),
+        machines: [THIS_MACHINE],
       };
       const found = yield* findRepos(settings, "/h", [local("/tmp")], Option.some(last)).pipe(
         Effect.provide(Shell.layer(api)),
@@ -358,6 +362,7 @@ describe("findRepos", () => {
         Result.succeed({
           scanned: last,
           repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3, group: "Work" }],
+          statuses: new Map(),
         }),
       );
       assert.deepStrictEqual(ran, ["owners"]);
@@ -499,6 +504,133 @@ describe("findRepos across machines", () => {
         ],
       );
     }),
+  );
+
+  it.effect("with a last scan, scans only the machines it lacks, such as one that was down", () =>
+    Effect.gen(function* () {
+      const settings = {
+        ...DEFAULT_SETTINGS,
+        folders: [
+          { name: "Work", path: "/w", machine: THIS_MACHINE },
+          { name: "Box", path: "~/code", machine: "linux" },
+        ],
+      };
+      const { api, ran } = machines(
+        new Map([
+          [THIS_MACHINE, { home: "/h", scan: "/w\t/w/new\t1\n" }],
+          ["linux", { home: "/srv", scan: "/srv/code\t/srv/code/api\t2\n" }],
+        ]),
+      );
+      const last = {
+        repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }],
+        missing: [],
+        homes: new Map([[THIS_MACHINE, "/h"]]),
+        machines: [THIS_MACHINE],
+      };
+      const found = yield* findRepos(settings, "/h", [], Option.some(last)).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Result.map(found, (f) => [f.repos.map((repo) => repo.root), f.scanned]),
+        Result.succeed([
+          ["/srv/code/api", "/w/zed"],
+          {
+            repos: [
+              { machine: THIS_MACHINE, root: "/w/zed", count: 1 },
+              { machine: "linux", root: "/srv/code/api", count: 2 },
+            ],
+            missing: [],
+            homes: new Map([
+              [THIS_MACHINE, "/h"],
+              ["linux", "/srv"],
+            ]),
+            machines: [THIS_MACHINE, "linux"],
+          },
+        ]),
+      );
+      assert.deepStrictEqual(
+        ran
+          .filter((run) => Array.isArray(run) && run[1] === "scan")
+          .map((run) => Array.isArray(run) && run[0]),
+        ["linux"],
+      );
+    }),
+  );
+});
+
+describe("findRepos with a machine down", () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    folders: [
+      { name: "Work", path: "/w", machine: THIS_MACHINE },
+      { name: "Box", path: "/srv", machine: "linux" },
+    ],
+  };
+
+  /**
+   * A Herdr API where this machine answers the scan and owners scripts and every run on
+   * `linux` fails with `error`; records each run as `[machine, what]`.
+   */
+  const linuxDown = (error: string) => {
+    const ran: unknown[] = [];
+    const api: ExecApi = {
+      hc: noHc,
+      exec: (_command, args = [], options) => {
+        const on = options?.on ?? null;
+        const body = args[1] ?? "";
+        const what = body.includes("walk()")
+          ? "scan"
+          : body.includes("git-common-dir")
+            ? "owners"
+            : "home";
+        ran.push([on, what]);
+        if (on === "linux") return Promise.resolve({ code: 255, stdout: "", stderr: error });
+        const stdout = what === "scan" ? "/w\t/w/zed\t1\n" : what === "owners" ? "" : "/h";
+        return Promise.resolve({ code: 0, stdout, stderr: "" });
+      },
+    };
+    return { api, ran };
+  };
+
+  it.effect("this machine's repos are still found, and the machine is down with the error", () =>
+    Effect.gen(function* () {
+      const { api } = linuxDown("ssh: connect to host linux: timed out\n");
+      const found = yield* findRepos(settings, "/h", [], Option.none()).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual<unknown>(
+        Result.map(found, (f) => [f.repos, f.statuses]),
+        Result.succeed([
+          [{ machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" }],
+          new Map([["linux", { _tag: "Down", reason: "ssh: connect to host linux: timed out" }]]),
+        ]),
+      );
+    }),
+  );
+
+  it.effect(
+    "a machine still connecting runs nothing and is connecting; this machine is searched",
+    () =>
+      Effect.gen(function* () {
+        const { api, ran } = linuxDown("never reached");
+        const states = machineStates([{ name: "linux", layout: "loading" }]);
+        const found = yield* findRepos(
+          settings,
+          "/h",
+          [{ machine: "linux", folder: "/srv/api" }],
+          Option.none(),
+          Option.none(),
+          states,
+        ).pipe(Effect.provide(Shell.layer(api)));
+        assert.deepStrictEqual<unknown>(
+          Result.map(found, (f) => [f.repos.map((repo) => repo.root), f.statuses]),
+          Result.succeed([["/w/zed"], new Map([["linux", { _tag: "Connecting" }]])]),
+        );
+        assert.deepStrictEqual(
+          ran.filter((run) => Array.isArray(run) && run[0] === "linux"),
+          [],
+        );
+      }),
   );
 });
 
@@ -861,6 +993,126 @@ describe("readList", () => {
       };
       const list = yield* readList(here("/gone")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(list, Result.fail("fatal: not a git repository"));
+    }),
+  );
+});
+
+describe("readLists", () => {
+  /**
+   * A Herdr API whose batched list answers every repo it is given with an empty list,
+   * except on the machines in `failing`, whose run fails with that error; records each run
+   * as `[machine, folders]`.
+   */
+  const batches = (failing: ReadonlyMap<string | null, string> = new Map()) => {
+    const ran: (readonly [string | null, readonly string[]])[] = [];
+    const api: ExecApi = {
+      hc: noHc,
+      exec: (_command, args = [], options) => {
+        const on = options?.on ?? null;
+        const roots = args.slice(3);
+        ran.push([on, roots]);
+        const error = failing.get(on);
+        return error === undefined
+          ? Promise.resolve({
+              code: 0,
+              stdout: roots.map((root) => `\u001e0\t${root}\n[]`).join(""),
+              stderr: "",
+            })
+          : Promise.resolve({ code: 255, stdout: "", stderr: error });
+      },
+    };
+    return { api, ran };
+  };
+
+  it.effect("one batched wt list per machine, each machine's lists kept by repo", () =>
+    Effect.gen(function* () {
+      const { api, ran } = batches();
+      const kept: unknown[] = [];
+      yield* readLists(
+        [here("/a"), { machine: "linux", root: "/srv/c" }, here("/b")],
+        new Map(),
+        (machine, answer) => kept.push([machine, answer]),
+      ).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(ran, [
+        [THIS_MACHINE, ["/a", "/b"]],
+        ["linux", ["/srv/c"]],
+      ]);
+      assert.deepStrictEqual(kept, [
+        [
+          THIS_MACHINE,
+          Result.succeed(
+            new Map([
+              ["/a", Result.succeed([])],
+              ["/b", Result.succeed([])],
+            ]),
+          ),
+        ],
+        ["linux", Result.succeed(new Map([["linux:/srv/c", Result.succeed([])]]))],
+      ]);
+    }),
+  );
+
+  it.effect("a machine still connecting runs nothing and is kept as connecting", () =>
+    Effect.gen(function* () {
+      const { api, ran } = batches();
+      const kept: unknown[] = [];
+      yield* readLists(
+        [here("/a"), { machine: "linux", root: "/srv/c" }],
+        new Map([["linux", { _tag: "Connecting" } as const]]),
+        (machine, answer) => kept.push([machine, answer]),
+      ).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(ran, [[THIS_MACHINE, ["/a"]]]);
+      assert.deepStrictEqual(kept, [
+        ["linux", Result.fail({ _tag: "Connecting" })],
+        [THIS_MACHINE, Result.succeed(new Map([["/a", Result.succeed([])]]))],
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a machine whose batched run fails is down with the error; this machine's lists still land",
+    () =>
+      Effect.gen(function* () {
+        const { api } = batches(new Map([["linux", "ssh: connect to host linux: timed out\n"]]));
+        const kept: unknown[] = [];
+        yield* readLists(
+          [here("/a"), { machine: "linux", root: "/srv/c" }],
+          new Map(),
+          (machine, answer) => kept.push([machine, answer]),
+        ).pipe(Effect.provide(Shell.layer(api)));
+        assert.deepStrictEqual(kept, [
+          [THIS_MACHINE, Result.succeed(new Map([["/a", Result.succeed([])]]))],
+          ["linux", Result.fail({ _tag: "Down", reason: "ssh: connect to host linux: timed out" })],
+        ]);
+      }),
+  );
+
+  it.live("this machine's lists land while another machine's run hangs", () =>
+    Effect.gen(function* () {
+      const landed = { resolve: (): void => undefined };
+      const landing = new Promise<string>((resolve) => {
+        landed.resolve = () => resolve("landed");
+      });
+      const api: ExecApi = {
+        hc: noHc,
+        exec: (_command, args = [], options) =>
+          options?.on === "linux"
+            ? new Promise(() => undefined)
+            : Promise.resolve({ code: 0, stdout: `\u001e0\t${args[3]}\n[]`, stderr: "" }),
+      };
+      const fiber = yield* readLists(
+        [{ machine: "linux", root: "/srv/c" }, here("/a")],
+        new Map(),
+        (machine) => {
+          if (machine === THIS_MACHINE) landed.resolve();
+        },
+      ).pipe(Effect.provide(Shell.layer(api)), Effect.forkChild);
+      const first = yield* Effect.race(
+        Effect.promise(() => landing),
+        Effect.sleep("200 millis").pipe(Effect.as("waited on linux")),
+      );
+      yield* Fiber.interrupt(fiber);
+      assert.strictEqual(first, "landed");
     }),
   );
 });

@@ -133,3 +133,46 @@ export const parseList = (output: string): Result.Result<readonly Worktree[], st
       }),
     ),
   );
+
+/** The last line of `text` that has anything on it; empty when none does. */
+export const lastLine = (text: string): string =>
+  text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+
+/** Starts each repo's record in the batched read's output (ASCII record separator). */
+export const RECORD_START = "\u001e";
+
+/** One record: `<exit code><TAB><folder>`, then on the next lines what `wt list` printed. */
+const parseRecord = (
+  record: string,
+): readonly (readonly [string, Result.Result<readonly Worktree[], string>])[] => {
+  const newline = record.indexOf("\n");
+  const head = newline < 0 ? record : record.slice(0, newline);
+  const body = newline < 0 ? "" : record.slice(newline + 1);
+  const tab = head.indexOf("\t");
+  if (tab < 0) return [];
+  const code = head.slice(0, tab);
+  const root = head.slice(tab + 1);
+  return [
+    [
+      root,
+      code === "0"
+        ? parseList(body)
+        : Result.fail(lastLine(body) || `wt list failed (exit ${code})`),
+    ],
+  ];
+};
+
+/**
+ * Each repo's `wt list` from the batched read's output, by its folder: its worktrees, or
+ * the failed read's last error line.
+ */
+export const parseLists = (
+  stdout: string,
+  roots: readonly string[],
+): ReadonlyMap<string, Result.Result<readonly Worktree[], string>> => {
+  const read = new Map(stdout.split(RECORD_START).flatMap(parseRecord));
+  const unanswered: Result.Result<readonly Worktree[], string> = Result.fail(
+    "wt list gave no answer for it",
+  );
+  return new Map(roots.map((root) => [root, read.get(root) ?? unanswered]));
+};

@@ -1,7 +1,7 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
-import { repoKey, type Homes, type Located } from "./machines.ts";
+import { repoKey, type Homes, type Located, type Machine, type MachineStatus } from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -25,6 +25,38 @@ export const foldList = (
       _tag: "Read",
       worktrees: Option.match(old, { onNone: () => [], onSome: (list) => list.worktrees }),
       error: Option.some(error),
+    }),
+  });
+
+/** A machine's batched list read: each repo's list by its `repoKey`, or why the machine couldn't be read. */
+export type MachineLists = Result.Result<
+  ReadonlyMap<string, Result.Result<readonly Worktree[], string>>,
+  MachineStatus
+>;
+
+/** The repos' lists and the machines that can't be read, as the panel keeps them. */
+export interface KeptLists {
+  readonly lists: ReadonlyMap<string, RepoList>;
+  readonly machines: ReadonlyMap<Machine, MachineStatus>;
+}
+
+/** What the panel keeps after `machine`'s batched list read answers. */
+export const keepLists = (kept: KeptLists, machine: Machine, answer: MachineLists): KeptLists =>
+  Result.match(answer, {
+    onFailure: (status): KeptLists => ({
+      ...kept,
+      machines: new Map([...kept.machines, [machine, status]]),
+    }),
+    onSuccess: (read): KeptLists => ({
+      ...kept,
+      lists: new Map([
+        ...kept.lists,
+        ...Array.from(
+          read,
+          ([key, list]) =>
+            [key, foldList(Option.fromNullishOr(kept.lists.get(key)), list)] as const,
+        ),
+      ]),
     }),
   });
 

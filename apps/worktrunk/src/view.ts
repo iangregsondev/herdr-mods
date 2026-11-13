@@ -1,7 +1,7 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import { machineName, repoKey, type Machine } from "./machines.ts";
+import { machineName, repoKey, type Machine, type MachineStatus } from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
@@ -56,6 +56,8 @@ export interface Snapshot {
   readonly discoverError: Option.Option<string>;
   /** The group folders the last scan found missing, as it scanned them. */
   readonly missingFolders: readonly string[];
+  /** The machines that can't be read now, and why: each gets one line, and its repos none. */
+  readonly machines: ReadonlyMap<Machine, MachineStatus>;
   /** The settings file's name, for the empty-state hint. */
   readonly settingsFile: string;
   readonly spaces: readonly SpaceLike[];
@@ -495,11 +497,19 @@ export const reposInGroup = (scope: Scope): readonly Repo[] =>
 
 /**
  * The repos worth reading: the selected chip's; in the Current view the Current repo
- * alone, or every repo (for the Open list) when the focused folder is in none.
+ * alone, or every repo (for the Open list) when the focused folder is in none. None on a
+ * machine that can't be read now.
  */
-export const reposToRead = (scope: Scope & Pick<Snapshot, "current">): readonly Repo[] => {
-  if (scope.view.show !== "current") return reposInGroup(scope);
-  return scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos;
+export const reposToRead = (
+  scope: Scope & Pick<Snapshot, "current" | "machines">,
+): readonly Repo[] => {
+  const repos =
+    scope.view.show !== "current"
+      ? reposInGroup(scope)
+      : scope.current._tag === "InRepo"
+        ? [scope.current.repo]
+        : scope.repos;
+  return repos.filter((repo) => !scope.machines.has(repo.machine));
 };
 
 const chipsOf = (snapshot: Snapshot): readonly Chip[] => {
@@ -636,8 +646,19 @@ const bodyOf = (snapshot: Snapshot, places: readonly Place[]): Body => {
   return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
 };
 
+/** The one line for a machine that can't be read now. */
+const machineLine = (machine: Machine, status: MachineStatus): string =>
+  status._tag === "Connecting"
+    ? `${machineName(machine)}: connecting…`
+    : `Can't reach ${machineName(machine)}: ${status.reason}`;
+
 /** Everything the panel draws for `snapshot`. */
-export const buildView = (snapshot: Snapshot): PanelView => {
+export const buildView = (whole: Snapshot): PanelView => {
+  // A machine that can't be read has its one line instead of repos, so none shows stale.
+  const snapshot: Snapshot = {
+    ...whole,
+    repos: whole.repos.filter((repo) => !whole.machines.has(repo.machine)),
+  };
   const places = spacePlaces(snapshot.spaces, snapshot.panes);
   return {
     loading: snapshot.loading,
@@ -657,6 +678,7 @@ export const buildView = (snapshot: Snapshot): PanelView => {
       ...snapshot.missingFolders.map(
         (folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`,
       ),
+      ...Array.from(snapshot.machines, ([machine, status]) => machineLine(machine, status)),
     ],
     body: bodyOf(snapshot, places),
   };

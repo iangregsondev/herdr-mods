@@ -1,5 +1,6 @@
 // Which machine a repo lives on, and the key a repo is known by. Pure: no `herdr` or
 // `gpui` imports.
+import { Option } from "effect";
 
 /** A machine as Herdr names it (`hc machine ls`); null is this machine, as in `SpaceInfo`. */
 export type Machine = string | null;
@@ -42,4 +43,35 @@ export const repoOfKey = (key: string): RepoId => {
   return slash <= 0
     ? { machine: THIS_MACHINE, root: key }
     : { machine: key.slice(0, slash - 1), root: key.slice(slash) };
+};
+
+/** A machine's layout document as Herdr's machine list gives it. */
+export type MachineState = "loading" | "ready" | "unavailable";
+
+/** Each machine's state, by machine. */
+export type MachineStates = ReadonlyMap<Machine, MachineState>;
+
+/** Herdr's machine list (`machines()`) by machine. */
+export const machineStates = (
+  list: readonly { readonly name: Machine; readonly layout: MachineState }[],
+): MachineStates => new Map(list.map((machine) => [machine.name, machine.layout]));
+
+/** Why the panel can't read a machine now: still connecting, or down with a reason. */
+export type MachineStatus =
+  | { readonly _tag: "Connecting" }
+  | { readonly _tag: "Down"; readonly reason: string };
+
+/**
+ * What a machine's state says before anything runs there; none when it can be read. This
+ * machine is always read: its commands run here, whatever its layout's state.
+ */
+export const statusOf = (states: MachineStates, machine: Machine): Option.Option<MachineStatus> => {
+  switch (machine === THIS_MACHINE ? "ready" : states.get(machine)) {
+    case "loading":
+      return Option.some({ _tag: "Connecting" });
+    case "unavailable":
+      return Option.some({ _tag: "Down", reason: "Herdr can't reach it" });
+    default:
+      return Option.none();
+  }
 };

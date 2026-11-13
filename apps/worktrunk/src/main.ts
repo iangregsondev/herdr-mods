@@ -21,6 +21,7 @@ import {
   hc,
   home,
   layout,
+  machines,
   nextCommand,
   notify,
   openOverlay,
@@ -75,7 +76,7 @@ import {
   readCi,
   readDialogRepo,
   readEach,
-  readList,
+  readLists,
   runJob,
   saveSettings,
   settingsText,
@@ -109,7 +110,7 @@ import {
   ciDue,
   currentRepoOf,
   foldCi,
-  foldList,
+  keepLists,
   followFocus,
   IDLE,
   NO_READS,
@@ -131,8 +132,10 @@ import {
   repoOfKey,
   THIS_MACHINE,
   type Homes,
+  machineStates,
   type Located,
   type Machine,
+  type MachineStatus,
   type RepoId,
 } from "./machines.ts";
 import type { Repo } from "./repos.ts";
@@ -220,10 +223,10 @@ const LIST_EVERY = 20_000;
 const SCAN_EVERY = 10 * 60_000;
 const CI_EVERY = 5 * 60_000;
 /**
- * How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
- * runs out of open files when every repo's start together.
+ * How many repos' CI is read at once. Each read spawns processes, and Herdr runs out of
+ * open files when every repo's start together. Lists need no limit: each machine's are
+ * read in one batched run.
  */
-const LIST_LIMIT = 6;
 const CI_LIMIT = 3;
 
 /** Herdr's API, as the services call it. */
@@ -513,6 +516,8 @@ export default class Worktrunk extends View {
   discovered = false;
   discoverError: Option.Option<string> = Option.none();
   lists: ReadonlyMap<string, RepoList> = new Map();
+  /** The machines that can't be read now, and why; their repos aren't listed or read. */
+  machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
   reads = NO_READS;
   ci: ReadonlyMap<string, CiRead> = new Map();
@@ -995,6 +1000,7 @@ export default class Worktrunk extends View {
       settings: this.settings,
       view: viewState(),
       current: this.currentRepo(),
+      machines: this.machineStatus,
     });
   }
 
@@ -1110,6 +1116,7 @@ export default class Worktrunk extends View {
         due ? Option.none() : this.scanned,
         // The Current repo is listed even when no open space is in it.
         Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess)),
+        machineStates(machines()),
       ),
       Result.fail,
     );
@@ -1118,6 +1125,7 @@ export default class Worktrunk extends View {
       this.scanned = Option.some(found.success.scanned);
       if (due) this.lastScan = Option.some({ key, at: now });
       this.discoverError = Option.none();
+      this.machineStatus = found.success.statuses;
     } else {
       // The repos from the last search that worked stay listed.
       this.discoverError = Option.some(found.failure);
@@ -1125,11 +1133,19 @@ export default class Worktrunk extends View {
     this.discovered = true;
     cx.notify();
 
-    await readAll(this.reposToRead(), LIST_LIMIT, readList, (key, read) => {
-      const old = Option.fromNullishOr(this.lists.get(key));
-      this.lists = new Map([...this.lists, [key, foldList(old, read)]]);
-      cx.notify();
-    });
+    await runEdge(
+      readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
+        const kept = keepLists(
+          { lists: this.lists, machines: this.machineStatus },
+          machine,
+          answer,
+        );
+        this.lists = kept.lists;
+        this.machineStatus = kept.machines;
+        cx.notify();
+      }),
+      () => undefined,
+    );
   }
 
   /** Reads CI again with the next refresh, which `ask` starts. */
@@ -1191,6 +1207,7 @@ export default class Worktrunk extends View {
         onNone: () => [],
         onSome: (scan) => scan.missing,
       }),
+      machines: this.machineStatus,
       settingsFile: SETTINGS_FILE,
       spaces: spaces(),
       panes: panes(),

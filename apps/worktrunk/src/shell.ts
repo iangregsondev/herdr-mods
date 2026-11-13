@@ -12,6 +12,7 @@ import {
   startedAddress,
   waitResult,
   type Job,
+  LISTS_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -29,7 +30,7 @@ import {
   type Scan,
 } from "./repos.ts";
 import type { Settings } from "./settings.ts";
-import { parseList } from "./worktrees.ts";
+import { lastLine, parseList, parseLists } from "./worktrees.ts";
 
 /** The parts of Herdr's API this service calls. */
 export type ExecApi = Pick<typeof herdr, "exec" | "hc">;
@@ -151,6 +152,21 @@ export const wtList = Effect.fn("wtList")(function* (repo: RepoId) {
   return yield* worktreesFrom("wt list", LIST_SCRIPT, repo);
 });
 
+/** The batched list reads a machine's repos a few at a time, so it gets longer than one script. */
+const LISTS_TIMEOUT = 180_000;
+
+/**
+ * The worktrees of every repo in `roots` on `machine`, from one batched `wt list` run
+ * there, by folder: each repo's list, or its read's one-line reason.
+ */
+export const wtLists = Effect.fn("wtLists")(function* (machine: Machine, roots: readonly string[]) {
+  const run = yield* runScript("wt list", LISTS_SCRIPT, roots, {
+    on: machine,
+    timeout: LISTS_TIMEOUT,
+  });
+  return parseLists(run.stdout, roots);
+});
+
 /** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
 const CI_TIMEOUT = 240_000;
 
@@ -251,9 +267,6 @@ export const failureText = (error: ShellError | CommandFailed | ListUnreadable):
 /** A rejection's reason as text. */
 export const causeText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-/** The last line of `text` that has anything on it; empty when none does. */
-const lastLine = (text: string): string => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
 
 /**
  * The person's login shell couldn't be found, so a job would run with the wrong PATH.

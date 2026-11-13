@@ -9,10 +9,14 @@ import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
 import {
   machineName,
+  repoKey,
+  statusOf,
   THIS_MACHINE,
   type Homes,
   type Located,
   type Machine,
+  type MachineStates,
+  type MachineStatus,
   type RepoId,
 } from "./machines.ts";
 import {
@@ -26,6 +30,7 @@ import {
   type Settings,
 } from "./settings.ts";
 import { reposFrom, withoutHidden, type FoundRepo, type Repo, type Scan } from "./repos.ts";
+import type { MachineLists } from "./reads.ts";
 import { syncNotice, type Notice } from "./sync.ts";
 import {
   branchAt,
@@ -46,6 +51,7 @@ import {
   waitForJob,
   wtCi,
   wtList,
+  wtLists,
   type CommandFailed,
   type ListUnreadable,
   type Shell,
@@ -138,6 +144,8 @@ const asReason = <A, R>(
 export interface Scanned extends Scan {
   /** Each scanned machine's home, which a group folder's `~` means there. */
   readonly homes: Homes;
+  /** The machines this scan covers; one it lacks (down when it ran) is scanned next time. */
+  readonly machines: readonly Machine[];
 }
 
 export interface Found {
@@ -145,50 +153,81 @@ export interface Found {
   readonly scanned: Scanned;
   /** The repos to list: scanned and open spaces' repos, grouped, by name, none hidden. */
   readonly repos: readonly Repo[];
+  /** The machines that couldn't be read, and why: their repos are left out. */
+  readonly statuses: ReadonlyMap<Machine, MachineStatus>;
 }
 
-/** The machines the group folders are on, each once, in the settings' order. */
-const folderMachines = (settings: Settings): readonly Machine[] =>
-  Array.from(new Set(settings.folders.map((folder) => folder.machine)));
+/** What the search found on one machine: its scan (when one ran) and its open spaces' repos. */
+interface MachineFound {
+  readonly machine: Machine;
+  /** Its home, read for the scan; none when no scan ran there. */
+  readonly home: Option.Option<string>;
+  readonly scan: Scan;
+  readonly owners: readonly FoundRepo[];
+}
 
 /**
- * Scans the group folders on every machine they are on, each on its own machine, after
- * reading that machine's home there (this machine's is `home`).
+ * Searches `machine`: scans its group folders when `scan` says to (after reading its
+ * home there; this machine's is `home`), and looks up the repos its open spaces
+ * (`places`) are in.
  */
-const scanAll = Effect.fnUntraced(function* (settings: Settings, home: string) {
-  const machines = folderMachines(settings);
-  const homes: Homes = new Map(
-    yield* Effect.forEach(machines, (machine) =>
-      machine === THIS_MACHINE
-        ? Effect.succeed([machine, home] as const)
-        : Effect.map(machineHome(machine), (found) => [machine, found] as const),
-    ),
+const searchOn = Effect.fnUntraced(function* (
+  settings: Settings,
+  machine: Machine,
+  home: string,
+  places: readonly Located[],
+  scan: boolean,
+) {
+  const scans = scan && settings.folders.some((folder) => folder.machine === machine);
+  const found = !scans
+    ? Option.none<string>()
+    : Option.some(machine === THIS_MACHINE ? home : yield* machineHome(machine));
+  const scanned: Scan = Option.isSome(found)
+    ? yield* scanRepos(settings, machine, new Map([[machine, found.value]]))
+    : { repos: [], missing: [] };
+  const owners = yield* reposOf(
+    places.filter((place) => place.machine === machine).map((place) => place.folder),
+    machine,
   );
-  const scans = yield* Effect.forEach(machines, (machine) => scanRepos(settings, machine, homes));
-  const scanned: Scanned = {
-    repos: scans.flatMap((scan) => scan.repos),
-    missing: scans.flatMap((scan) => scan.missing),
-    homes: new Map([[THIS_MACHINE, home], ...homes]),
-  };
-  return scanned;
-});
-
-/** The repos the folders are in, each looked up on its own machine. */
-const ownersOf = Effect.fnUntraced(function* (places: readonly Located[]) {
-  const machines = Array.from(new Set(places.map((place) => place.machine)));
-  const found = yield* Effect.forEach(machines, (machine) =>
-    reposOf(
-      places.filter((place) => place.machine === machine).map((place) => place.folder),
-      machine,
-    ),
-  );
-  return found.flat();
+  const answer: MachineFound = { machine, home: found, scan: scanned, owners };
+  return answer;
 });
 
 /**
- * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
- * repos the open spaces are in (`places`, each on its machine) and the Current repo (`current`), less the
- * hidden ones. A failure is its one-line reason.
+ * `machine`'s search, or the status saying why it couldn't run there: its state in
+ * `states`, or its failure. This machine's failure fails the search as a whole; another
+ * machine's is that machine's alone.
+ */
+const searchOrStatus = (
+  settings: Settings,
+  machine: Machine,
+  home: string,
+  places: readonly Located[],
+  scan: boolean,
+  states: MachineStates,
+): Effect.Effect<Result.Result<MachineFound, MachineStatus>, ShellError | CommandFailed, Shell> => {
+  const held = statusOf(states, machine);
+  if (Option.isSome(held)) return Effect.succeed(Result.fail(held.value));
+  const search = searchOn(settings, machine, home, places, scan).pipe(
+    Effect.map((found): Result.Result<MachineFound, MachineStatus> => Result.succeed(found)),
+  );
+  return machine === THIS_MACHINE
+    ? search
+    : search.pipe(
+        Effect.catch((failed) =>
+          Effect.succeed(Result.fail<MachineStatus>({ _tag: "Down", reason: failureText(failed) })),
+        ),
+      );
+};
+
+/**
+ * The repos to list: the folder scan's (run again on every machine when `lastScan` is
+ * none, else only on the machines it lacks) plus the repos the open spaces are in
+ * (`places`, each on its machine) and the Current repo (`current`), less the hidden ones.
+ * Each machine is searched on its own, side by side. A machine Herdr's machine list
+ * (`states`) says is connecting or unavailable runs nothing, and one whose search fails
+ * gives up only its own repos: each gets its status. A failure on this machine is its
+ * one-line reason.
  */
 export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
@@ -196,16 +235,61 @@ export const findRepos = Effect.fn("findRepos")(function* (
   places: readonly Located[],
   lastScan: Option.Option<Scanned>,
   current: Option.Option<FoundRepo> = Option.none(),
+  states: MachineStates = new Map(),
 ) {
-  const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanAll(settings, home);
-  const owners = yield* ownersOf(places);
+  const machines = Array.from(
+    new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]),
+  );
+  const searched = yield* Effect.forEach(
+    machines,
+    (machine) =>
+      searchOrStatus(
+        settings,
+        machine,
+        home,
+        places,
+        // A machine the last scan lacks (it was down, or connecting) is scanned now.
+        Option.match(lastScan, {
+          onNone: () => true,
+          onSome: (last) => !last.machines.includes(machine),
+        }),
+        states,
+      ).pipe(Effect.map((result) => ({ machine, result }))),
+    { concurrency: "unbounded" },
+  );
+  const ok = searched.flatMap(({ result }) => Option.toArray(Result.getSuccess(result)));
+  const last: Scanned = Option.getOrElse(lastScan, () => ({
+    repos: [],
+    missing: [],
+    homes: new Map([[THIS_MACHINE, home]]),
+    machines: [],
+  }));
+  const scans = ok.flatMap((found) =>
+    Option.toArray(Option.map(found.home, (at) => ({ ...found, home: at }))),
+  );
+  const scanned: Scanned = {
+    repos: [...last.repos, ...scans.flatMap((found) => found.scan.repos)],
+    missing: [...last.missing, ...scans.flatMap((found) => found.scan.missing)],
+    homes: new Map([...last.homes, ...scans.map((found) => [found.machine, found.home] as const)]),
+    machines: [...last.machines, ...scans.map((found) => found.machine)],
+  };
   const repos = reposFrom(
     scanned.repos,
-    [...owners, ...Option.toArray(current)],
+    [...ok.flatMap((found) => found.owners), ...Option.toArray(current)],
     settings.folders,
     scanned.homes,
   );
-  const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
+  const found: Found = {
+    scanned,
+    repos: withoutHidden(repos, settings.hidden),
+    statuses: new Map(
+      searched.flatMap(({ machine, result }) =>
+        Option.toArray(
+          Option.map(Result.getFailure(result), (status) => [machine, status] as const),
+        ),
+      ),
+    ),
+  };
   return found;
 }, asReason);
 
@@ -290,6 +374,55 @@ const holderRepo = Effect.fn("holderRepo")(function* (folder: string, machine: M
   const worktrees = yield* wtList(found.value);
   return Option.some({ repo: found.value, worktrees });
 }, asReason);
+
+/**
+ * Reads every repo's worktrees with one batched `wt list` per machine, the machines side
+ * by side, handing each machine's answer to `keep` as it lands. A machine in `skip`
+ * (connecting, or found down) runs nothing and gets that status.
+ */
+export const readLists = (
+  repos: readonly RepoId[],
+  skip: ReadonlyMap<Machine, MachineStatus>,
+  keep: (machine: Machine, answer: MachineLists) => void,
+): Effect.Effect<void, never, Shell> => {
+  const machines = Array.from(new Set(repos.map((repo) => repo.machine)));
+  const held = machines.flatMap((machine) =>
+    Option.toArray(
+      Option.map(Option.fromNullishOr(skip.get(machine)), (status) => [machine, status] as const),
+    ),
+  );
+  return Effect.sync(() =>
+    held.forEach(([machine, status]) => keep(machine, Result.fail(status))),
+  ).pipe(
+    Effect.andThen(
+      Effect.forEach(
+        machines.filter((machine) => !skip.has(machine)),
+        (machine) =>
+          machineLists(
+            machine,
+            repos.filter((repo) => repo.machine === machine).map((repo) => repo.root),
+          ).pipe(Effect.tap((answer) => Effect.sync(() => keep(machine, answer)))),
+        { concurrency: "unbounded", discard: true },
+      ),
+    ),
+  );
+};
+
+/** The batched list read of `roots` on `machine`, keyed by `repoKey`. */
+const machineLists = (
+  machine: Machine,
+  roots: readonly string[],
+): Effect.Effect<MachineLists, never, Shell> =>
+  wtLists(machine, roots).pipe(
+    Effect.map((lists): MachineLists =>
+      Result.succeed(
+        new Map(Array.from(lists, ([root, list]) => [repoKey({ machine, root }), list])),
+      ),
+    ),
+    Effect.catch((failed) =>
+      Effect.succeed<MachineLists>(Result.fail({ _tag: "Down", reason: failureText(failed) })),
+    ),
+  );
 
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 export const readCi = Effect.fn("readCi")(function* (repo: RepoId) {

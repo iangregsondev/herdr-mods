@@ -90,6 +90,34 @@ done | sort -u`;
 /** Lists the worktrees of the repo at $1. */
 export const LIST_SCRIPT = 'cd "$1" && wt list --format=json';
 
+/** How many repos the batched list reads at once. */
+const LISTS_AT_ONCE = 4;
+
+/**
+ * Lists the worktrees of every repo in the arguments, in one run: a few repos at a time,
+ * each answer kept in a private temp folder, then printed in the arguments' order. Each
+ * repo's record starts with the ASCII record separator, then `<exit code><TAB><folder>`
+ * on its own line, then what \`wt list --format=json\` printed: its JSON, or its errors
+ * when it failed.
+ */
+export const LISTS_SCRIPT = `tmp=$(mktemp -d) || exit
+trap 'rm -rf "$tmp"' EXIT
+i=0
+for repo in "$@"; do
+  i=$((i + 1))
+  { (cd "$repo" && wt list --format=json) >"$tmp/$i.out" 2>"$tmp/$i.err"; echo $? >"$tmp/$i.code"; } &
+  [ $((i % ${LISTS_AT_ONCE})) -eq 0 ] && wait
+done
+wait
+i=0
+rs=$(printf '\\036')
+for repo in "$@"; do
+  i=$((i + 1))
+  code=$(cat "$tmp/$i.code" 2>/dev/null) || code=127
+  printf '%s%s\\t%s\\n' "$rs" "$code" "$repo"
+  if [ "$code" = 0 ]; then cat "$tmp/$i.out"; else cat "$tmp/$i.err"; fi
+done`;
+
 /** Lists the worktrees of the repo at $1 with their CI. */
 export const CI_SCRIPT = `${LIST_SCRIPT} --full`;
 

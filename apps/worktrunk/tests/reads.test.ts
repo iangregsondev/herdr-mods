@@ -8,6 +8,7 @@ import {
   foldList,
   followFocus,
   IDLE,
+  keepLists,
   NO_READS,
   NOT_FOLLOWING,
   onRender,
@@ -57,6 +58,38 @@ describe("foldList", () => {
 
   test("a first read that fails has no worktrees", () => {
     expect(foldList(Option.none(), Result.fail("no repo")).worktrees).toEqual([]);
+  });
+});
+
+describe("keepLists", () => {
+  const OLD = { _tag: "Read", worktrees: [wt("/a.old")], error: Option.none() } as const;
+
+  test("a machine's lists fold into each repo's, a failed repo keeping its old worktrees", () => {
+    const kept = keepLists(
+      { lists: new Map([["linux:/a", OLD]]), machines: new Map() },
+      "linux",
+      Result.succeed(
+        new Map<string, Result.Result<readonly Worktree[], string>>([
+          ["linux:/a", Result.fail("fatal: gone")],
+          ["linux:/b", Result.succeed([wt("/b")])],
+        ]),
+      ),
+    );
+    expect(kept.lists).toEqual(
+      new Map([
+        ["linux:/a", foldList(Option.some(OLD), Result.fail("fatal: gone"))],
+        ["linux:/b", foldList(Option.none(), Result.succeed([wt("/b")]))],
+      ]),
+    );
+  });
+
+  test("a machine that can't be read gets its status; the lists are left as they were", () => {
+    const lists = new Map([["linux:/a", OLD]]);
+    const down = { _tag: "Down", reason: "timed out" } as const;
+    expect(keepLists({ lists, machines: new Map() }, "linux", Result.fail(down))).toEqual({
+      lists,
+      machines: new Map([["linux", down]]),
+    });
   });
 });
 
