@@ -40,7 +40,7 @@ scripts/herdr-types.ts    vp run types: puts Herdr's type files into .herdr-type
 scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
 scripts/herdr-sync.ts     builds my layout from Herdr's default (vp run herdr:sync; docs/develop.md)
 scripts/require-vp.sh     preinstall guard: installs must go through vp
-scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, a fake Herdr host, run sh
+scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, git commits, Vite+ bin folders, a fake Herdr host, run sh
 scripts/*.test.ts         tests of the root scripts, mod-pack.ts, .claude/hooks/ and mods' shell scripts
 scripts/tsconfig.json     Node types for the root scripts (docs/types.md)
 scripts/oxlint-functional.ts  lint rules: functional style in src/ (not main.ts); explained casts in src/, scripts/, mod-pack.ts

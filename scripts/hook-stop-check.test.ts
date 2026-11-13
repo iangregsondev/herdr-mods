@@ -1,7 +1,11 @@
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import {
   type ShResult,
+  type VpEnvOptions,
+  type VpPlace,
+  commitFiles,
   fakeLoggingBin,
   git,
   isolatedGitEnv,
@@ -9,32 +13,62 @@ import {
   runSh,
   tempDir,
   toolPath,
+  vpEnv,
+  vpFolder,
   writeFile,
 } from "./test-support.ts";
 
-const hook = join(import.meta.dirname, "..", ".claude", "hooks", "stop-check.sh");
+const repoRoot = join(import.meta.dirname, "..");
+const hook = join(repoRoot, ".claude", "hooks", "stop-check.sh");
 
 const tools = ["sh", "jq", "git", "wc", "head", "tail"] as const;
 
+/**
+ * The hook's env: git cut off from the host, PATH of only `<root>/bin`, and HOME,
+ * VP_HOME and XDG_DATA_HOME all under `root` (`vpEnv`).
+ */
+const hookEnv = (root: string, project: string, env: VpEnvOptions = {}) => ({
+  ...isolatedGitEnv(),
+  PATH: join(root, "bin"),
+  ...vpEnv(root, env),
+  CLAUDE_PROJECT_DIR: project,
+});
+
 interface Setup {
   project: string;
+  /** The log of the fake `vp` in the first place of `vpIn`. */
   log: string;
+  /** The log of the fake `vp` in `place`. */
+  logOf: (place: VpPlace) => string;
   run: (stdin?: string) => ShResult;
 }
 
 /**
- * A git repo with one commit and `origin/main` at HEAD, and a PATH of only `pathTools`
- * plus a fake `vp` that logs its args, prints `vpOutput` and exits with `vpExit`. The
- * hook runs with git cut off from the host's config.
+ * A git repo with one commit and `origin/main` at HEAD, and a PATH of only `pathTools`.
+ * A fake `vp` that logs its args, prints `vpOutput` and exits with `vpExit` sits in each
+ * place of `vpIn` (default: on PATH), each with its own log. The hook runs with git cut
+ * off from the host's config.
  */
 function setup(
-  options: { vpOutput?: string; vpExit?: number; pathTools?: readonly string[] } = {},
+  options: {
+    vpOutput?: string;
+    vpExit?: number;
+    pathTools?: readonly string[];
+    vpIn?: readonly VpPlace[];
+  } & VpEnvOptions = {},
 ): Setup {
   const root = tempDir();
   const project = join(root, "project");
-  const bin = toolPath(root, options.pathTools ?? tools);
-  const log = join(root, "vp.log");
-  fakeLoggingBin(bin, "vp", { log, output: options.vpOutput, exit: options.vpExit });
+  toolPath(root, options.pathTools ?? tools);
+  const vpIn = options.vpIn ?? ["path"];
+  const logOf = (place: VpPlace): string => join(root, `vp-${place}.log`);
+  vpIn.forEach((place) =>
+    fakeLoggingBin(vpFolder(root, place), "vp", {
+      log: logOf(place),
+      output: options.vpOutput,
+      exit: options.vpExit,
+    }),
+  );
   writeFile(project, "a.txt", "one\n");
   git(project, ["init", "-q", "-b", "work"]);
   git(project, ["add", "."]);
@@ -42,12 +76,10 @@ function setup(
   git(project, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   return {
     project,
-    log,
+    log: logOf(vpIn[0] ?? "path"),
+    logOf,
     run: (stdin = JSON.stringify({ stop_hook_active: false })) =>
-      runSh(hook, {
-        stdin,
-        env: { ...isolatedGitEnv(), PATH: bin, CLAUDE_PROJECT_DIR: project },
-      }),
+      runSh(hook, { stdin, env: hookEnv(root, project, options) }),
   };
 }
 
@@ -60,6 +92,27 @@ const shownOutput = (stderr: string): string[] => {
   const lines = stderr.trimEnd().split("\n");
   expect(lines[0]).toMatch(/^Checks fail\./);
   return lines.slice(1);
+};
+
+/** Squash-merges the branch: a new commit on origin/main with the same tree as HEAD. */
+const squashOntoMain = (project: string): void => {
+  const squash = git(project, [
+    "commit-tree",
+    "HEAD^{tree}",
+    "-p",
+    "refs/remotes/origin/main",
+    "-m",
+    "squash",
+  ]).trim();
+  git(project, ["update-ref", "refs/remotes/origin/main", squash]);
+};
+
+/** Commits `file` with `content` on origin/main, leaving the branch checked out. */
+const commitOnMain = (project: string, file: string, content: string, message: string): void => {
+  git(project, ["checkout", "-q", "--detach", "refs/remotes/origin/main"]);
+  commitFiles(project, { [file]: content }, message);
+  git(project, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(project, ["checkout", "-q", "work"]);
 };
 
 describe("stop-check.sh", () => {
@@ -112,6 +165,59 @@ describe("stop-check.sh", () => {
     expect(loggedLines(log)).toEqual(["run verify"]);
   });
 
+  test("lets the stop through without checks on a squash-merged branch", () => {
+    const { project, log, run } = setup({ vpExit: 1 });
+    commitFiles(project, { "b.txt": "two\n" }, "second");
+    squashOntoMain(project);
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual([]);
+  });
+
+  test("lets the stop through without checks on a squash-merged branch after main moves on", () => {
+    const { project, log, run } = setup({ vpExit: 1 });
+    commitFiles(project, { "b.txt": "two\n" }, "second");
+    squashOntoMain(project);
+    commitOnMain(project, "c.txt", "three\n", "unrelated");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual([]);
+  });
+
+  test("runs vp run verify on a squash-merged branch with a dirty tree", () => {
+    const { project, log, run } = setup();
+    commitFiles(project, { "b.txt": "two\n" }, "second");
+    squashOntoMain(project);
+    writeFile(project, "b.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("runs vp run verify when the branch conflicts with origin/main", () => {
+    const { project, log, run } = setup();
+    commitFiles(project, { "a.txt": "branch\n" }, "branch edit");
+    commitOnMain(project, "a.txt", "main\n", "main edit");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("runs vp run verify when only the remote, not the local origin/main, holds the squash", () => {
+    const { project, log, run } = setup();
+    const remote = join(tempDir(), "remote.git");
+    git(project, ["init", "-q", "--bare", remote]);
+    git(project, ["remote", "add", "origin", remote]);
+    const stale = git(project, ["rev-parse", "refs/remotes/origin/main"]).trim();
+    commitFiles(project, { "b.txt": "two\n" }, "second");
+    squashOntoMain(project);
+    git(project, ["push", "-q", "origin", "refs/remotes/origin/main:refs/heads/main"]);
+    git(project, ["update-ref", "refs/remotes/origin/main", stale]);
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
   test("exits 0 without checks when the project folder is missing", () => {
     const root = tempDir();
     const bin = toolPath(root, tools);
@@ -119,7 +225,7 @@ describe("stop-check.sh", () => {
     fakeLoggingBin(bin, "vp", { log, exit: 1 });
     const result = runSh(hook, {
       stdin: JSON.stringify({ stop_hook_active: false }),
-      env: { ...isolatedGitEnv(), PATH: bin, CLAUDE_PROJECT_DIR: join(root, "missing") },
+      env: hookEnv(root, join(root, "missing")),
     });
     expect(result.code).toBe(0);
     expect(loggedLines(log)).toEqual([]);
@@ -168,15 +274,127 @@ describe("stop-check.sh", () => {
     ]);
   });
 
-  test("says why on stderr and exits 0 without checks when jq is missing", () => {
+  test("says jq is missing on stderr and exits 1 without checks when jq is missing", () => {
     const { project, log, run } = setup({
       vpExit: 1,
       pathTools: tools.filter((tool) => tool !== "jq"),
     });
     writeFile(project, "a.txt", "changed\n");
     const result = run();
-    expect(result.code).toBe(0);
-    expect(result.stderr).toContain("jq not found");
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe(
+      "stop-check: jq not found (looked on PATH), so the checks were skipped.\n",
+    );
     expect(loggedLines(log)).toEqual([]);
+  });
+
+  test("finds and runs vp in $VP_HOME/bin when it is not on PATH", () => {
+    const { project, log, run } = setup({ vpIn: ["vpHome"] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("finds and runs vp in $HOME/.vite-plus/bin when it is not on PATH", () => {
+    const { project, log, run } = setup({ vpIn: ["home"] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("finds and runs vp in $XDG_DATA_HOME/vite-plus/bin when it is not on PATH", () => {
+    const { project, log, run } = setup({ vpIn: ["xdg"] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("finds and runs vp in $HOME/.local/share/vite-plus/bin when XDG_DATA_HOME is unset", () => {
+    const { project, log, run } = setup({ vpIn: ["xdgDefault"], xdgSet: false });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("runs the vp in the earlier folder when two Vite+ bin folders hold one", () => {
+    const { project, logOf, run } = setup({ vpIn: ["vpHome", "home"] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(logOf("vpHome"))).toEqual(["run verify"]);
+    expect(loggedLines(logOf("home"))).toEqual([]);
+  });
+
+  test("skips the $VP_HOME/bin folder when VP_HOME is unset", () => {
+    const { project, logOf, run } = setup({ vpIn: ["vpHome", "home"], vpHomeSet: false });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(logOf("vpHome"))).toEqual([]);
+    expect(loggedLines(logOf("home"))).toEqual(["run verify"]);
+  });
+
+  test("passes over a folder named vp in an earlier Vite+ bin folder", () => {
+    const { project, logOf, run } = setup({ vpIn: ["home"] });
+    mkdirSync(join(vpFolder(dirname(project), "vpHome"), "vp"), { recursive: true });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(logOf("home"))).toEqual(["run verify"]);
+  });
+
+  test("runs the vp already on PATH over one in a Vite+ bin folder", () => {
+    const { project, logOf, run } = setup({ vpIn: ["path", "vpHome"] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(logOf("path"))).toEqual(["run verify"]);
+    expect(loggedLines(logOf("vpHome"))).toEqual([]);
+  });
+
+  test("says vp is missing on stderr and exits 1 when no vp is found", () => {
+    const { project, run } = setup({ vpIn: [] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe(
+      "stop-check: vp not found (looked on PATH and in the Vite+ bin folders), so the checks were skipped.\n",
+    );
+  });
+
+  test("finds vp in a Vite+ bin folder when run by a relative path", () => {
+    const root = tempDir();
+    const project = join(root, "project");
+    toolPath(root, tools);
+    const log = join(root, "vp.log");
+    fakeLoggingBin(vpFolder(root, "home"), "vp", { log });
+    writeFile(project, "a.txt", "changed\n");
+    git(project, ["init", "-q"]);
+    const result = runSh(relative(repoRoot, hook), {
+      cwd: repoRoot,
+      stdin: JSON.stringify({ stop_hook_active: false }),
+      env: hookEnv(root, project),
+    });
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("lets the stop through without vp when stop_hook_active is set", () => {
+    const { project, run } = setup({ vpIn: [] });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run(JSON.stringify({ stop_hook_active: true }));
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  test("lets the stop through without vp on a clean tree at origin/main", () => {
+    const { run } = setup({ vpIn: [] });
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
   });
 });
