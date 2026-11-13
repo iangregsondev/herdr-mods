@@ -64,6 +64,20 @@ describe("Git.changedFiles, live layer", () => {
   });
 });
 
+describe("Git.addedFiles, live layer", () => {
+  it.effect("lists the files the branch added, not those it changed or deleted", () => {
+    const repo = repoWithCommit();
+    commitFiles(repo, { "docs/old.md": "old\n", "docs/gone.md": "gone\n" });
+    git(repo, ["switch", "-q", "-c", "feature"]);
+    git(repo, ["rm", "-q", "docs/gone.md"]);
+    commitFiles(repo, { "docs/old.md": "changed\n", ".changeset/new.md": "new\n" });
+    return Effect.gen(function* () {
+      const service = yield* Git;
+      assert.deepStrictEqual(yield* service.addedFiles(repo, "main"), [".changeset/new.md"]);
+    }).pipe(Effect.provide(Git.layer));
+  });
+});
+
 describe("Git, live layer failures", () => {
   it.effect("fails with GitFailed, carrying git's stderr, for a base ref that isn't there", () => {
     const repo = repoWithCommit();

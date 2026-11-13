@@ -20,6 +20,7 @@ mod-pack.ts               shared vp pack settings for every mod: the namespace, 
 mod-env.d.ts              declares __MOD_ID__ and __NAMESPACE__, the constants the build gives each mod
 herdr-dev.example.json    template for herdr-dev.json (git-ignored): the dev target, local or a remote Herdr host
 .config/wt.toml           worktrunk hooks: a new worktree gets the main checkout's herdr-dev.json
+scripts/changeset-check.ts  vp run check:changesets: CI fails a PR that changes a mod (or packages/) without a changeset for it
 scripts/check-mods.ts     vp run check:mods: herdr-app check on every built mod, on the dev target's Herdr host
 scripts/copy-dev-config.sh  copies herdr-dev.json into a new worktree (run by .config/wt.toml)
 scripts/dev-config.ts     reads the dev target from herdr-dev.json (or HERDR_DEV_CONFIG)

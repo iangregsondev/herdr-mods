@@ -3,7 +3,8 @@ name: CI
 # CI runs `vp run verify`, the same script the local Stop hook runs, then the
 # build. Two things run only locally: the type-check with the type-aware lint
 # rules (vite.config.ts turns both off when CI is set) and `herdr-app check`.
-# Both need the Herdr app installed (see docs/types.md).
+# Both need the Herdr app installed (see docs/types.md). On a PR, a second job checks
+# that each changed mod has a changeset (scripts/changeset-check.ts).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -34,3 +35,21 @@ jobs:
             echo "::error::mods/ is out of date. Run 'vp run -r build' and commit the result."
             exit 1
           fi
+
+  changesets:
+    name: Changesets
+    # A PR only: the check compares the PR with its base branch. GitHub sets
+    # GITHUB_BASE_REF and GITHUB_HEAD_REF on pull_request runs, and the script reads both.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so origin/<base branch> and the merge base exist.
+          fetch-depth: 0
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      - name: Each changed mod has a changeset
+        run: vp run check:changesets
