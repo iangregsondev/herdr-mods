@@ -39,7 +39,7 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - **Playing Herdr's view:** the copy's class (or a subclass: `menu` overrides `choose` so our items post a request and Herdr's go to Herdr's `choose`; `new-menu` overrides `row` and `render`: `render` runs Herdr's once to list its rows, picks the last worktree row, then runs it again with `row` drawing ours, through Herdr's own `row()`, just after that one) has its methods bound onto this mod's instance, then its `init` and `render` are called with that instance.
 - **Talking to worktrunk:** a request `{ id, action }` in shared state under `iangregsondev-worktrunk.request.v1` (`setShared`), with `action` `{ _tag: "NewOrOpen", folder: null }` or `{ _tag: "SpaceWorktree", space, act: "NewOrOpen" | "Merge" | "Remove" }`. A hidden panel is shown first with `layout.show`. The request types and the panel lookup live in this repo's `packages/worktrunk-mailbox`, which both mods bundle.
 - `herdr` functions: `appHome`, `readTextFile`, `writeTextFile`, `props`, `layout`, `spaces`, `setShared`, `run("layout.show")`, `openOverlay`, `closeOverlay`, `notify`, `theme`. It runs no programs itself; worktrunk runs the jobs.
-- **Your layout** points at these roles through this repo's `vp run herdr:sync`, which rebuilds the `iangregsondev` layout from Herdr's `main` and swaps the `tabs` and `spaces` blocks for this mod, only when it is installed.
+- **Your layout** points at these roles through this repo's `vp run herdr:sync`, which rebuilds the `workbench` layout from Herdr's `main` and swaps the `tabs` and `spaces` blocks for this mod, only when it is installed.
 
 ## Watch out
 
