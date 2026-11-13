@@ -143,6 +143,22 @@ describe("cleanupAction", () => {
     );
   });
 
+  test("a New worktree is never cleaned up", () => {
+    const fresh = wt("/r/app.new", "new", { _tag: "New" });
+    const worktrees = [fresh, wt("/r/app.a", "a", MERGED)];
+    expect(cleanupAction([{ root: "/r/app", worktrees }])).toEqual(
+      Option.some({
+        _tag: "Cleanup",
+        batches: [{ main: "/r/app", branches: ["a"] }],
+        paths: ["/r/app.a"],
+        dirty: 0,
+      }),
+    );
+    expect(repoMenu({ machine: THIS_MACHINE, root: "/r/app" }, [fresh])).not.toContainEqual(
+      expect.objectContaining({ action: expect.objectContaining({ _tag: "Cleanup" }) }),
+    );
+  });
+
   test("nothing merged, nothing to clean up", () => {
     expect(cleanupAction([{ root: "/r/app", worktrees: [FEAT] }])).toEqual(Option.none());
     expect(cleanupAction([])).toEqual(Option.none());

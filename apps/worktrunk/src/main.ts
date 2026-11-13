@@ -2102,6 +2102,18 @@ export default class Worktrunk extends View {
               .gap(6)
               .items_center()
               .child(div().min_w(0).truncate().font_medium().child(row.label))
+              .children(
+                Option.toArray(row.badge).map((word) =>
+                  div()
+                    .flex_none()
+                    .px(5)
+                    .rounded(4)
+                    .bg(t.hover)
+                    .text_size(sizes.label)
+                    .text_color(t.working)
+                    .child(word),
+                ),
+              )
               .when(row.dirty, (el) => el.child(dot(t.blocked, 6, false))),
           )
           .child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline)),

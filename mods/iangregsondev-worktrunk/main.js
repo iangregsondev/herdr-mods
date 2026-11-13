@@ -10712,12 +10712,15 @@ const CHANGE_KINDS = [
 	"conflicted"
 ];
 const count = (item, ...path) => getOrElse$1(finite(at(item, ...path)), () => 0);
+const dirtyOf = (item) => CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
 const stateOf = (item) => {
 	if (at(item, "worktree", "main") === true) return { _tag: "Main" };
 	const state = at(item, "display", "state");
+	const reason = text(at(item, "default_branch", "integration", "reason"));
+	if (state === "empty" && contains(reason, "same_commit") && !dirtyOf(item)) return { _tag: "New" };
 	if (state === "integrated" || state === "empty") return {
 		_tag: "Merged",
-		reason: text(at(item, "default_branch", "integration", "reason"))
+		reason
 	};
 	if (state === "would_conflict") return { _tag: "Conflict" };
 	return { _tag: "Active" };
@@ -10756,7 +10759,7 @@ const toWorktree = (item, asked) => map$3(text(at(item, "worktree", "path")), (p
 			ahead: count(upstream, "ahead"),
 			behind: count(upstream, "behind")
 		}) : none(),
-		dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+		dirty: dirtyOf(item),
 		ci: ciOf$1(item, asked),
 		committedAt: committedAt(item)
 	};
@@ -11450,6 +11453,7 @@ const kindOf = (worktree) => {
 	switch (worktree.state._tag) {
 		case "Main": return none();
 		case "Merged": return some("merged");
+		case "New":
 		case "Active": return some("active");
 		case "Conflict": return some("conflict");
 	}
@@ -11527,6 +11531,7 @@ const rowView = (snapshot, repo, worktree, space) => ({
 	open: isSome(space),
 	current: exists(space, (s) => s.active),
 	subline: subline(worktree, snapshot.now),
+	badge: worktree.state._tag === "New" ? some("new") : none(),
 	ci: badgeOf(ciOf(snapshot, repo, worktree)),
 	click: match$5(space, {
 		onNone: () => ({
@@ -13000,7 +13005,7 @@ var Worktrunk = class extends View {
 		return v_flex().child(h_flex().id(`group-${section.key}`).min_h(26).pl(18).pr(10).pt(6).gap(6).items_center().cursor_pointer().on_click(() => toggleFold(section.key)).child(icon(section.folded ? "chevron-right" : "chevron-down", 12, color)).child(div().flex_1().text_size(sizes.label).font_semibold().text_color(color).child(`${section.label} · ${section.count}`))).children(section.rows.map((row) => this.renderRow(style, row)));
 	}
 	renderRow({ t, sizes }, row) {
-		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
+		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).children(toArray(row.badge).map((word) => div().flex_none().px(5).rounded(4).bg(t.hover).text_size(sizes.label).text_color(t.working).child(word))).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
 			const [name, color] = ciIcon(t, badge);
 			const drawn = icon(name, 13, badge.stale ? t.dim : color);
 			return badge.status === "running" ? drawn.spin(1200) : drawn;
