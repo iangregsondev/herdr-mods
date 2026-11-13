@@ -105,31 +105,32 @@ const failure = (message: string): ReleaseTagsResult => ({
 });
 
 /** Writes the release tag events for `options`. Never fails: every failure is a result. */
-export const runReleaseTags = Effect.fn("runReleaseTags")(
-  function* (
-    options: ReleaseTagsOptions,
-  ): Effect.fn.Return<ReleaseTagsResult, ReleaseTagsError, Git> {
+export const runReleaseTags = Effect.fn("runReleaseTags")(function* (
+  options: ReleaseTagsOptions,
+): Effect.fn.Return<ReleaseTagsResult> {
+  return yield* Effect.gen(function* () {
     const released = yield* writeReleaseTags(options);
     const stdout =
       released.length === 0
         ? "release:tags: nothing to release\n"
         : released.map((pkg) => `release:tags: ${releaseTag(pkg)}\n`).join("");
     return { code: 0, stdout, stderr: "" };
-  },
-  Effect.provide(Git.layer),
-  Effect.catchTags({
-    NoOutputFile: () =>
-      Effect.succeed(failure("CHANGESETS_OUTPUT is not set: run from changesets/action/publish")),
-    RepoReadFailed: ({ path, cause }) =>
-      Effect.succeed(failure(`couldn't read ${path} (${causeText(cause)})`)),
-    PackageUnreadable: ({ path, cause }) =>
-      Effect.succeed(failure(`couldn't read ${path} (${causeText(cause)})`)),
-    OutputWriteFailed: ({ path, cause }) =>
-      Effect.succeed(failure(`couldn't write ${path} (${causeText(cause)})`)),
-    GitFailed: (error) => Effect.succeed(failure(gitErrorText(error))),
-    GitNotStarted: (error) => Effect.succeed(failure(gitErrorText(error))),
-  }),
-);
+  }).pipe(
+    Effect.provide(Git.layer),
+    Effect.catchTags({
+      NoOutputFile: () =>
+        Effect.succeed(failure("CHANGESETS_OUTPUT is not set: run from changesets/action/publish")),
+      RepoReadFailed: ({ path, cause }) =>
+        Effect.succeed(failure(`couldn't read ${path} (${causeText(cause)})`)),
+      PackageUnreadable: ({ path, cause }) =>
+        Effect.succeed(failure(`couldn't read ${path} (${causeText(cause)})`)),
+      OutputWriteFailed: ({ path, cause }) =>
+        Effect.succeed(failure(`couldn't write ${path} (${causeText(cause)})`)),
+      GitFailed: (error) => Effect.succeed(failure(gitErrorText(error))),
+      GitNotStarted: (error) => Effect.succeed(failure(gitErrorText(error))),
+    }),
+  );
+});
 
 if (import.meta.main) {
   const result = await Effect.runPromise(
