@@ -88,26 +88,49 @@ export const spacesOnWorktrees = (
       return new Map([...on, [path, space]]);
     }, new Map());
 
+/** A space on a gone folder, and that folder. */
+export interface GoneSpace {
+  readonly id: string;
+  /** The gone folder the space's folder or place is in. */
+  readonly folder: string;
+}
+
 /**
- * The ids of the spaces on `machine` whose folder (where the space was made) or place
- * (where its first terminal is now) is one of the `gone` folders there, or inside one. A
- * space on another machine never matches: the same path there is another folder.
- * Both count because wt moves a removed worktree into a trash folder and a shell inside
- * it moves too, so the place alone can point somewhere that still exists.
+ * The spaces on `machine` whose folder (where the space was made) or place (where its
+ * first terminal is now) is one of the `gone` folders there, or inside one, each with the
+ * gone folder it matched (by its folder first). A space on another machine never
+ * matches: the same path there is another folder. Both count because wt moves a removed
+ * worktree into a trash folder and a shell inside it moves too, so the place alone can
+ * point somewhere that still exists.
  */
+export const goneSpaces = (
+  spaces: readonly SpaceLike[],
+  panes: readonly PaneLike[],
+  machine: Machine,
+  gone: readonly string[],
+): readonly GoneSpace[] => {
+  const goneUnder = (path: string) =>
+    Option.fromNullishOr(gone.find((folder) => isUnder(path, folder)));
+  const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+  return spaces
+    .filter((space) => space.machine === machine)
+    .flatMap((space) =>
+      Option.match(
+        Option.orElse(goneUnder(space.folder), () =>
+          Option.flatMap(Option.fromNullishOr(places.get(space.id)), goneUnder),
+        ),
+        { onNone: () => [], onSome: (folder) => [{ id: space.id, folder }] },
+      ),
+    );
+};
+
+/** The ids of the spaces `goneSpaces` finds on the `gone` folders on `machine`. */
 export const spacesInGone = (
   spaces: readonly SpaceLike[],
   panes: readonly PaneLike[],
   machine: Machine,
   gone: readonly string[],
-): readonly string[] => {
-  const inGone = (path: string) => gone.some((folder) => isUnder(path, folder));
-  const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-  return spaces
-    .filter((space) => space.machine === machine)
-    .filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? ""))
-    .map((space) => space.id);
-};
+): readonly string[] => goneSpaces(spaces, panes, machine, gone).map((space) => space.id);
 
 /** The parts of `focused()` this module reads. */
 export interface FocusLike {

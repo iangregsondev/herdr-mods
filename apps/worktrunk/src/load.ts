@@ -931,6 +931,5 @@ export const checkGone = Effect.fn("checkGone")(function* (
   paths: readonly string[],
   machine: Machine,
 ) {
-  const checked = yield* Effect.result(goneFolders(paths, machine));
-  return Result.mapError(checked, failureText);
-});
+  return yield* goneFolders(paths, machine);
+}, asReason);

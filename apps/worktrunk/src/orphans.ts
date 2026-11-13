@@ -2,11 +2,10 @@
 // a fresh list read dropped, which wait for a folder check on their machine, and whether a
 // space on a gone folder closes at once or is asked about. Pure: no `herdr` or `gpui`
 // imports.
-import { Result } from "effect";
+import { Option, Result } from "effect";
 import type { Machine, RepoKey } from "./machines.ts";
 import type { MachineLists, RepoList } from "./reads.ts";
-import { isUnder } from "./repos.ts";
-import { spacePlaces, spacesInGone, type PaneLike, type SpaceLike } from "./spaces.ts";
+import { goneSpaces, type PaneLike, type SpaceLike } from "./spaces.ts";
 
 /** What the panel remembers about worktree paths dropped from their repo's list. */
 export interface Orphans {
@@ -24,22 +23,43 @@ export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map(), ask
 export const waitingOn = (orphans: Orphans, machine: Machine): readonly string[] =>
   orphans.waiting.get(machine) ?? [];
 
-/** The panel's own job removed the folders `gone` on `machine`: never dropped paths. */
+/**
+ * The panel's own job removed the folders `gone` on `machine`: never dropped paths. Those
+ * a list read already dropped stop waiting (a check running on them returns none of
+ * them); the rest are left out of the next read that drops them.
+ */
 export const jobRemoved = (
   orphans: Orphans,
   machine: Machine,
   gone: readonly string[],
-): Orphans => ({
-  ...orphans,
-  removed: new Map([
-    ...orphans.removed,
-    [machine, [...(orphans.removed.get(machine) ?? []), ...gone]],
-  ]),
-});
+): Orphans => {
+  const waits = waitingOn(orphans, machine);
+  return {
+    ...orphans,
+    waiting: new Map([...orphans.waiting, [machine, waits.filter((path) => !gone.includes(path))]]),
+    removed: new Map([
+      ...orphans.removed,
+      [
+        machine,
+        [...(orphans.removed.get(machine) ?? []), ...gone.filter((path) => !waits.includes(path))],
+      ],
+    ]),
+  };
+};
+
+/** A repo's fresh read against its list from before. */
+interface Fresh {
+  /** The paths listed before and not now. */
+  readonly dropped: readonly string[];
+  /** Every path listed before or now. */
+  readonly seen: readonly string[];
+}
 
 /**
  * What the panel remembers after `machine`'s batched list read answers, given each repo's
- * list from before (`old`).
+ * list from before (`old`). A folder a job removed is left out of the dropped paths, and
+ * forgotten by the first fresh read of its repo, whether that read dropped it or lists it
+ * again (a worktree made there anew), so its later removal in a terminal counts.
  */
 export const listsRead = (
   orphans: Orphans,
@@ -47,21 +67,24 @@ export const listsRead = (
   machine: Machine,
   answer: MachineLists,
 ): Orphans => {
-  const dropped = Result.match(answer, {
-    onFailure: (): readonly string[] => [],
+  const reads = Result.match(answer, {
+    onFailure: (): readonly Fresh[] => [],
     onSuccess: (lists) =>
       Array.from(lists).flatMap(([key, list]) =>
         Result.match(list, {
-          onFailure: (): readonly string[] => [],
+          onFailure: (): readonly Fresh[] => [],
           onSuccess: (worktrees) => {
-            const now = new Set(worktrees.map((w) => w.path));
-            return (old.get(key)?.worktrees ?? [])
-              .map((w) => w.path)
-              .filter((path) => !now.has(path));
+            const now = worktrees.map((w) => w.path);
+            const before = (old.get(key)?.worktrees ?? []).map((w) => w.path);
+            return [
+              { dropped: before.filter((path) => !now.includes(path)), seen: [...before, ...now] },
+            ];
           },
         }),
       ),
   });
+  const dropped = reads.flatMap((fresh) => fresh.dropped);
+  const seen = reads.flatMap((fresh) => fresh.seen);
   const removed = orphans.removed.get(machine) ?? [];
   return {
     ...orphans,
@@ -74,7 +97,7 @@ export const listsRead = (
     ]),
     removed: new Map([
       ...orphans.removed,
-      [machine, removed.filter((path) => !dropped.includes(path))],
+      [machine, removed.filter((path) => !seen.includes(path))],
     ]),
   };
 };
@@ -101,7 +124,9 @@ export const checked = (
           [machine, waitingOn(orphans, machine).filter((path) => !asked.includes(path))],
         ]),
       },
-      gone: gone.filter((path) => asked.includes(path)),
+      gone: gone.filter(
+        (path) => asked.includes(path) && waitingOn(orphans, machine).includes(path),
+      ),
     }),
   });
 
@@ -133,11 +158,14 @@ export const closeOrAsk = (space: SpaceLike, panes: readonly ProgramPane[]): Clo
 export interface Orphan {
   readonly space: string;
   readonly step: CloseOrAsk;
+  /** The gone folder the space was matched by. */
+  readonly folder: string;
 }
 
 /**
  * The orphan spaces on `machine`: every space there on one of the `gone` folders (by
- * folder or place, as `spacesInGone` matches them), each closed or asked about.
+ * folder or place, as `goneSpaces` matches them), each closed or asked about, with the
+ * gone folder it was matched by.
  */
 export const orphanSpaces = (
   spaces: readonly SpaceLike[],
@@ -145,10 +173,13 @@ export const orphanSpaces = (
   machine: Machine,
   gone: readonly string[],
 ): readonly Orphan[] => {
-  const ids = new Set(spacesInGone(spaces, panes, machine, gone));
-  return spaces
-    .filter((space) => ids.has(space.id))
-    .map((space) => ({ space: space.id, step: closeOrAsk(space, panes) }));
+  const byId = new Map(spaces.map((space) => [space.id, space]));
+  return goneSpaces(spaces, panes, machine, gone).flatMap(({ id, folder }) =>
+    Option.match(Option.fromNullishOr(byId.get(id)), {
+      onNone: () => [],
+      onSome: (space) => [{ space: id, step: closeOrAsk(space, panes), folder }],
+    }),
+  );
 };
 
 /** The parts of a `SpaceInfo` the ask toast reads. */
@@ -168,35 +199,63 @@ export interface AskToast {
 }
 
 /**
- * The toasts for the orphan spaces on `machine` (as `orphanSpaces` finds them) where
- * something other than a shell runs and no toast has asked before: each names the space
- * and the gone folder it is on, and clicking it closes the space after Herdr's own
- * confirm. The spaces asked about are remembered, so a later check never asks again.
+ * The toasts for the `found` orphan spaces where something other than a shell runs and
+ * no toast has asked before: each names the space and the gone folder it was matched by,
+ * and clicking it closes the space after Herdr's own confirm. The spaces asked about are
+ * remembered, so a later check never asks again.
  */
 export const askToasts = (
+  orphans: Orphans,
+  spaces: readonly NamedSpace[],
+  found: readonly Orphan[],
+): { readonly orphans: Orphans; readonly toasts: readonly AskToast[] } => {
+  const names = new Map(spaces.map((space) => [space.id, space.name]));
+  const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
+  const toasts = asks.flatMap((orphan) =>
+    Option.match(Option.fromNullishOr(names.get(orphan.space)), {
+      onNone: (): readonly AskToast[] => [],
+      onSome: (name): readonly AskToast[] => [
+        {
+          title: "Space on a removed worktree",
+          body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
+          level: "warning",
+          action: { name: "space.close", args: { id: orphan.space, confirmed: false } },
+        },
+      ],
+    }),
+  );
+  return {
+    orphans: {
+      ...orphans,
+      asked: new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)]),
+    },
+    toasts,
+  };
+};
+
+/** What a folder check's gone folders lead to on its machine. */
+export interface OrphanSteps {
+  readonly orphans: Orphans;
+  /** The spaces to close at once. */
+  readonly closes: readonly string[];
+  /** The toasts asking about the others. */
+  readonly toasts: readonly AskToast[];
+}
+
+/**
+ * The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
+ * those where only shells run close at once, the others get an ask toast (`askToasts`).
+ */
+export const orphanSteps = (
   orphans: Orphans,
   spaces: readonly NamedSpace[],
   panes: readonly ProgramPane[],
   machine: Machine,
   gone: readonly string[],
-): { readonly orphans: Orphans; readonly toasts: readonly AskToast[] } => {
-  const asks = new Set(
-    orphanSpaces(spaces, panes, machine, gone)
-      .filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space))
-      .map((orphan) => orphan.space),
-  );
-  const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-  const goneUnder = (path: string) => gone.find((folder) => isUnder(path, folder));
-  const toasts = spaces
-    .filter((space) => asks.has(space.id))
-    .map((space): AskToast => {
-      const folder = goneUnder(space.folder) ?? goneUnder(places.get(space.id) ?? "") ?? "";
-      return {
-        title: "Space on a removed worktree",
-        body: `${space.name} is on ${folder}, which is gone. Something is still running in it. Click to close it.`,
-        level: "warning",
-        action: { name: "space.close", args: { id: space.id, confirmed: false } },
-      };
-    });
-  return { orphans: { ...orphans, asked: new Set([...orphans.asked, ...asks]) }, toasts };
+): OrphanSteps => {
+  const found = orphanSpaces(spaces, panes, machine, gone);
+  return {
+    ...askToasts(orphans, spaces, found),
+    closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space),
+  };
 };

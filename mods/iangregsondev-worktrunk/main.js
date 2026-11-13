@@ -12064,9 +12064,8 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 * failed check is its one-line reason, so no space closes on a guess.
 */
 const checkGone = fn("checkGone")(function* (paths, machine) {
-	const checked = yield* result(goneFolders(paths, machine));
-	return mapError$2(checked, failureText);
-});
+	return yield* goneFolders(paths, machine);
+}, asReason);
 
 // src/spaces.ts
 /**
@@ -12107,17 +12106,26 @@ const spacesOnWorktrees = (places, machine, paths) => places.filter((place) => p
 	return new Map([...on, [path, space]]);
 }, /* @__PURE__ */ new Map());
 /**
-* The ids of the spaces on `machine` whose folder (where the space was made) or place
-* (where its first terminal is now) is one of the `gone` folders there, or inside one. A
-* space on another machine never matches: the same path there is another folder.
-* Both count because wt moves a removed worktree into a trash folder and a shell inside
-* it moves too, so the place alone can point somewhere that still exists.
+* The spaces on `machine` whose folder (where the space was made) or place (where its
+* first terminal is now) is one of the `gone` folders there, or inside one, each with the
+* gone folder it matched (by its folder first). A space on another machine never
+* matches: the same path there is another folder. Both count because wt moves a removed
+* worktree into a trash folder and a shell inside it moves too, so the place alone can
+* point somewhere that still exists.
 */
-const spacesInGone = (spaces, panes, machine, gone) => {
-	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
+const goneSpaces = (spaces, panes, machine, gone) => {
+	const goneUnder = (path) => fromNullishOr(gone.find((folder) => isUnder(path, folder)));
 	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-	return spaces.filter((space) => space.machine === machine).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
+	return spaces.filter((space) => space.machine === machine).flatMap((space) => match$5(orElse(goneUnder(space.folder), () => flatMap$3(fromNullishOr(places.get(space.id)), goneUnder)), {
+		onNone: () => [],
+		onSome: (folder) => [{
+			id: space.id,
+			folder
+		}]
+	}));
 };
+/** The ids of the spaces `goneSpaces` finds on the `gone` folders on `machine`. */
+const spacesInGone = (spaces, panes, machine, gone) => goneSpaces(spaces, panes, machine, gone).map((space) => space.id);
 /**
 * The folder the person is working in, on the focused space's machine: the focused
 * terminal's, else (a mod pane or the panel itself has focus) where the focused space
@@ -12201,31 +12209,47 @@ const NO_ORPHANS = {
 };
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
-/** The panel's own job removed the folders `gone` on `machine`: never dropped paths. */
-const jobRemoved = (orphans, machine, gone) => ({
-	...orphans,
-	removed: new Map([...orphans.removed, [machine, [...orphans.removed.get(machine) ?? [], ...gone]]])
-});
+/**
+* The panel's own job removed the folders `gone` on `machine`: never dropped paths. Those
+* a list read already dropped stop waiting (a check running on them returns none of
+* them); the rest are left out of the next read that drops them.
+*/
+const jobRemoved = (orphans, machine, gone) => {
+	const waits = waitingOn(orphans, machine);
+	return {
+		...orphans,
+		waiting: new Map([...orphans.waiting, [machine, waits.filter((path) => !gone.includes(path))]]),
+		removed: new Map([...orphans.removed, [machine, [...orphans.removed.get(machine) ?? [], ...gone.filter((path) => !waits.includes(path))]]])
+	};
+};
 /**
 * What the panel remembers after `machine`'s batched list read answers, given each repo's
-* list from before (`old`).
+* list from before (`old`). A folder a job removed is left out of the dropped paths, and
+* forgotten by the first fresh read of its repo, whether that read dropped it or lists it
+* again (a worktree made there anew), so its later removal in a terminal counts.
 */
 const listsRead = (orphans, old, machine, answer) => {
-	const dropped = match$4(answer, {
+	const reads = match$4(answer, {
 		onFailure: () => [],
 		onSuccess: (lists) => Array.from(lists).flatMap(([key, list]) => match$4(list, {
 			onFailure: () => [],
 			onSuccess: (worktrees) => {
-				const now = new Set(worktrees.map((w) => w.path));
-				return (old.get(key)?.worktrees ?? []).map((w) => w.path).filter((path) => !now.has(path));
+				const now = worktrees.map((w) => w.path);
+				const before = (old.get(key)?.worktrees ?? []).map((w) => w.path);
+				return [{
+					dropped: before.filter((path) => !now.includes(path)),
+					seen: [...before, ...now]
+				}];
 			}
 		}))
 	});
+	const dropped = reads.flatMap((fresh) => fresh.dropped);
+	const seen = reads.flatMap((fresh) => fresh.seen);
 	const removed = orphans.removed.get(machine) ?? [];
 	return {
 		...orphans,
 		waiting: new Map([...orphans.waiting, [machine, [...waitingOn(orphans, machine), ...dropped.filter((path) => !removed.includes(path))]]]),
-		removed: new Map([...orphans.removed, [machine, removed.filter((path) => !dropped.includes(path))]])
+		removed: new Map([...orphans.removed, [machine, removed.filter((path) => !seen.includes(path))]])
 	};
 };
 /**
@@ -12244,7 +12268,7 @@ const checked = (orphans, machine, asked, answer) => match$4(answer, {
 			...orphans,
 			waiting: new Map([...orphans.waiting, [machine, waitingOn(orphans, machine).filter((path) => !asked.includes(path))]])
 		},
-		gone: gone.filter((path) => asked.includes(path))
+		gone: gone.filter((path) => asked.includes(path) && waitingOn(orphans, machine).includes(path))
 	})
 });
 const closeOrAsk = (space, panes) => {
@@ -12253,46 +12277,61 @@ const closeOrAsk = (space, panes) => {
 };
 /**
 * The orphan spaces on `machine`: every space there on one of the `gone` folders (by
-* folder or place, as `spacesInGone` matches them), each closed or asked about.
+* folder or place, as `goneSpaces` matches them), each closed or asked about, with the
+* gone folder it was matched by.
 */
 const orphanSpaces = (spaces, panes, machine, gone) => {
-	const ids = new Set(spacesInGone(spaces, panes, machine, gone));
-	return spaces.filter((space) => ids.has(space.id)).map((space) => ({
-		space: space.id,
-		step: closeOrAsk(space, panes)
+	const byId = new Map(spaces.map((space) => [space.id, space]));
+	return goneSpaces(spaces, panes, machine, gone).flatMap(({ id, folder }) => match$5(fromNullishOr(byId.get(id)), {
+		onNone: () => [],
+		onSome: (space) => [{
+			space: id,
+			step: closeOrAsk(space, panes),
+			folder
+		}]
 	}));
 };
 /**
-* The toasts for the orphan spaces on `machine` (as `orphanSpaces` finds them) where
-* something other than a shell runs and no toast has asked before: each names the space
-* and the gone folder it is on, and clicking it closes the space after Herdr's own
-* confirm. The spaces asked about are remembered, so a later check never asks again.
+* The toasts for the `found` orphan spaces where something other than a shell runs and
+* no toast has asked before: each names the space and the gone folder it was matched by,
+* and clicking it closes the space after Herdr's own confirm. The spaces asked about are
+* remembered, so a later check never asks again.
 */
-const askToasts = (orphans, spaces, panes, machine, gone) => {
-	const asks = new Set(orphanSpaces(spaces, panes, machine, gone).filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space)).map((orphan) => orphan.space));
-	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-	const goneUnder = (path) => gone.find((folder) => isUnder(path, folder));
-	const toasts = spaces.filter((space) => asks.has(space.id)).map((space) => {
-		const folder = goneUnder(space.folder) ?? goneUnder(places.get(space.id) ?? "") ?? "";
-		return {
+const askToasts = (orphans, spaces, found) => {
+	const names = new Map(spaces.map((space) => [space.id, space.name]));
+	const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
+	const toasts = asks.flatMap((orphan) => match$5(fromNullishOr(names.get(orphan.space)), {
+		onNone: () => [],
+		onSome: (name) => [{
 			title: "Space on a removed worktree",
-			body: `${space.name} is on ${folder}, which is gone. Something is still running in it. Click to close it.`,
+			body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
 			level: "warning",
 			action: {
 				name: "space.close",
 				args: {
-					id: space.id,
+					id: orphan.space,
 					confirmed: false
 				}
 			}
-		};
-	});
+		}]
+	}));
 	return {
 		orphans: {
 			...orphans,
-			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks])
+			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)])
 		},
 		toasts
+	};
+};
+/**
+* The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
+* those where only shells run close at once, the others get an ask toast (`askToasts`).
+*/
+const orphanSteps = (orphans, spaces, panes, machine, gone) => {
+	const found = orphanSpaces(spaces, panes, machine, gone);
+	return {
+		...askToasts(orphans, spaces, found),
+		closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space)
 	};
 };
 
@@ -13688,16 +13727,13 @@ var Worktrunk = class extends View {
 			const answer = await runEdge(checkGone(asked, machine), fail$2);
 			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
 			const after = checked(this.orphans, machine, asked, answer);
-			const [all, open] = [spaces(), panes()];
-			orphanSpaces(all, open, machine, after.gone).forEach((orphan) => {
-				if (orphan.step === "Close") run("space.close", {
-					id: orphan.space,
-					confirmed: true
-				});
-			});
-			const ask = askToasts(after.orphans, all, open, machine, after.gone);
-			this.orphans = ask.orphans;
-			ask.toasts.forEach((toast) => notify(toast));
+			const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
+			this.orphans = steps.orphans;
+			steps.closes.forEach((id) => run("space.close", {
+				id,
+				confirmed: true
+			}));
+			steps.toasts.forEach((toast) => notify(toast));
 		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */

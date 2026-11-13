@@ -5,6 +5,7 @@ import {
   clickCommand,
   focusedFolder,
   focusedOrHere,
+  goneSpaces,
   groupsChanged,
   goTo,
   spacePlaces,
@@ -152,6 +153,25 @@ describe("spacesInGone", () => {
 
   test("nothing gone, nothing to close", () => {
     expect(spacesInGone([space("s1", "/r/app", ["t1"])], [], THIS_MACHINE, [])).toEqual([]);
+  });
+});
+
+describe("goneSpaces", () => {
+  test("each space on a gone folder with the gone folder it was matched by, its own folder or its place", () => {
+    const spaces = [
+      space("s1", "/r", ["t1"]),
+      space("s2", "/r/app.fix/src", ["t2"]),
+      space("s3", "/r/app", ["t3"]),
+    ];
+    const panes = [
+      pane("t1", "/r/app.feat/src"),
+      pane("t2", "/r/.git/wt-trash/app.fix"),
+      pane("t3", "/r/app"),
+    ];
+    expect(goneSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat", "/r/app.fix"])).toEqual([
+      { id: "s1", folder: "/r/app.feat" },
+      { id: "s2", folder: "/r/app.fix" },
+    ]);
   });
 });
 
