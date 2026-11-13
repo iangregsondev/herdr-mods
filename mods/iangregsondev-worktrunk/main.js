@@ -10428,18 +10428,27 @@ const repoMenu = ({ machine, root }, worktrees) => [
 		root
 	})
 ];
-/** The worktree at `path` in any repo's list (`lists`, by `repoKey`). */
-const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([key, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
-	...repoOfKey(key),
-	worktree
-})))[0]);
 /**
-* Removing the merged worktrees among those at `paths`, batched by repo (machine and
-* folder) in the order
-* their repos first appear; none when none of them is merged.
+* The worktree a row's key names (its machine and path, as `repoKey` keys a folder) in
+* any list of a repo on that machine (`lists`, by `repoKey`).
 */
-const cleanupFor = (lists, paths) => {
-	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
+const findWorktree = (lists, key) => {
+	const { machine, root: path } = repoOfKey(key);
+	return fromNullishOr(Array.from(lists).map(([listKey, list]) => ({
+		repo: repoOfKey(listKey),
+		list
+	})).filter(({ repo }) => repo.machine === machine).flatMap(({ repo, list }) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
+		...repo,
+		worktree
+	})))[0]);
+};
+/**
+* Removing the merged worktrees among those the row `keys` name (see `findWorktree`),
+* batched by repo (machine and folder) in the order their repos first appear; none when
+* none of them is merged.
+*/
+const cleanupFor = (lists, keys) => {
+	const found = keys.flatMap((key) => toArray(findWorktree(lists, key)));
 	const repos = Array.from(new Map(found.map((f) => [repoKey(f), f.root])));
 	return cleanupAction(repos.map(([key, root]) => ({
 		root,
@@ -10709,22 +10718,23 @@ const reposOf = fn("reposOf")(function* (folders, machine = null) {
 	return parseOwners(run.stdout, machine);
 });
 /**
-* The repo the folder `folder` is in (the Current repo of the focused folder), through
-* its shared git folder, so a linked worktree names its repo; none outside every repo.
+* The repo the folder `folder` on `machine` is in (the Current repo of the focused
+* folder), looked up there through its shared git folder, so a linked worktree names its
+* repo; none outside every repo.
 */
-const repoAt = fn("repoAt")(function* (folder) {
+const repoAt = fn("repoAt")(function* (folder, machine = null) {
 	if (folder === "") return none();
-	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-	return currentRepo(run.stdout, null);
+	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder], { on: machine });
+	return currentRepo(run.stdout, machine);
 });
 /** The local and origin branches of `repo`, read on its machine, for the New-or-open dialog. */
 const gitBranches = fn("gitBranches")(function* (repo) {
 	const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [repo.root], { on: repo.machine });
 	return parseBranches(run.stdout);
 });
-/** The branch the folder `folder` is on; none when its HEAD is detached. */
-const branchAt = fn("branchAt")(function* (folder) {
-	const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+/** The branch the folder `folder` on `machine` is on, read there; none when its HEAD is detached. */
+const branchAt = fn("branchAt")(function* (folder, machine = null) {
+	const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder], { on: machine });
 	return liftPredicate(run.stdout.trim(), (branch) => branch !== "");
 });
 /** What the panel says about a failed run: one line. */
@@ -10873,14 +10883,19 @@ const scanAll = fnUntraced(function* (settings, home) {
 		homes: new Map([[null, home], ...homes])
 	};
 });
+/** The repos the folders are in, each looked up on its own machine. */
+const ownersOf = fnUntraced(function* (places) {
+	const machines = Array.from(new Set(places.map((place) => place.machine)));
+	return (yield* forEach(machines, (machine) => reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine))).flat();
+});
 /**
 * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
-* repos the open spaces are in (`places`) and the Current repo (`current`), less the
+* repos the open spaces are in (`places`, each on its machine) and the Current repo (`current`), less the
 * hidden ones. A failure is its one-line reason.
 */
 const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none()) {
 	const scanned = isSome(lastScan) ? lastScan.value : yield* scanAll(settings, home);
-	const owners = yield* reposOf(places);
+	const owners = yield* ownersOf(places);
 	const repos = reposFrom(scanned.repos, [...owners, ...toArray(current)], settings.folders, scanned.homes);
 	return {
 		scanned,
@@ -10888,11 +10903,11 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, c
 	};
 }, asReason);
 /**
-* The Current repo: the repo `folder` (the focused folder; empty for none) is in, if any,
-* or the one-line reason the lookup failed.
+* The Current repo: the repo `focused` (the focused folder, looked up on its machine;
+* empty for none) is in, if any, or the one-line reason the lookup failed.
 */
-const lookUpCurrent = fn("lookUpCurrent")(function* (folder) {
-	return yield* repoAt(folder);
+const lookUpCurrent = fn("lookUpCurrent")(function* (focused) {
+	return yield* repoAt(focused.folder, focused.machine);
 }, asReason);
 /**
 * What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
@@ -11254,8 +11269,8 @@ const NOT_FOLLOWING = {
 };
 /**
 * What a render looks up: while the Current view shows (`following`), the focused
-* folder, when it isn't the one last looked up. Herdr renders on every focus change,
-* so this never polls.
+* folder, when it isn't the one last looked up (the same path on another machine is
+* another folder). Herdr renders on every focus change, so this never polls.
 */
 const followFocus = (follow, { following, folder }) => !following ? {
 	follow: {
@@ -11299,11 +11314,10 @@ const keyOf = (answer) => match$4(answer, {
 
 // src/spaces.ts
 /**
-* Where each space on this machine is now: its first pane's live folder, else the folder
-* it was made in. Spaces on other machines, and spaces with no folder at all, are left out.
+* Where each space is now, on its machine: its first pane's live folder, else the folder
+* it was made in. Spaces with no folder at all are left out.
 */
-const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
-	if (space.machine !== null) return [];
+const spacePlaces = (spaces, panes) => spaces.flatMap((space) => {
 	const tabs = new Set(space.tabs.map((tab) => tab.id));
 	const place = panes.find((pane) => tabs.has(pane.tab) && pane.cwd)?.cwd || space.folder;
 	return place ? [{
@@ -11311,17 +11325,20 @@ const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
 			id: space.id,
 			active: space.active
 		},
+		machine: space.machine,
 		place
 	}] : [];
 });
 /** Where the space `id` is now; none for a space with no place here. */
 const placeOf = (places, id) => fromNullishOr(places.find((p) => p.space.id === id)?.place);
 /**
-* The space on each worktree path. A space sits on the longest worktree path that
-* contains its place, so a worktree nested in another's folder still gets its own.
-* When several sit on one worktree, the shown one wins, else the first.
+* The space on each of the worktree paths on `machine`. Only spaces on that machine
+* count: a folder of the same path elsewhere is another folder. A space sits on the
+* longest worktree path that contains its place, so a worktree nested in another's
+* folder still gets its own. When several sit on one worktree, the shown one wins, else
+* the first.
 */
-const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) => {
+const spacesOnWorktrees = (places, machine, paths) => places.filter((place) => place.machine === machine).flatMap(({ space, place }) => {
 	const longest = paths.filter((path) => isUnder(place, path)).reduce((best, path) => isSome(best) && best.value.length >= path.length ? best : some(path), none());
 	return match$5(longest, {
 		onNone: () => [],
@@ -11343,14 +11360,55 @@ const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) =
 */
 const spacesInGone = (spaces, panes, gone) => {
 	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
-	const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
 	return spaces.filter((space) => space.machine === null).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
 };
 /**
-* The folder the person is working in: the focused terminal's, else (a mod pane or the
-* panel itself has focus) where the focused space is, so focusing the panel keeps it.
+* The folder the person is working in, on the focused space's machine: the focused
+* terminal's, else (a mod pane or the panel itself has focus) where the focused space
+* is, so focusing the panel keeps it. A terminal on this machine that has run `ssh`
+* still counts as this machine: Herdr knows only the space's machine.
 */
-const focusedFolder = (focus, places) => orElse(fromNullishOr(focus?.cwd || null), () => fromNullishOr(places.find((p) => p.space.id === focus?.space)?.place));
+const focusedFolder = (focus, places) => {
+	const at = fromNullishOr(places.find((p) => p.space.id === focus?.space));
+	const machine = match$5(at, {
+		onNone: () => null,
+		onSome: (p) => p.machine
+	});
+	return orElse(map$3(fromNullishOr(focus?.cwd || null), (folder) => ({
+		machine,
+		folder
+	})), () => map$3(at, (p) => ({
+		machine: p.machine,
+		folder: p.place
+	})));
+};
+/**
+* The Herdr command a click on a worktree row runs: select its space, or open a new one
+* on the worktree's machine (Herdr's `space.new` takes no machine for this one).
+*/
+const clickCommand = (click) => click._tag === "Select" ? {
+	command: "space.select",
+	args: { id: click.space }
+} : {
+	command: "space.new",
+	args: {
+		name: click.name,
+		folder: click.folder,
+		...click.machine === null ? {} : { machine: click.machine }
+	}
+};
+/** The space to go to for `wanted`: the one on it, else a new one there. */
+const goTo = (places, wanted) => match$5(fromNullishOr(spacesOnWorktrees(places, wanted.machine, [wanted.folder]).get(wanted.folder)), {
+	onSome: (on) => ({
+		_tag: "Select",
+		space: on.id
+	}),
+	onNone: () => ({
+		_tag: "New",
+		...wanted
+	})
+});
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -11446,7 +11504,10 @@ const badgeOf = (ci) => {
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
 const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repoKey(repo))?.byPath.get(worktree.path)), () => worktree.ci);
 const rowView = (snapshot, repo, worktree, space) => ({
-	key: worktree.path,
+	key: repoKey({
+		machine: repo.machine,
+		root: worktree.path
+	}),
 	repo: repo.root,
 	label: getOrElse$1(worktree.branch, () => "(detached)"),
 	tone: getOrElse$1(kindOf(worktree), () => "main"),
@@ -11461,7 +11522,8 @@ const rowView = (snapshot, repo, worktree, space) => ({
 		onNone: () => ({
 			_tag: "New",
 			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
-			folder: worktree.path
+			folder: worktree.path,
+			machine: repo.machine
 		}),
 		onSome: (s) => ({
 			_tag: "Select",
@@ -11498,6 +11560,13 @@ const nameMatches = (query, repo) => match$5(query, {
 	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q)
 });
 const noMatch = (query) => `Nothing matches "${query}".`;
+/** The machine `repo` is on, named only while the list holds repos on more than one. */
+const machineLabel = (snapshot, repo) => liftPredicate(machineName(repo.machine), () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1);
+/** A flat row's repo: its folder name, after its machine while more than one is listed. */
+const flatRepoName = (snapshot, repo) => match$5(machineLabel(snapshot, repo), {
+	onNone: () => lastSegment(repo.root),
+	onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`
+});
 const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => {
 	const list = listOf(snapshot, repo);
 	const all = match$5(list, {
@@ -11509,13 +11578,13 @@ const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => 
 	const searching = isSome(query);
 	const key = repoKey(repo);
 	const folded = foldable && !searching && snapshot.folded[key] === true;
-	const on = spacesOnWorktrees(places, all.map((w) => w.path));
+	const on = spacesOnWorktrees(places, repo.machine, all.map((w) => w.path));
 	const toRow = (worktree) => rowView(snapshot, repo, worktree, fromNullishOr(on.get(worktree.path)));
 	const inSection = (kind) => worktrees.filter((w) => contains(kindOf(w), kind)).sort(newestFirst);
 	return {
 		key,
 		name: lastSegment(repo.root),
-		machine: liftPredicate(machineName(repo.machine), () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1),
+		machine: machineLabel(snapshot, repo),
 		group: repo.group === "Other" ? none() : some(repo.group),
 		count: map$3(list, () => countOf(repo, list)),
 		status: statusOf(list),
@@ -11614,7 +11683,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		});
-		const on = spacesOnWorktrees(places, worktrees.map((w) => w.path));
+		const on = spacesOnWorktrees(places, repo.machine, worktrees.map((w) => w.path));
 		return worktrees.filter((w) => show === "open" ? on.has(w.path) : contains(kindOf(w), show)).filter((w) => matches(query, repo, w)).map((worktree) => ({
 			repo,
 			worktree,
@@ -11640,7 +11709,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			const row = rowView(snapshot, repo, worktree, space);
 			return {
 				...row,
-				subline: `${lastSegment(repo.root)} · ${row.subline}`
+				subline: `${flatRepoName(snapshot, repo)} · ${row.subline}`
 			};
 		})
 	};
@@ -11691,7 +11760,7 @@ const bodyOf = (snapshot, places) => {
 };
 /** Everything the panel draws for `snapshot`. */
 const buildView = (snapshot) => {
-	const places = localPlaces(snapshot.spaces, snapshot.panes);
+	const places = spacePlaces(snapshot.spaces, snapshot.panes);
 	return {
 		loading: snapshot.loading,
 		chips: chipsOf(snapshot),
@@ -11743,7 +11812,8 @@ const readClick = (value) => {
 			folder: text(f.folder)
 		}), (click) => ({
 			_tag: "New",
-			...click
+			...click,
+			machine: getOrNull(text(f.machine))
 		}));
 		default: return none();
 	}
@@ -11991,11 +12061,8 @@ const toneColor = (t, tone) => ({
 	conflict: t.blocked
 })[tone];
 const onClickRow = (click) => {
-	if (click._tag === "Select") run("space.select", { id: click.space });
-	else run("space.new", {
-		name: click.name,
-		folder: click.folder
-	});
+	const { command, args } = clickCommand(click);
+	run(command, args);
 };
 const toggleFold = (key) => {
 	const folded = readFolded(shared(FOLDED_KEY));
@@ -12212,8 +12279,8 @@ var Worktrunk = class extends View {
 	* for one of the repos the panel lists.
 	*/
 	openNewOrOpen(cx, folder) {
-		const places = localPlaces(spaces(), panes());
-		const at = folder ?? getOrElse$1(focusedFolder(focused(), places), () => "");
+		const places = spacePlaces(spaces(), panes());
+		const at = folder ?? getOrElse$1(map$3(filter(focusedFolder(focused(), places), (f) => f.machine === null), (f) => f.folder), () => "");
 		const listed = this.repos.filter((repo) => repo.machine === null).map((repo) => repo.root);
 		cx.spawn(async () => {
 			const opened = await runEdge(dialogFor(at, listed), fail$2);
@@ -12483,7 +12550,8 @@ var Worktrunk = class extends View {
 			body,
 			level: "warning"
 		});
-		const found = placeOf(localPlaces(spaces(), panes()), space);
+		const here = spacePlaces(spaces(), panes()).filter((p) => p.machine === null);
+		const found = placeOf(here, space);
 		if (isNone(found)) return warn("That space has no folder on this machine.");
 		const place = found.value;
 		if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
@@ -12569,13 +12637,11 @@ var Worktrunk = class extends View {
 				problems: []
 			}));
 			jobProblems(title, made.problems);
-			map$3(made.switched, ({ branch, path }) => match$5(fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)), {
-				onSome: (on) => run("space.select", { id: on.id }),
-				onNone: () => run("space.new", {
-					name: branch,
-					folder: path
-				})
-			}));
+			map$3(made.switched, ({ branch, path }) => onClickRow(goTo(spacePlaces(spaces(), panes()), {
+				machine: null,
+				folder: path,
+				name: branch
+			})));
 			this.jobEnded(cx, title, made.outcome);
 		});
 	}
@@ -12601,8 +12667,11 @@ var Worktrunk = class extends View {
 	* changes. Herdr renders on every focus change, so this never polls.
 	*/
 	followFocus(cx, following) {
-		const places = localPlaces(spaces(), panes());
-		const folder = getOrElse$1(focusedFolder(focused(), places), () => "");
+		const places = spacePlaces(spaces(), panes());
+		const folder = getOrElse$1(focusedFolder(focused(), places), () => ({
+			machine: null,
+			folder: ""
+		}));
 		const step = followFocus(this.follow, {
 			following,
 			folder
@@ -12610,7 +12679,7 @@ var Worktrunk = class extends View {
 		this.follow = step.follow;
 		map$3(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
 	}
-	/** Looks up the repo of `folder`; a new Current repo is read at once. */
+	/** Looks up the repo of `folder`, on its machine; a new Current repo is read at once. */
 	lookUpCurrent(cx, folder) {
 		cx.spawn(async (cx) => {
 			const answer = await runEdge(lookUpCurrent(folder), fail$2);
@@ -12688,7 +12757,10 @@ var Worktrunk = class extends View {
 			now,
 			every: SCAN_EVERY
 		});
-		const places = localPlaces(spaces(), panes()).map((p) => p.place);
+		const places = spacePlaces(spaces(), panes()).map((p) => ({
+			machine: p.machine,
+			folder: p.place
+		}));
 		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess))), fail$2);
 		if (isSuccess(found)) {
 			this.repos = found.success.repos;

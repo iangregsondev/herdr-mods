@@ -71,7 +71,8 @@ const readClick = (value: unknown): Option.Option<Click> => {
     case "New":
       return Option.map(
         Option.all({ name: text(f.name), folder: text(f.folder) }),
-        (click): Click => ({ _tag: "New", ...click }),
+        // No machine named is this machine.
+        (click): Click => ({ _tag: "New", ...click, machine: Option.getOrNull(text(f.machine)) }),
       );
     default:
       return Option.none();

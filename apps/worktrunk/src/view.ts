@@ -1,12 +1,12 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import { machineName, repoKey } from "./machines.ts";
+import { machineName, repoKey, type Machine } from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
 import {
-  localPlaces,
+  spacePlaces,
   spacesOnWorktrees,
   type PaneLike,
   type Place,
@@ -78,7 +78,13 @@ export type Tone = "main" | "merged" | "active" | "conflict";
 
 export type Click =
   | { readonly _tag: "Select"; readonly space: string }
-  | { readonly _tag: "New"; readonly name: string; readonly folder: string };
+  /** A new space named `name` at `folder` on `machine` (null: this machine). */
+  | {
+      readonly _tag: "New";
+      readonly name: string;
+      readonly folder: string;
+      readonly machine: Machine;
+    };
 
 /** A row's CI badge; `stale` when the checks ran on an older commit than the one pushed. */
 export interface CiBadge {
@@ -87,7 +93,10 @@ export interface CiBadge {
 }
 
 export interface RowView {
-  /** The worktree's path: unique, so also the element id. */
+  /**
+   * The worktree's machine and path, as `repoKey` keys a folder: unique, so also the
+   * element id.
+   */
   readonly key: string;
   /** Its repo's root. */
   readonly repo: string;
@@ -300,7 +309,7 @@ const rowView = (
   worktree: Worktree,
   space: Option.Option<SpaceRef>,
 ): RowView => ({
-  key: worktree.path,
+  key: repoKey({ machine: repo.machine, root: worktree.path }),
   repo: repo.root,
   label: Option.getOrElse(worktree.branch, () => "(detached)"),
   tone: Option.getOrElse(kindOf(worktree), (): Tone => "main"),
@@ -319,6 +328,7 @@ const rowView = (
           ? lastSegment(repo.root)
           : Option.getOrElse(worktree.branch, () => lastSegment(worktree.path)),
       folder: worktree.path,
+      machine: repo.machine,
     }),
     onSome: (s): Click => ({ _tag: "Select", space: s.id }),
   }),
@@ -368,6 +378,20 @@ const nameMatches = (query: Option.Option<string>, repo: Repo): boolean =>
 
 const noMatch = (query: string): string => `Nothing matches "${query}".`;
 
+/** The machine `repo` is on, named only while the list holds repos on more than one. */
+const machineLabel = (snapshot: Snapshot, repo: Repo): Option.Option<string> =>
+  Option.liftPredicate(
+    machineName(repo.machine),
+    () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1,
+  );
+
+/** A flat row's repo: its folder name, after its machine while more than one is listed. */
+const flatRepoName = (snapshot: Snapshot, repo: Repo): string =>
+  Option.match(machineLabel(snapshot, repo), {
+    onNone: () => lastSegment(repo.root),
+    onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`,
+  });
+
 const repoView = (
   repo: Repo,
   snapshot: Snapshot,
@@ -385,6 +409,7 @@ const repoView = (
   // Every worktree, matching or not, so a space never moves to a shorter path.
   const on = spacesOnWorktrees(
     places,
+    repo.machine,
     all.map((w) => w.path),
   );
   const toRow = (worktree: Worktree) =>
@@ -394,10 +419,7 @@ const repoView = (
   return {
     key,
     name: lastSegment(repo.root),
-    machine: Option.liftPredicate(
-      machineName(repo.machine),
-      () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1,
-    ),
+    machine: machineLabel(snapshot, repo),
     group: repo.group === OTHER ? Option.none() : Option.some(repo.group),
     count: Option.map(list, () => countOf(repo, list)),
     status: statusOf(list),
@@ -548,6 +570,7 @@ const flatBody = (
     });
     const on = spacesOnWorktrees(
       places,
+      repo.machine,
       worktrees.map((w) => w.path),
     );
     return worktrees
@@ -571,7 +594,7 @@ const flatBody = (
       .sort((a, b) => newestFirst(a.worktree, b.worktree))
       .map(({ repo, worktree, space }) => {
         const row = rowView(snapshot, repo, worktree, space);
-        return { ...row, subline: `${lastSegment(repo.root)} · ${row.subline}` };
+        return { ...row, subline: `${flatRepoName(snapshot, repo)} · ${row.subline}` };
       }),
   };
 };
@@ -615,7 +638,7 @@ const bodyOf = (snapshot: Snapshot, places: readonly Place[]): Body => {
 
 /** Everything the panel draws for `snapshot`. */
 export const buildView = (snapshot: Snapshot): PanelView => {
-  const places = localPlaces(snapshot.spaces, snapshot.panes);
+  const places = spacePlaces(snapshot.spaces, snapshot.panes);
   return {
     loading: snapshot.loading,
     chips: chipsOf(snapshot),

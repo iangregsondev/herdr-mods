@@ -101,6 +101,15 @@ describe("readAction", () => {
         _tag: "New",
         name: "feat",
         folder: "/r/app.feat",
+        machine: THIS_MACHINE,
+      }),
+    ),
+    ...actionsOf(
+      rowMenu({ machine: "linux", root: "/r/app" }, FEAT, {
+        _tag: "New",
+        name: "feat",
+        folder: "/r/app.feat",
+        machine: "linux",
       }),
     ),
     ...actionsOf(

@@ -13,6 +13,12 @@ export const machineName = (machine: Machine): string => machine ?? "this machin
 /** Each machine's home folder, read on that machine. */
 export type Homes = ReadonlyMap<Machine, string>;
 
+/** A folder on a machine. */
+export interface Located {
+  readonly machine: Machine;
+  readonly folder: string;
+}
+
 /** A repo's identity: the machine it lives on and its main checkout's folder there. */
 export interface RepoId {
   readonly machine: Machine;

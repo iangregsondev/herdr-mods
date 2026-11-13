@@ -209,29 +209,35 @@ export interface FoundWorktree extends RepoId {
   readonly worktree: Worktree;
 }
 
-/** The worktree at `path` in any repo's list (`lists`, by `repoKey`). */
+/**
+ * The worktree a row's key names (its machine and path, as `repoKey` keys a folder) in
+ * any list of a repo on that machine (`lists`, by `repoKey`).
+ */
 export const findWorktree = (
   lists: ReadonlyMap<string, RepoList>,
-  path: string,
-): Option.Option<FoundWorktree> =>
-  Option.fromNullishOr(
-    Array.from(lists).flatMap(([key, list]) =>
-      list.worktrees
-        .filter((w) => w.path === path)
-        .map((worktree) => ({ ...repoOfKey(key), worktree })),
-    )[0],
+  key: string,
+): Option.Option<FoundWorktree> => {
+  const { machine, root: path } = repoOfKey(key);
+  return Option.fromNullishOr(
+    Array.from(lists)
+      .map(([listKey, list]) => ({ repo: repoOfKey(listKey), list }))
+      .filter(({ repo }) => repo.machine === machine)
+      .flatMap(({ repo, list }) =>
+        list.worktrees.filter((w) => w.path === path).map((worktree) => ({ ...repo, worktree })),
+      )[0],
   );
+};
 
 /**
- * Removing the merged worktrees among those at `paths`, batched by repo (machine and
- * folder) in the order
- * their repos first appear; none when none of them is merged.
+ * Removing the merged worktrees among those the row `keys` name (see `findWorktree`),
+ * batched by repo (machine and folder) in the order their repos first appear; none when
+ * none of them is merged.
  */
 export const cleanupFor = (
   lists: ReadonlyMap<string, RepoList>,
-  paths: readonly string[],
+  keys: readonly string[],
 ): Option.Option<CleanupAction> => {
-  const found = paths.flatMap((path) => Option.toArray(findWorktree(lists, path)));
+  const found = keys.flatMap((key) => Option.toArray(findWorktree(lists, key)));
   const repos = Array.from(new Map(found.map((f) => [repoKey(f), f.root])));
   return cleanupAction(
     repos.map(([key, root]) => ({

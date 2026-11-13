@@ -119,7 +119,14 @@ import {
   type RefreshAsk,
   type RepoList,
 } from "./reads.ts";
-import { repoKey, repoOfKey, THIS_MACHINE, type Homes, type RepoId } from "./machines.ts";
+import {
+  repoKey,
+  repoOfKey,
+  THIS_MACHINE,
+  type Homes,
+  type Located,
+  type RepoId,
+} from "./machines.ts";
 import type { Repo } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
@@ -135,7 +142,7 @@ import {
   type Settings,
 } from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
-import { focusedFolder, localPlaces, placeOf, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
+import { clickCommand, focusedFolder, goTo, placeOf, spacePlaces, spacesInGone } from "./spaces.ts";
 import {
   buildView,
   reposToRead,
@@ -279,8 +286,8 @@ const toneColor = (t: Colors, tone: Tone): Hex =>
   ({ main: t.accent, merged: t.done, active: t.working, conflict: t.blocked })[tone];
 
 const onClickRow = (click: Click) => {
-  if (click._tag === "Select") run("space.select", { id: click.space });
-  else run("space.new", { name: click.name, folder: click.folder });
+  const { command, args } = clickCommand(click);
+  run(command, args);
 };
 
 const toggleFold = (key: string) => {
@@ -569,9 +576,18 @@ export default class Worktrunk extends View {
    * for one of the repos the panel lists.
    */
   openNewOrOpen(cx: AsyncContext, folder: string | null) {
-    const places = localPlaces(spaces(), panes());
-    const at = folder ?? Option.getOrElse(focusedFolder(focused(), places), () => "");
-    // The dialog and the job it starts act on this machine, so it offers only its repos.
+    const places = spacePlaces(spaces(), panes());
+    // The dialog and the job it starts act on this machine, so a focused folder elsewhere
+    // counts as none, and it offers only this machine's repos.
+    const at =
+      folder ??
+      Option.getOrElse(
+        Option.map(
+          Option.filter(focusedFolder(focused(), places), (f) => f.machine === THIS_MACHINE),
+          (f) => f.folder,
+        ),
+        () => "",
+      );
     const listed = this.repos
       .filter((repo) => repo.machine === THIS_MACHINE)
       .map((repo) => repo.root);
@@ -844,7 +860,9 @@ export default class Worktrunk extends View {
   forSpace(cx: AsyncContext, space: string, act: SpaceAct) {
     const warn = (body: string) =>
       notify({ title: "No worktree to act on", body, level: "warning" });
-    const found = placeOf(localPlaces(spaces(), panes()), space);
+    // Merge, Remove and the dialog act on this machine, so only its spaces have a place here.
+    const here = spacePlaces(spaces(), panes()).filter((p) => p.machine === THIS_MACHINE);
+    const found = placeOf(here, space);
     if (Option.isNone(found)) return warn("That space has no folder on this machine.");
     const place = found.value;
     if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
@@ -920,13 +938,14 @@ export default class Worktrunk extends View {
         }),
       );
       jobProblems(title, made.problems);
+      // The job ran on this machine, so the worktree it switched to is here.
       Option.map(made.switched, ({ branch, path }) =>
-        Option.match(
-          Option.fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)),
-          {
-            onSome: (on) => run("space.select", { id: on.id }),
-            onNone: () => run("space.new", { name: branch, folder: path }),
-          },
+        onClickRow(
+          goTo(spacePlaces(spaces(), panes()), {
+            machine: THIS_MACHINE,
+            folder: path,
+            name: branch,
+          }),
         ),
       );
       this.jobEnded(cx, title, made.outcome);
@@ -962,15 +981,18 @@ export default class Worktrunk extends View {
    * changes. Herdr renders on every focus change, so this never polls.
    */
   followFocus(cx: Context, following: boolean) {
-    const places = localPlaces(spaces(), panes());
-    const folder = Option.getOrElse(focusedFolder(focused(), places), () => "");
+    const places = spacePlaces(spaces(), panes());
+    const folder = Option.getOrElse(focusedFolder(focused(), places), (): Located => ({
+      machine: THIS_MACHINE,
+      folder: "",
+    }));
     const step = followFocus(this.follow, { following, folder });
     this.follow = step.follow;
     Option.map(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
   }
 
-  /** Looks up the repo of `folder`; a new Current repo is read at once. */
-  lookUpCurrent(cx: AsyncContext, folder: string) {
+  /** Looks up the repo of `folder`, on its machine; a new Current repo is read at once. */
+  lookUpCurrent(cx: AsyncContext, folder: Located) {
     cx.spawn(async (cx) => {
       const answer = await runEdge(lookUpCurrent(folder), Result.fail);
       const taken = takeLookup(this.follow, folder, answer);
@@ -1041,7 +1063,10 @@ export default class Worktrunk extends View {
     const { folders, depth, skip } = this.settings;
     const key = JSON.stringify({ folders, depth, skip });
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
-    const places = localPlaces(spaces(), panes()).map((p) => p.place);
+    const places = spacePlaces(spaces(), panes()).map((p): Located => ({
+      machine: p.machine,
+      folder: p.place,
+    }));
     const found = await runEdge(
       findRepos(
         this.settings,
