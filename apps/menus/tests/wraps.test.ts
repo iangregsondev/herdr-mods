@@ -79,7 +79,7 @@ describe("the tab bar's copy", () => {
 });
 
 describe("the sidebar's copy", () => {
-  test("a space's right-click opens our menu, with Herdr's props and room for our items", async () => {
+  test("a space's right-click opens our menu, with Herdr's props and room for our four items", async () => {
     const spaces = await load(patched("spaces", spacesStandIn));
     expect(spaces.spaceMenu({ id: "sp1" })).toEqual({
       mod: SELF,
@@ -88,7 +88,7 @@ describe("the sidebar's copy", () => {
       height: SPACE_MENU_HEIGHT,
       props: { role: "menu", tab: "space", target: { id: "sp1" } },
     });
-    expect(SPACE_MENU_HEIGHT).toBeGreaterThanOrEqual(260 + 3 * 31);
+    expect(SPACE_MENU_HEIGHT).toBeGreaterThanOrEqual(260 + 4 * 31);
   });
 });
 
@@ -138,10 +138,13 @@ describe("the menu's copy", () => {
       p: { tab: "space", target: { id: "sp1" } },
       git: "linked",
     });
-    expect([0, 1, 2, 3, 4, 5].map((i) => (copy.choose(i) as unknown[] | undefined)?.[0])).toEqual([
+    expect(
+      [0, 1, 2, 3, 4, 5, 6].map((i) => (copy.choose(i) as unknown[] | undefined)?.[0]),
+    ).toEqual([
       "Rename",
       "New worktree",
-      "Worktree (wt)…",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
       "Merge into main (wt)…",
       "Remove worktree (wt)…",
       "Close",

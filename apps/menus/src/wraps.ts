@@ -22,8 +22,8 @@ export const roleIn = (props: unknown): Option.Option<Role> =>
 export const ROW = 31;
 /** The "+" menu's popup: Herdr's 512 px, plus our row and the padding under it. */
 export const NEW_MENU_HEIGHT = 512 + ROW + 5;
-/** A space menu's popup: Herdr's 260 px, plus our three rows. */
-export const SPACE_MENU_HEIGHT = 260 + 3 * ROW;
+/** A space menu's popup: Herdr's 260 px, plus our four rows. */
+export const SPACE_MENU_HEIGHT = 260 + 4 * ROW;
 
 export interface Wrap {
   /** The Herdr mod whose `main.js` the copy is made from. */

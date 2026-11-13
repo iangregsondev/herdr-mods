@@ -8344,6 +8344,7 @@ const requestKey = (panelMod) => `${panelMod}.request.v1`;
 /** Every SpaceAct, for readers of a request. */
 const SPACE_ACTS = [
 	"NewOrOpen",
+	"Open",
 	"Merge",
 	"Remove"
 ];
@@ -8400,8 +8401,8 @@ const roleIn = (props) => fromNullishOr(ROLES.find((role) => role === at(props, 
 const ROW = 31;
 /** The "+" menu's popup: Herdr's 512 px, plus our row and the padding under it. */
 const NEW_MENU_HEIGHT = 548;
-/** A space menu's popup: Herdr's 260 px, plus our three rows. */
-const SPACE_MENU_HEIGHT = 353;
+/** A space menu's popup: Herdr's 260 px, plus our four rows. */
+const SPACE_MENU_HEIGHT = 384;
 /**
 * The menu copy's own `items(p, git)` runs Herdr's list through an extension our
 * wrapper sets, and is exported so the wrapper's `choose` reads the same list.
@@ -8444,7 +8445,7 @@ const wrapFor = (role, self) => {
 			patches: [{
 				name: "spaces: space right-click opens menu",
 				find: "openOverlay({ mod: \"menu\", kind: \"popup\", width: 200, height: 260, props: { tab: \"space\",",
-				replace: `openOverlay({ mod: ${JSON.stringify(self)}, kind: "popup", width: 200, height: ${353}, props: { role: "menu", tab: "space",`
+				replace: `openOverlay({ mod: ${JSON.stringify(self)}, kind: "popup", width: 200, height: ${384}, props: { role: "menu", tab: "space",`
 			}, {
 				name: "spaces: space row's name",
 				find: SPACE_NAME,
@@ -8581,7 +8582,11 @@ const insertAt = (list) => {
 const withWorktrunkItems = (list, props, git) => match$4(filter(spaceOf(props), () => git === "main" || git === "linked"), {
 	onNone: () => list,
 	onSome: (space) => {
-		const added = [ours("Worktree (wt)…", space, "NewOrOpen"), ...git === "linked" ? [ours("Merge into main (wt)…", space, "Merge"), ours("Remove worktree (wt)…", space, "Remove")] : []];
+		const added = [
+			ours("New worktree (wt)…", space, "NewOrOpen"),
+			ours("Open worktree (wt)…", space, "Open"),
+			...git === "linked" ? [ours("Merge into main (wt)…", space, "Merge"), ours("Remove worktree (wt)…", space, "Remove")] : []
+		];
 		const at = insertAt(list);
 		return [
 			...list.slice(0, at),
@@ -8707,7 +8712,7 @@ const reopen = (role) => {
 			height: 548
 		} : {
 			width: 200,
-			height: 353
+			height: 384
 		},
 		props: same
 	});
