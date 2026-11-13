@@ -7,6 +7,9 @@ export type Machine = string | null;
 /** This machine: the one the Herdr app runs on. */
 export const THIS_MACHINE: Machine = null;
 
+/** What the panel calls `machine`: Herdr's name for it, or "this machine". */
+export const machineName = (machine: Machine): string => machine ?? "this machine";
+
 /** Each machine's home folder, read on that machine. */
 export type Homes = ReadonlyMap<Machine, string>;
 

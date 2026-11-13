@@ -953,3 +953,17 @@ describe("buildView: the same folder on two machines", () => {
     expect(repos.map((r) => Option.isSome(r.ciNote))).toEqual([false, true]);
   });
 });
+
+describe("buildView: machine labels", () => {
+  test("with repos on more than one machine, each repo names its machine", () => {
+    const repos = tree(snapshot({ repos: [API, API_LINUX] }));
+    expect(repos.map((r) => r.machine)).toEqual([
+      Option.some("this machine"),
+      Option.some("linux"),
+    ]);
+  });
+
+  test("with every repo on one machine, no repo names it", () => {
+    expect(tree(snapshot()).map((r) => r.machine)).toEqual([Option.none(), Option.none()]);
+  });
+});

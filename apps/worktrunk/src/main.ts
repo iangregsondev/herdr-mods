@@ -2025,6 +2025,19 @@ export default class Worktrunk extends View {
       .child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted))
       .child(div().min_w(0).truncate().font_semibold().child(repo.name))
       .children(
+        Option.toArray(repo.machine).map((machine) =>
+          div()
+            .flex_none()
+            .px(6)
+            .rounded(4)
+            .border(1)
+            .border_color(t.border)
+            .text_size(sizes.label - 1)
+            .text_color(t.muted)
+            .child(machine),
+        ),
+      )
+      .children(
         Option.toArray(repo.group).map((group) =>
           div()
             .flex_none()
