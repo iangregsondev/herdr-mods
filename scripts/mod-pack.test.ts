@@ -161,6 +161,36 @@ async function runOnSuccess(config: SinglePack): Promise<void> {
   await onSuccess(...([] as unknown as Parameters<typeof onSuccess>));
 }
 
+const RECIPE = "# hello\n\nA panel.\n";
+const MOD_JSON = JSON.stringify({ place: "right" });
+
+/** A temp mod source folder at `version`, with an unstamped assets/RECIPE.md and a mod.json. */
+function modSourceWithRecipe(version: string): string {
+  const dir = tempDir();
+  writeFile(dir, "package.json", JSON.stringify({ name: "hello", version }));
+  writeFile(dir, "assets/RECIPE.md", RECIPE);
+  writeFile(dir, "assets/mod.json", MOD_JSON);
+  return dir;
+}
+
+/** A temp out dir holding copies of `modDir`'s assets, as vp pack leaves it before build:done. */
+function copiedAssets(modDir: string): string {
+  const outDir = tempDir();
+  readdirSync(join(modDir, "assets")).map((file) =>
+    writeFile(outDir, file, readFileSync(join(modDir, "assets", file), "utf8")),
+  );
+  return outDir;
+}
+
+/** Runs the config's build:done hook the way vp pack does after copying the assets into `outDir`. */
+async function runBuildDone(config: SinglePack, outDir: string): Promise<void> {
+  const { hooks } = config;
+  const done = typeof hooks === "object" ? hooks["build:done"] : undefined;
+  if (done === undefined) throw new Error("no build:done hook");
+  // vp pack passes its build context; the hook reads only the resolved out dir.
+  await done({ options: { outDir } } as unknown as Parameters<typeof done>[0]);
+}
+
 describe("watchFromArgv", () => {
   test("is true with --watch", () => {
     expect(watchFromArgv(["node", "vp", "pack", "--watch"])).toBe(true);
@@ -227,6 +257,38 @@ describe("modPack, build mode", () => {
     const home = localHerdrHome();
     modPack("hello", { watch: false });
     expect(readdirSync(join(home, "mods"))).toEqual([]);
+  });
+
+  test("stamps the built RECIPE.md with the mod's version and changelog link", async () => {
+    const modDir = modSourceWithRecipe("1.2.3");
+    const outDir = copiedAssets(modDir);
+    await runBuildDone(modPack("hello", { watch: false, modDir }), outDir);
+    expect(readFileSync(join(outDir, "RECIPE.md"), "utf8")).toBe(
+      "# hello\n\n" +
+        "Version 1.2.3 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/hello/CHANGELOG.md)\n" +
+        "\nA panel.\n",
+    );
+  });
+
+  test.each([
+    ["no version", { name: "hello" }],
+    ["a non-string version", { name: "hello", version: 1 }],
+  ])("fails the build naming the package.json when it has %s", async (_, pkg) => {
+    const modDir = modSourceWithRecipe("1.2.3");
+    const packageFile = writeFile(modDir, "package.json", JSON.stringify(pkg));
+    const outDir = copiedAssets(modDir);
+    await expect(runBuildDone(modPack("hello", { watch: false, modDir }), outDir)).rejects.toThrow(
+      packageFile,
+    );
+    expect(readFileSync(join(outDir, "RECIPE.md"), "utf8")).toBe(RECIPE);
+  });
+
+  test("leaves the source RECIPE.md and the built mod.json as they were", async () => {
+    const modDir = modSourceWithRecipe("1.2.3");
+    const outDir = copiedAssets(modDir);
+    await runBuildDone(modPack("hello", { watch: false, modDir }), outDir);
+    expect(readFileSync(join(modDir, "assets/RECIPE.md"), "utf8")).toBe(RECIPE);
+    expect(readFileSync(join(outDir, "mod.json"), "utf8")).toBe(MOD_JSON);
   });
 });
 

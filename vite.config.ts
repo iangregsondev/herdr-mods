@@ -86,12 +86,16 @@ export default defineConfig({
       types: { command: "vpx scripts/herdr-types.ts", cache: false },
       // herdr-app check on every built mod, on the dev target's Herdr host.
       "check:mods": { command: "vpx scripts/check-mods.ts", cache: false },
+      // Reads git history, which the cache doesn't track.
+      "check:changesets": { command: "vpx scripts/changeset-check.ts", cache: false },
       "dev:remove": { command: "vpx scripts/dev-remove.ts", cache: false },
       // herdr-app on the dev target's Herdr host: here, or over SSH (herdr-dev.json).
       herdr: { command: "vpx scripts/herdr.ts", cache: false },
       "herdr:sync": { command: "vpx scripts/herdr-sync.ts", cache: false },
       // Reads git's file list, which the cache doesn't track.
       "audit:config": { command: "vpx scripts/audit.ts", cache: false },
+      // The release workflow's publish script: reads the tags on origin, writes CHANGESETS_OUTPUT.
+      "release:tags": { command: "vpx scripts/release-tags.ts", cache: false },
     },
   },
 });

@@ -204,7 +204,7 @@ vp run verify         # format, lint, type-check, all tests, config audit
 vp run check:mods     # herdr-app check on every built mod, on the dev target's Herdr host
 ```
 
-CI fails if `mods/` doesn't match the source.
+CI fails if `mods/` doesn't match the source. A change to a mod or to `packages/` also needs a changeset: see [Releases](#releases).
 
 ## Start a new mod
 
@@ -214,6 +214,7 @@ CI fails if `mods/` doesn't match the source.
 4. Run `vp run <name>#dev` and build it up, test-first for pure logic (`apps/<name>/tests/`).
 5. Write its `RECIPE.md` and `preview.png` (below).
 6. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/iangregsondev-<name>/`.
+7. Add a changeset for it: a `minor` bump takes it from `0.0.0` to `0.1.0`, its first release. See [Releases](#releases).
 
 ## Recipe and preview
 
@@ -223,5 +224,77 @@ Herdr's shared-mod format expects both in every mod folder. Its rules are in `~/
 - **`RECIPE.md`** is a brief another agent could rebuild the mod from, starting with an empty folder. Its sections, in order: `# Name` with one paragraph and `![Name](preview.png)`, then **What you see**, **How it behaves**, **Built from**, **Watch out** and **Done when**. Write it from the real files, exact over vague. `apps/hello/assets/RECIPE.md` shows the shape.
 - **`preview.png`** is a screenshot of the mod. Take one with `vp run herdr shot apps/<name>/assets/preview.png --crop x,y,w,h` while the dev build runs, cropped to the mod alone. This repo is public, so nothing else from your window may show: other panels, repo or branch names, paths, terminal text.
 - Update the recipe in the same change as any behaviour change.
+- Don't write a version in the source recipe. Every build adds one line under the title of the copied `RECIPE.md`: `Version <x.y.z> · [Changelog](<link>)`, from the mod's `package.json` (`scripts/recipe-stamp.ts`, called by `mod-pack.ts`).
 
 To list it on herdr.dev/mods, the repo needs the `herdr-mod` topic (already set).
+
+## Releases
+
+Each mod has its own **mod version**, in `apps/<name>/package.json`. A change to one mod never moves another's. Versions come from [changesets](https://github.com/changesets/changesets), set up in `.changeset/config.json`. Nothing goes to npm or any registry.
+
+### What a changeset is
+
+A **changeset** is a small Markdown file in `.changeset/`, added with your change. It names the mods the change reaches, how far each one's version moves, and what a user of that mod sees. When a release is made, its text becomes that mod's **changelog** entry (`apps/<name>/CHANGELOG.md`), so write it for the mod's users, not for the repo.
+
+```md
+---
+"worktrunk": patch
+---
+
+The Clean up view no longer lists the main worktree.
+```
+
+### When you need one
+
+| You changed                            | You need                                               |
+| -------------------------------------- | ------------------------------------------------------ |
+| anything under `apps/<name>/`          | a changeset that names `<name>`                        |
+| anything under `packages/`             | a changeset: name the mods it reaches, or an empty one |
+| a mod's whole folder, deleted          | nothing for that mod                                   |
+| anything else (root scripts, docs, CI) | nothing                                                |
+
+CI checks this on every PR (`vp run check:changesets`, `scripts/changeset-check.ts`). It fails naming each changed mod with no changeset, and tells you the command to add one. You can run it yourself before you push: it compares your branch with `origin/main`.
+
+### Bump rules
+
+- **major**: the user must act. A layout slot changes, the settings format changes, the mod id is renamed.
+- **minor**: new behaviour.
+- **patch**: a fix.
+- While a mod is at `0.x`, a breaking change bumps the **minor**, not the major.
+
+### Add one
+
+```bash
+vp exec changeset           # asks which mods, the bump for each, and the summary
+vp exec changeset --empty   # a change with nothing for users (say, an internal refactor in packages/)
+```
+
+Or write the file by hand, in the shape above. Commit it with the change. One changeset can name several mods, each with its own bump.
+
+**A change in `packages/`.** `worktrunk-mailbox` has no version or changelog of its own: users never see it, only the mods it is bundled into. So name the mods it reaches and write what their users see ("The New worktree item opens the dialog even when the panel is hidden"), not what changed in the package. If users see nothing, add an empty changeset.
+
+### From changeset to release
+
+1. Your PR merges into `main` with its changeset.
+2. The release workflow (`.github/workflows/release.yml`) opens or updates a PR titled `chore: version packages`, the **version PR**. It runs `vp run version` (`changeset version`, then `vp check --fix`, then `vp run -r build`), so the PR holds each mod's new version, its changelog entry and a rebuilt `mods/` whose `RECIPE.md` shows the new version. It uses up the changesets. Leave `vp run version` to the workflow: it rewrites versions and changelogs, and needs a GitHub token. More merges to `main` keep updating it.
+3. You merge the version PR when you want a release.
+4. The workflow then makes one **release** per bumped mod: a git tag and a GitHub release, carrying that version's changelog entry.
+
+Tags and releases use the mod id, not the package name: `iangregsondev-worktrunk@0.1.0`, never `worktrunk@0.1.0` ([ADR 0004](adr/0004-release-tags-use-mod-ids.md)). `vp run release:tags` (`scripts/release-tags.ts`) lists each mod whose tag isn't on GitHub yet, and the workflow makes those. A mod still at `0.0.0` has never been released and gets no tag (that is why `hello`, a temporary example mod, has none). Once every tag exists, a run of the workflow makes nothing.
+
+The CI changeset check skips the version PR: it changes mods but adds no changesets.
+
+### A harmless warning
+
+Every `changeset` command prints these lines, then carries on and exits 0:
+
+```text
+Package menus must depend on the current version of worktrunk-mailbox: 0.0.0 vs catalog:
+Package worktrunk must depend on the current version of worktrunk-mailbox: 0.0.0 vs catalog:
+```
+
+The mods take `worktrunk-mailbox` through `catalog:`, and changesets ignores that package on purpose (`ignore` in `.changeset/config.json`). Nothing is wrong; ignore the lines.
+
+### Backfill
+
+Changes made before changesets came in are backfilled, so each mod's first release, `0.1.0`, lists the PRs that built it. There is one changeset per past PR per mod, each with a `pr: #N` line at the top of its text, which makes the changelog link that PR and its author. Today that is menus and worktrunk, both from #17. `hello` has no backfill and stays at `0.0.0`.

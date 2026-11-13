@@ -1,5 +1,7 @@
 # menus (wt)
 
+Version 0.0.0 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/menus/CHANGELOG.md)
+
 Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exactly as Herdr draws them, with worktrunk items added: "Worktree (wt)…" just after the "+" menu's worktree rows, and "Worktree (wt)…", "Merge into main (wt)…" and "Remove worktree (wt)…" in a space's menu, just after Herdr's own worktree items. The items hand their work to the worktrunk panel (`iangregsondev-worktrunk`). Installed as `iangregsondev-menus`.
 
 ![menus (wt)](preview.png)

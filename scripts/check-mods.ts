@@ -4,17 +4,11 @@
 // the run exits 1 naming each one that failed.
 //
 //   vp run check:mods
-import { readdirSync } from "node:fs";
 import { Effect, Result } from "effect";
 import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import { causeText, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
-
-/** What to print and the exit code. */
-export interface CheckModsResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
+import { subfolders } from "./mod-folders.ts";
+import { runMain, type ScriptResult, scriptFailure } from "./script-result.ts";
 
 /** How one mod's `herdr-app check` went, and what it printed. */
 interface ModCheck {
@@ -25,25 +19,14 @@ interface ModCheck {
 }
 
 /** Exit 1 with `message` on stderr. */
-const failure = (message: string): CheckModsResult => ({
-  code: 1,
-  stdout: "",
-  stderr: `check:mods: ${message}\n`,
-});
+const failure = (message: string): ScriptResult => scriptFailure("check:mods:", [message]);
 
 /** The mod folders in `modsDir`, sorted by name. */
 const modNames = (modsDir: string): Effect.Effect<ReadonlyArray<string>, TransportError> =>
-  Effect.try({
-    try: () =>
-      readdirSync(modsDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort(),
-    catch: (cause) => new TransportError({ operation: `list ${modsDir}`, cause }),
-  });
+  subfolders(modsDir, (cause) => new TransportError({ operation: `list ${modsDir}`, cause }));
 
 /** One result from every mod's check: exit 1 naming the mods that failed, if any. */
-const summary = (checks: ReadonlyArray<ModCheck>): CheckModsResult => {
+const summary = (checks: ReadonlyArray<ModCheck>): ScriptResult => {
   const failed = checks.filter((check) => !check.passed).map((check) => check.name);
   const stdout = checks.map((check) => check.stdout).join("");
   const stderr = checks.map((check) => check.stderr).join("");
@@ -56,7 +39,7 @@ const summary = (checks: ReadonlyArray<ModCheck>): CheckModsResult => {
 export const runCheckMods = Effect.fn("runCheckMods")(function* (
   modsDir: string,
   options: LoadOptions = {},
-): Effect.fn.Return<CheckModsResult> {
+): Effect.fn.Return<ScriptResult> {
   const loaded = yield* Effect.result(loadDevTarget(options));
   if (Result.isFailure(loaded)) {
     return failure(devConfigProblem(loaded.failure));
@@ -96,9 +79,4 @@ export const runCheckMods = Effect.fn("runCheckMods")(function* (
   );
 });
 
-if (import.meta.main) {
-  const result = await Effect.runPromise(runCheckMods(process.argv[2] ?? "mods"));
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  process.exitCode = result.code;
-}
+if (import.meta.main) await runMain(runCheckMods(process.argv[2] ?? "mods"));
