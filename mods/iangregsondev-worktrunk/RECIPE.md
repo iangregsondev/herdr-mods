@@ -13,7 +13,7 @@ A panel docked on the right of the window that lists your git repos and their [w
   - the search for repos failed (the folder scan or the open spaces' lookup): "Couldn't look for repos: <last error line>". The repos from the last search that worked stay listed.
 - **Controls**, under the banners on a `border` line, 12px side padding, 7px apart:
   - **Group chips**, wrapping: "All", then one per group in Settings order, then any other group names sorted, then "Other" for repos in no group folder. A group with no repos gets no chip. Chips are 24px pills: the selected one has an `accent` border, `selected` background and semibold `foreground` text; the rest a `border` border and `muted` text. Before the first scan the chips come from Settings, so a saved chip doesn't flash back to All.
-  - **View picker**, a full-width segmented control on `chrome`: Repos, Clean up, Active, Conflicts, Open, Current. The selected segment is `raised`, semibold, `foreground`.
+  - **View picker**, a full-width segmented control on `chrome`: Current, Repos, Clean up, Active, Conflicts, Open. The panel starts on Repos. The selected segment is `raised`, semibold, `foreground`.
   - **Search box**, 28px on `chrome` with a search icon and the placeholder "Branch or repo". In the Repos view, a 190px "All repos / With worktrees" segmented control sits beside it.
 - **The Repos view**, scrolling, one entry per repo of the selected group, sorted by folder name:
   - A repo line: a chevron (down when open, right when folded), the repo's folder name (semibold), its group as a small badge on `chrome` in `dim` (not shown for Other), and on the right its worktree count in `muted` ("…" before its first read).

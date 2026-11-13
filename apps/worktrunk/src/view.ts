@@ -23,12 +23,12 @@ export type Show = "repos" | "merged" | "active" | "conflict" | "open" | "curren
 
 /** Every view, in the picker's order, with its label. */
 export const SHOWS: readonly (readonly [Show, string])[] = [
+  ["current", "Current"],
   ["repos", "Repos"],
   ["merged", "Clean up"],
   ["active", "Active"],
   ["conflict", "Conflicts"],
   ["open", "Open"],
-  ["current", "Current"],
 ];
 
 /** How the list is sliced; remembered across restarts. */
