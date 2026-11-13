@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { Data, Effect, Result } from "effect";
 import { Git, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
+import { runMain, type ScriptResult, scriptFailure } from "./script-result.ts";
 
 /** How far a changeset moves a package's version. */
 export type Bump = "major" | "minor" | "patch";
@@ -49,13 +50,6 @@ export const parseChangeset = (text: string): Result.Result<ChangesetBumps, stri
   }
   return Result.succeed(Object.fromEntries(body.flatMap(bumpEntry)));
 };
-
-/** What to print and the exit code. */
-export interface ChangesetCheckResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
 
 export interface ChangesetCheckOptions {
   /** The repo folder. Default: the current folder. */
@@ -127,20 +121,11 @@ const PACKAGES_PROBLEM =
   "or add an empty one (vp exec changeset --empty)";
 
 /** Exit 1 with `message` on stderr. */
-const problem = (message: string): ChangesetCheckResult => ({
-  code: 1,
-  stdout: "",
-  stderr: `${PREFIX} ${message}\n`,
-});
+const problem = (message: string): ScriptResult => scriptFailure(PREFIX, [message]);
 
 /** Exit 1 with each of `lines` on stderr, then how to add a changeset. */
-const failure = (lines: ReadonlyArray<string>): ChangesetCheckResult => ({
-  code: 1,
-  stdout: "",
-  stderr: [...lines, "add one with: vp exec changeset"]
-    .map((line) => `${PREFIX} ${line}\n`)
-    .join(""),
-});
+const failure = (lines: ReadonlyArray<string>): ScriptResult =>
+  scriptFailure(PREFIX, [...lines, "add one with: vp exec changeset"]);
 
 /**
  * Checks that the PR (`base...HEAD` in `repo`) carries the changesets its changes need.
@@ -148,7 +133,7 @@ const failure = (lines: ReadonlyArray<string>): ChangesetCheckResult => ({
  */
 export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
   options: ChangesetCheckOptions = {},
-): Effect.fn.Return<ChangesetCheckResult> {
+): Effect.fn.Return<ScriptResult> {
   const repo = options.repo ?? ".";
   const base = options.base ?? "origin/main";
   if (options.headBranch === VERSION_BRANCH) {
@@ -195,13 +180,10 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
 // PR's branch). Elsewhere both are unset or empty, and the defaults apply.
 if (import.meta.main) {
   const { GITHUB_BASE_REF: baseRef = "", GITHUB_HEAD_REF: headRef = "" } = process.env;
-  const result = await Effect.runPromise(
+  await runMain(
     runChangesetCheck({
       ...(baseRef === "" ? {} : { base: `origin/${baseRef}` }),
       ...(headRef === "" ? {} : { headBranch: headRef }),
     }),
   );
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  process.exitCode = result.code;
 }

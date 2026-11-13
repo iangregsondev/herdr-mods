@@ -19,13 +19,7 @@ import { modId } from "../mod-pack.ts";
 import { Git, type GitError, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
 import { type ModPackage, PackageUnreadable, readModPackage, subfolders } from "./mod-folders.ts";
-
-/** What to print and the exit code. */
-export interface ReleaseTagsResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
+import { runMain, type ScriptResult, scriptFailure } from "./script-result.ts";
 
 export interface ReleaseTagsOptions {
   /** The repo root: its `apps/*` packages are the mods. */
@@ -98,16 +92,12 @@ const writeReleaseTags = Effect.fnUntraced(function* (
 });
 
 /** Exit 1 with `message` on stderr. */
-const failure = (message: string): ReleaseTagsResult => ({
-  code: 1,
-  stdout: "",
-  stderr: `release:tags: ${message}\n`,
-});
+const failure = (message: string): ScriptResult => scriptFailure("release:tags:", [message]);
 
 /** Writes the release tag events for `options`. Never fails: every failure is a result. */
 export const runReleaseTags = Effect.fn("runReleaseTags")(function* (
   options: ReleaseTagsOptions,
-): Effect.fn.Return<ReleaseTagsResult> {
+): Effect.fn.Return<ScriptResult> {
   return yield* Effect.gen(function* () {
     const released = yield* writeReleaseTags(options);
     const stdout =
@@ -133,10 +123,5 @@ export const runReleaseTags = Effect.fn("runReleaseTags")(function* (
 });
 
 if (import.meta.main) {
-  const result = await Effect.runPromise(
-    runReleaseTags({ repo: process.cwd(), output: process.env.CHANGESETS_OUTPUT }),
-  );
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  process.exitCode = result.code;
+  await runMain(runReleaseTags({ repo: process.cwd(), output: process.env.CHANGESETS_OUTPUT }));
 }
