@@ -20,7 +20,14 @@ import {
 } from "./commands.ts";
 import { parseBranches } from "./dialog.ts";
 import { THIS_MACHINE } from "./machines.ts";
-import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
+import {
+  currentRepo,
+  missingFolders,
+  parseOwners,
+  parseScan,
+  type FoundRepo,
+  type Scan,
+} from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
 
@@ -137,11 +144,15 @@ export const wtCi = Effect.fn("wtCi")(function* (root: string) {
   return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
 });
 
-/** The repos the folder scan finds in the settings' group folders. */
+/** The repos the folder scan finds in the settings' group folders, and those that don't exist. */
 export const scanRepos = Effect.fn("scanRepos")(function* (settings: Settings, home: string) {
-  if (settings.folders.length === 0) return [];
+  if (settings.folders.length === 0) return { repos: [], missing: [] } satisfies Scan;
   const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-  return parseScan(run.stdout, THIS_MACHINE);
+  const scan: Scan = {
+    repos: parseScan(run.stdout, THIS_MACHINE),
+    missing: missingFolders(run.stdout),
+  };
+  return scan;
 });
 
 /** The repos the given folders are in (each once); none for no folders. */
@@ -192,15 +203,31 @@ export const causeText = (cause: unknown): string =>
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text: string): string => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
 
-/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
+/**
+ * The person's login shell couldn't be found, so a job would run with the wrong PATH.
+ * `reason` says why.
+ */
+export class LoginShellUnknown extends Data.TaggedError("LoginShellUnknown")<{
+  readonly reason: string;
+}> {}
+
+/**
+ * The person's login shell, from `$SHELL`. A read that fails is `LoginShellUnknown`:
+ * another shell would run the job with another PATH.
+ */
 export const loginShell = Effect.fn("loginShell")(function* () {
   const shell = yield* Shell;
-  const out = yield* shell.exec("sh", ["-c", 'printf %s "$SHELL"']).pipe(
-    Effect.map((run) => run.stdout),
-    // Any shell will do to run a job; the person's own is only preferred.
-    Effect.orElseSucceed(() => ""),
-  );
-  return out.trim() || "/bin/sh";
+  const out = yield* shell
+    .exec("sh", ["-c", 'printf %s "$SHELL"'])
+    .pipe(
+      Effect.mapError(
+        (failed) =>
+          new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` }),
+      ),
+    );
+  const found = out.stdout.trim();
+  if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
+  return found;
 });
 
 /** `hc run` printed no terminal address: the job never started. `reason` says why. */

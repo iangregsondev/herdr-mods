@@ -256,10 +256,28 @@ describe("scanRepos", () => {
         stderr: "",
       });
       const repos = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }]);
+      assert.deepStrictEqual(repos, {
+        repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
+        missing: [],
+      });
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(SCAN_SCRIPT, scanArgs(settings, "/h")), { timeout: 60_000 }],
       ]);
+    }),
+  );
+
+  it.effect("names the group folders the scan found missing", () =>
+    Effect.gen(function* () {
+      const { api } = recording({
+        code: 0,
+        stdout: "/h/gone\n/h/work\t/h/work/api\t2\n",
+        stderr: "",
+      });
+      const scan = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(scan, {
+        repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
+        missing: ["/h/gone"],
+      });
     }),
   );
 
@@ -267,7 +285,7 @@ describe("scanRepos", () => {
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/x\t/x/y\t1\n", stderr: "" });
       const repos = yield* scanRepos(DEFAULT_SETTINGS, "/h").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual([repos, calls], [[], []]);
+      assert.deepStrictEqual([repos, calls], [{ repos: [], missing: [] }, []]);
     }),
   );
 });
@@ -448,15 +466,29 @@ describe("loginShell", () => {
     }),
   );
 
-  it.effect("/bin/sh when $SHELL is empty or can't be read", () =>
+  it.effect("a $SHELL that can't be read is LoginShellUnknown, saying why, with no guess", () =>
     Effect.gen(function* () {
-      const empty = yield* loginShell().pipe(
-        Effect.provide(Shell.layer(answering({ code: 0, stdout: " ", stderr: "" }))),
-      );
       const failed = yield* loginShell().pipe(
         Effect.provide(Shell.layer({ exec: () => Promise.reject("no sh"), hc: noHc })),
+        Effect.result,
       );
-      assert.deepStrictEqual([empty, failed], ["/bin/sh", "/bin/sh"]);
+      assert.deepStrictEqual(
+        Result.mapError(failed, (error) => [error._tag, error.reason]),
+        Result.fail(["LoginShellUnknown", "couldn't read $SHELL: couldn't start: no sh"]),
+      );
+    }),
+  );
+
+  it.effect("an empty $SHELL is LoginShellUnknown, with no guess", () =>
+    Effect.gen(function* () {
+      const failed = yield* loginShell().pipe(
+        Effect.provide(Shell.layer(answering({ code: 0, stdout: " ", stderr: "" }))),
+        Effect.result,
+      );
+      assert.deepStrictEqual(
+        Result.mapError(failed, (error) => [error._tag, error.reason]),
+        Result.fail(["LoginShellUnknown", "$SHELL is empty"]),
+      );
     }),
   );
 });

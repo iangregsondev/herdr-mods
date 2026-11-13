@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   expandHome,
   groupOf,
+  missingFolders,
   OTHER,
   parseOwners,
   parseScan,
@@ -62,6 +63,12 @@ describe("parseScan", () => {
       { machine: THIS_MACHINE, root: "/r/b", count: 1 },
       { machine: THIS_MACHINE, root: "/r/c", count: 1 },
     ]);
+  });
+});
+
+describe("missingFolders", () => {
+  test("the group folders the scan printed alone on their line, missing; repo lines aren't", () => {
+    expect(missingFolders("/gone\n/r\t/r/a\t3\n\n/also gone\n")).toEqual(["/gone", "/also gone"]);
   });
 });
 

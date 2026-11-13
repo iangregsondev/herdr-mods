@@ -120,7 +120,7 @@ import {
   type RepoList,
 } from "./reads.ts";
 import { repoKey, repoOfKey, type RepoId } from "./machines.ts";
-import type { FoundRepo, Repo } from "./repos.ts";
+import type { Repo, Scan } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
   addFolder,
@@ -341,6 +341,10 @@ const ciIcon = (t: Colors, badge: CiBadge): readonly [string, Hex] => {
   }
 };
 
+/** One warning toast for each thing that went wrong around the job `title`. */
+const jobProblems = (title: string, problems: readonly string[]) =>
+  problems.forEach((body) => notify({ title, body, level: "warning" }));
+
 /** Defers work out of `render`, which may not notify. */
 const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
   cx.spawn(async (cx) => {
@@ -348,17 +352,22 @@ const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
     fn(cx);
   });
 
-/** Shows one toast when Herdr has moved past the version the sync record names. */
+/**
+ * Shows one toast when Herdr has moved past the version the sync record names, or says
+ * the record couldn't be read (not marked as told, so a readable record still toasts).
+ */
 const checkSync = async () => {
   const installed = updates().app.version;
-  // A defect here is a bug in the check, not something to tell you about: no toast.
   const toast = await runEdge(
     syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)),
-    () => Option.none(),
+    Result.fail,
   );
-  Option.map(toast, (notice) => {
-    setShared(SYNC_TOLD_KEY, installed);
-    notify({ ...notice, level: "warning" });
+  Result.match(toast, {
+    onFailure: (body) => notify({ title: "Couldn't check for herdr:sync", body, level: "warning" }),
+    onSuccess: Option.map((notice) => {
+      setShared(SYNC_TOLD_KEY, installed);
+      notify({ ...notice, level: "warning" });
+    }),
   });
 };
 
@@ -473,8 +482,8 @@ export default class Worktrunk extends View {
   copy: Copy = { _tag: "Panel" };
   settings: Settings = DEFAULT_SETTINGS;
   settingsError: Option.Option<string> = Option.none();
-  /** The last folder scan's repos, and what and when it scanned. */
-  scanned: Option.Option<readonly FoundRepo[]> = Option.none();
+  /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
+  scanned: Option.Option<Scan> = Option.none();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
@@ -851,7 +860,10 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** What every job does once it has ended: say why it never started, or close spaces. */
+  /**
+   * What every job does once it has ended: say why it never started, or close spaces and
+   * say what went wrong around it.
+   */
   jobEnded(cx: AsyncContext, title: string, outcome: JobOutcome) {
     if (outcome._tag === "NotStarted") {
       notify({ title: `Couldn't start: ${title}`, body: outcome.reason, level: "error" });
@@ -859,6 +871,7 @@ export default class Worktrunk extends View {
       spacesInGone(spaces(), panes(), outcome.gone).forEach((id) =>
         run("space.close", { id, confirmed: true }),
       );
+      jobProblems(title, outcome.problems);
     }
     this.job = Option.none();
     cx.notify();
@@ -898,8 +911,10 @@ export default class Worktrunk extends View {
         (defect) => ({
           outcome: { _tag: "NotStarted", reason: defect } satisfies JobOutcome,
           switched: Option.none(),
+          problems: [],
         }),
       );
+      jobProblems(title, made.problems);
       Option.map(made.switched, ({ branch, path }) =>
         Option.match(
           Option.fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)),
@@ -1084,6 +1099,10 @@ export default class Worktrunk extends View {
       settings: this.settings,
       settingsError: this.settingsError,
       discoverError: this.discoverError,
+      missingFolders: Option.match(this.scanned, {
+        onNone: () => [],
+        onSome: (scan) => scan.missing,
+      }),
       settingsFile: SETTINGS_FILE,
       spaces: spaces(),
       panes: panes(),

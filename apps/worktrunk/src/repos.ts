@@ -52,6 +52,16 @@ export const parseScan = (stdout: string, machine: Machine): readonly FoundRepo[
     return root ? [{ machine, root, count: count(n) }] : [];
   });
 
+/** What a folder scan found: its repos, and the group folders that don't exist. */
+export interface Scan {
+  readonly repos: readonly FoundRepo[];
+  readonly missing: readonly string[];
+}
+
+/** The group folders the scan found missing: each printed alone on its line. */
+export const missingFolders = (stdout: string): readonly string[] =>
+  stdout.split("\n").filter((line) => line !== "" && !line.includes("\t"));
+
 /** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
 export const parseOwners = (stdout: string, machine: Machine): readonly FoundRepo[] =>
   stdout.split("\n").flatMap((line) => {
