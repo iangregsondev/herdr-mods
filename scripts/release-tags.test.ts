@@ -96,17 +96,21 @@ describe("runReleaseTags", () => {
     });
   });
 
-  it.effect("exits 1 with git's message and writes nothing when origin can't be read", () => {
-    const repo = repoWithMods({ hello: "0.1.0" });
-    git(repo, ["remote", "remove", "origin"]);
-    const output = outputPath();
-    return Effect.gen(function* () {
-      const result = yield* runReleaseTags({ repo, output });
-      assert.strictEqual(result.code, 1);
-      assert.include(result.stderr, "origin");
-      assert.deepStrictEqual(events(output), []);
-    });
-  });
+  it.effect(
+    "exits 1 with git's message and exit code, and writes nothing, when origin can't be read",
+    () => {
+      const repo = repoWithMods({ hello: "0.1.0" });
+      git(repo, ["remote", "remove", "origin"]);
+      const output = outputPath();
+      return Effect.gen(function* () {
+        const result = yield* runReleaseTags({ repo, output });
+        assert.strictEqual(result.code, 1);
+        assert.include(result.stderr, "origin");
+        assert.include(result.stderr, "(exit 128)");
+        assert.deepStrictEqual(events(output), []);
+      });
+    },
+  );
 
   it.effect("exits 1 naming a mod's package.json that has no version, and writes nothing", () => {
     const repo = repoWithMods({ hello: "0.1.0" });

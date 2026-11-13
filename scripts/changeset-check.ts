@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Data, Effect, Result } from "effect";
-import { Git } from "./git.ts";
+import { Git, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
 
 /** How far a changeset moves a package's version. */
@@ -184,10 +184,8 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
       ChangesetMalformed: ({ file, reason }) => Effect.succeed(problem(`${file}: ${reason}`)),
       ChangesetUnreadable: ({ file, cause }) =>
         Effect.succeed(problem(`couldn't read ${file} (${causeText(cause)})`)),
-      GitNotStarted: ({ cwd, cause }) =>
-        Effect.succeed(problem(`couldn't run git in ${cwd} (${causeText(cause)})`)),
-      GitFailed: ({ args, code, stderr }) =>
-        Effect.succeed(problem(`git ${args.join(" ")} failed (exit ${code}): ${stderr.trim()}`)),
+      GitNotStarted: (error) => Effect.succeed(problem(gitErrorText(error))),
+      GitFailed: (error) => Effect.succeed(problem(gitErrorText(error))),
     }),
   );
 });

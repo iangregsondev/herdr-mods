@@ -16,7 +16,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { Data, Effect } from "effect";
 import { modId } from "../mod-pack.ts";
-import { Git, type GitError } from "./git.ts";
+import { Git, type GitError, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
 import { type ModPackage, PackageUnreadable, readModPackage, subfolders } from "./mod-folders.ts";
 
@@ -126,9 +126,8 @@ export const runReleaseTags = Effect.fn("runReleaseTags")(
       Effect.succeed(failure(`couldn't read ${path} (${causeText(cause)})`)),
     OutputWriteFailed: ({ path, cause }) =>
       Effect.succeed(failure(`couldn't write ${path} (${causeText(cause)})`)),
-    GitFailed: ({ args, stderr }) =>
-      Effect.succeed(failure(`git ${args.join(" ")} failed: ${stderr.trim()}`)),
-    GitNotStarted: ({ cwd }) => Effect.succeed(failure(`couldn't run git in ${cwd}`)),
+    GitFailed: (error) => Effect.succeed(failure(gitErrorText(error))),
+    GitNotStarted: (error) => Effect.succeed(failure(gitErrorText(error))),
   }),
 );
 

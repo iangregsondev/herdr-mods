@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { Context, Data, Effect, Layer } from "effect";
+import { causeText } from "./herdr-host.ts";
 
 /** git couldn't be started in `cwd` (not installed, or no such folder). */
 export class GitNotStarted extends Data.TaggedError("GitNotStarted")<{
@@ -17,6 +18,15 @@ export class GitFailed extends Data.TaggedError("GitFailed")<{
 
 /** Every way a Git call can fail. */
 export type GitError = GitNotStarted | GitFailed;
+
+/**
+ * `error` as a line for the person: the git command, its exit code and what git said,
+ * or the folder git couldn't start in and why.
+ */
+export const gitErrorText = (error: GitError): string =>
+  error._tag === "GitFailed"
+    ? `git ${error.args.join(" ")} failed (exit ${error.code}): ${error.stderr.trim()}`
+    : `couldn't run git in ${error.cwd} (${causeText(error.cause)})`;
 
 /** Runs git with `args` in `cwd` and gives what it printed on stdout. */
 const runGit = Effect.fnUntraced(function* (
