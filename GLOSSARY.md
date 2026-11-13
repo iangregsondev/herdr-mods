@@ -37,6 +37,24 @@ _Avoid_: folder name, plugin name
 The prefix every mod id from this repo starts with, `iangregsondev`. It keeps these mods from clashing with Herdr's own mods or anyone else's.
 _Avoid_: scope, vendor
 
+## Releases
+
+**Mod version**:
+The version number of one mod. Each mod has its own, and a change to one mod never moves another's.
+_Avoid_: repo version, app version (Herdr has its own)
+
+**Changeset**:
+A note added with a change, naming the mods it reaches, how far each one's version moves (major, minor or patch), and what a user of that mod sees.
+_Avoid_: change note, release note
+
+**Changelog**:
+A mod's list of versions, each with the changes it brought, newest first.
+_Avoid_: history, release notes
+
+**Release**:
+One mod version made public: a git tag and a GitHub release, both named by the mod id and version, such as `iangregsondev-worktrunk@0.1.0`.
+_Avoid_: publish (nothing goes to a package registry)
+
 ## Worktrunk
 
 **Repo**:
