@@ -1,8 +1,9 @@
-import { THIS_MACHINE } from "../src/machines.ts";
+import { THIS_MACHINE, type RepoId } from "../src/machines.ts";
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   choicesFor,
+  dialogTitle,
   enterAction,
   flippedBase,
   highlight,
@@ -11,6 +12,7 @@ import {
   openDialog,
   parseBranches,
   pick,
+  repoHint,
   reposFor,
   retyped,
   type Choice,
@@ -18,6 +20,9 @@ import {
   withRead,
 } from "../src/dialog.ts";
 import type { Worktree } from "../src/worktrees.ts";
+
+/** A repo on this machine, by its main checkout. */
+const here = (root: string): RepoId => ({ machine: THIS_MACHINE, root });
 
 const wt = (path: string, branch: string | null): Worktree => ({
   branch: Option.fromNullishOr(branch),
@@ -155,8 +160,8 @@ describe("enterAction", () => {
     const worktree: Choice = { _tag: "Worktree", branch: "feat/login", path: "/r/x" };
     const branch: Choice = { _tag: "Branch", name: "spike", remote: true };
     expect([
-      enterAction("/r/app", worktree, "default", on),
-      enterAction("/r/app", branch, "default", on),
+      enterAction(here("/r/app"), worktree, "default", on),
+      enterAction(here("/r/app"), branch, "default", on),
     ]).toEqual([
       { _tag: "Create", machine: THIS_MACHINE, main: "/r/app", name: "feat/login", base: null },
       { _tag: "Create", machine: THIS_MACHINE, main: "/r/app", name: "spike", base: null },
@@ -165,12 +170,14 @@ describe("enterAction", () => {
 
   const typed: Choice = { _tag: "Typed", name: "new", shortcut: false };
 
-  test("the dialog's repos are this machine's, so its Create runs on this machine", () => {
-    expect(enterAction("/r/app", typed, "default", on)).toHaveProperty("machine", THIS_MACHINE);
+  test("a repo on another machine: its Create runs on that machine", () => {
+    expect(enterAction({ machine: "linux", root: "/srv/app" }, typed, "default", on)).toMatchObject(
+      { machine: "linux", main: "/srv/app" },
+    );
   });
 
   test("the default branch as the base leaves the base to wt", () => {
-    expect(enterAction("/r/app", typed, "default", on)).toEqual({
+    expect(enterAction(here("/r/app"), typed, "default", on)).toEqual({
       _tag: "Create",
       machine: THIS_MACHINE,
       main: "/r/app",
@@ -180,7 +187,7 @@ describe("enterAction", () => {
   });
 
   test("the branch I'm on as the base", () => {
-    expect(enterAction("/r/app", typed, "current", on)).toEqual({
+    expect(enterAction(here("/r/app"), typed, "current", on)).toEqual({
       _tag: "Create",
       machine: THIS_MACHINE,
       main: "/r/app",
@@ -190,7 +197,7 @@ describe("enterAction", () => {
   });
 
   test("the branch I'm on, when there is none, falls back to the default branch", () => {
-    expect(enterAction("/r/app", typed, "current", Option.none())).toEqual({
+    expect(enterAction(here("/r/app"), typed, "current", Option.none())).toEqual({
       _tag: "Create",
       machine: THIS_MACHINE,
       main: "/r/app",
@@ -201,24 +208,32 @@ describe("enterAction", () => {
 });
 
 describe("reposFor", () => {
-  const repos = ["/w/api", "/w/web-app", "/p/app", "/p/notes"];
+  const repos = ["/w/api", "/w/web-app", "/p/app", "/p/notes"].map(here);
 
   test("nothing typed: every repo, in the order given", () => {
     expect(reposFor("  ", repos)).toEqual(repos);
   });
 
   test("typed text: by folder name, exact then prefix then anywhere, ignoring case", () => {
-    expect(reposFor("APP", [...repos, "/w/apples"])).toEqual(["/p/app", "/w/apples", "/w/web-app"]);
+    expect(reposFor("APP", [...repos, here("/w/apples")])).toEqual(
+      ["/p/app", "/w/apples", "/w/web-app"].map(here),
+    );
   });
 });
 
 describe("openDialog", () => {
   test("with a repo: works in it, reading it, the default branch as the base", () => {
-    const props = { repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: ["/r/app"] };
+    const props = {
+      mode: "new" as const,
+      repo: Option.some(here("/r/app")),
+      branch: Option.some("feat/a"),
+      repos: [here("/r/app")],
+    };
     expect(openDialog(props)).toEqual({
-      repo: Option.some("/r/app"),
+      mode: "new",
+      repo: Option.some(here("/r/app")),
       current: Option.some("feat/a"),
-      repos: ["/r/app"],
+      repos: [here("/r/app")],
       worktrees: [],
       branches: [],
       reading: true,
@@ -229,28 +244,39 @@ describe("openDialog", () => {
   });
 
   test("with no repo: asks for one, reading nothing", () => {
-    const props = { repo: Option.none(), branch: Option.none(), repos: ["/r/app", "/r/web"] };
+    const props = {
+      mode: "new" as const,
+      repo: Option.none(),
+      branch: Option.none(),
+      repos: [here("/r/app"), here("/r/web")],
+    };
     expect([openDialog(props).repo, openDialog(props).reading]).toEqual([Option.none(), false]);
   });
 });
 
 describe("linesFor", () => {
   const picking = openDialog({
+    mode: "new",
     repo: Option.none(),
     branch: Option.none(),
-    repos: ["/w/api", "/w/web-app", "/p/app"],
+    repos: [here("/w/api"), here("/w/web-app"), here("/p/app")],
   });
 
   test("while it asks for a repo: the repos matching the typed text", () => {
     expect(linesFor(picking, "app")).toEqual([
-      { _tag: "Repo", root: "/p/app" },
-      { _tag: "Repo", root: "/w/web-app" },
+      { _tag: "Repo", repo: here("/p/app") },
+      { _tag: "Repo", repo: here("/w/web-app") },
     ]);
   });
 
   test("in a repo: its worktrees and branches matching the typed text", () => {
     const state: DialogState = {
-      ...openDialog({ repo: Option.some("/r/app"), branch: Option.none(), repos: [] }),
+      ...openDialog({
+        mode: "new",
+        repo: Option.some(here("/r/app")),
+        branch: Option.none(),
+        repos: [],
+      }),
       worktrees: [wt("/r/app.feat-login", "feat/login")],
       branches: [{ name: "fix/logout", remote: false }],
     };
@@ -261,9 +287,34 @@ describe("linesFor", () => {
     ]);
   });
 
+  test("picking a worktree to open: only its worktrees matching the typed text", () => {
+    const state: DialogState = {
+      ...openDialog({
+        mode: "open",
+        repo: Option.some(here("/r/app")),
+        branch: Option.none(),
+        repos: [],
+      }),
+      worktrees: [wt("/r/app", "main"), wt("/r/app.feat-login", "feat/login")],
+      branches: [{ name: "fix/logout", remote: false }],
+    };
+    expect([linesFor(state, "log"), linesFor(state, "")]).toEqual([
+      [{ _tag: "Worktree", branch: "feat/login", path: "/r/app.feat-login" }],
+      [
+        { _tag: "Worktree", branch: "main", path: "/r/app" },
+        { _tag: "Worktree", branch: "feat/login", path: "/r/app.feat-login" },
+      ],
+    ]);
+  });
+
   test("in a repo: at most 50 lines", () => {
     const state: DialogState = {
-      ...openDialog({ repo: Option.some("/r/app"), branch: Option.none(), repos: [] }),
+      ...openDialog({
+        mode: "new",
+        repo: Option.some(here("/r/app")),
+        branch: Option.none(),
+        repos: [],
+      }),
       branches: Array.from({ length: 60 }, (_, i) => ({ name: `b${i}`, remote: false })),
     };
     expect(linesFor(state, "").length).toBe(50);
@@ -271,7 +322,12 @@ describe("linesFor", () => {
 });
 
 describe("withRead", () => {
-  const reading = openDialog({ repo: Option.some("/r/app"), branch: Option.none(), repos: [] });
+  const reading = openDialog({
+    mode: "new",
+    repo: Option.some(here("/r/app")),
+    branch: Option.none(),
+    repos: [],
+  });
   const list = [wt("/r/app", "main")];
   const refs = [{ name: "fix", remote: false }];
 
@@ -315,7 +371,12 @@ describe("withRead", () => {
 });
 
 describe("moving the highlight", () => {
-  const state = openDialog({ repo: Option.some("/r/app"), branch: Option.none(), repos: [] });
+  const state = openDialog({
+    mode: "new",
+    repo: Option.some(here("/r/app")),
+    branch: Option.none(),
+    repos: [],
+  });
   const lines: readonly Choice[] = ["a", "b", "c"].map((name) => ({
     _tag: "Branch",
     name,
@@ -342,7 +403,12 @@ describe("moving the highlight", () => {
 });
 
 describe("flippedBase", () => {
-  const on = openDialog({ repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: [] });
+  const on = openDialog({
+    mode: "new",
+    repo: Option.some(here("/r/app")),
+    branch: Option.some("feat/a"),
+    repos: [],
+  });
 
   test("Tab switches between the default branch and the branch I'm on", () => {
     expect([flippedBase(on).base, flippedBase(flippedBase(on)).base]).toEqual([
@@ -358,17 +424,22 @@ describe("flippedBase", () => {
 
 describe("pick", () => {
   const picking: DialogState = {
-    ...openDialog({ repo: Option.none(), branch: Option.some("feat/a"), repos: ["/r/app"] }),
+    ...openDialog({
+      mode: "new",
+      repo: Option.none(),
+      branch: Option.some("feat/a"),
+      repos: [here("/r/app")],
+    }),
     at: 3,
   };
 
   test("a repo: the dialog goes on in it, reads it, and offers no branch I'm on", () => {
-    expect(pick(picking, Option.some({ _tag: "Repo", root: "/r/web" }))).toEqual({
+    expect(pick(picking, Option.some({ _tag: "Repo", repo: here("/r/web") }))).toEqual({
       _tag: "ReadRepo",
-      root: "/r/web",
+      repo: here("/r/web"),
       state: {
         ...picking,
-        repo: Option.some("/r/web"),
+        repo: Option.some(here("/r/web")),
         current: Option.none(),
         reading: true,
         at: 0,
@@ -376,9 +447,28 @@ describe("pick", () => {
     });
   });
 
+  test("picking a worktree to open: the panel goes to it, on the repo's machine", () => {
+    const opening: DialogState = openDialog({
+      mode: "open",
+      repo: Option.some({ machine: "linux", root: "/srv/app" }),
+      branch: Option.none(),
+      repos: [],
+    });
+    const line: Choice = { _tag: "Worktree", branch: "feat/a", path: "/srv/app.feat-a" };
+    expect(pick(opening, Option.some(line))).toEqual({
+      _tag: "Send",
+      action: { _tag: "GoTo", machine: "linux", folder: "/srv/app.feat-a", name: "feat/a" },
+    });
+  });
+
   test("a choice in the repo: the panel switches to or creates it, from the base chosen", () => {
     const inRepo: DialogState = {
-      ...openDialog({ repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: [] }),
+      ...openDialog({
+        mode: "new",
+        repo: Option.some(here("/r/app")),
+        branch: Option.some("feat/a"),
+        repos: [],
+      }),
       base: "current",
     };
     const typed: Choice = { _tag: "Typed", name: "new", shortcut: false };
@@ -400,5 +490,40 @@ describe("pick", () => {
       { _tag: "Nothing" },
       { _tag: "Nothing" },
     ]);
+  });
+});
+
+describe("dialogTitle", () => {
+  const titled = (mode: "new" | "open", repo: Option.Option<RepoId>) =>
+    dialogTitle(openDialog({ mode, repo, branch: Option.none(), repos: [] }));
+
+  test("names the repo, and its machine when it isn't this one", () => {
+    expect([
+      titled("new", Option.some(here("/r/app"))),
+      titled("new", Option.some({ machine: "linux", root: "/srv/app" })),
+      titled("open", Option.some(here("/r/app"))),
+      titled("open", Option.some({ machine: "linux", root: "/srv/app" })),
+    ]).toEqual([
+      "New or open worktree in app",
+      "New or open worktree in app on linux",
+      "Open a worktree of app",
+      "Open a worktree of app on linux",
+    ]);
+  });
+
+  test("while it asks for a repo, says so", () => {
+    expect([titled("new", Option.none()), titled("open", Option.none())]).toEqual([
+      "New or open worktree: pick a repo",
+      "Open a worktree: pick a repo",
+    ]);
+  });
+});
+
+describe("repoHint", () => {
+  test("this machine's repo: its folder, home as ~; another's: the machine, then the folder", () => {
+    expect([
+      repoHint(here("/Users/me/r/app"), "/Users/me"),
+      repoHint({ machine: "linux", root: "/home/me/r/app" }, "/Users/me"),
+    ]).toEqual(["~/r/app", "linux: /home/me/r/app"]);
   });
 });

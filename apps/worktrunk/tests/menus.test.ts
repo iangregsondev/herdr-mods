@@ -11,11 +11,13 @@ import {
   menuHeight,
   repoMenu,
   rowMenu,
+  spaceStep,
   spaceWorktreeAction,
 } from "../src/menus.ts";
 import { mergeScript, removeScript, cleanupScript } from "../src/commands.ts";
 import { repoKey, THIS_MACHINE } from "../src/machines.ts";
 import type { RepoList } from "../src/reads.ts";
+import type { Place } from "../src/spaces.ts";
 import type { Click } from "../src/view.ts";
 import type { Worktree, WorktreeState } from "../src/worktrees.ts";
 
@@ -125,6 +127,14 @@ describe("rowMenu", () => {
 });
 
 describe("rowMenu on another machine", () => {
+  test("opens the New-or-open dialog for the repo on its own machine", () => {
+    const items = repoMenu({ machine: "linux", root: "/srv/app" }, [FEAT]);
+    expect(items[0]?.action).toEqual({
+      _tag: "NewOrOpenAt",
+      at: { machine: "linux", folder: "/srv/app" },
+    });
+  });
+
   test("offers no Reveal in Finder: the folder isn't on this machine", () => {
     const items = rowMenu({ machine: "linux", root: "/r/app" }, FEAT, CLICK);
     expect(labels(items)).not.toContain("Reveal in Finder");
@@ -223,14 +233,14 @@ describe("repoMenu", () => {
   test("its items act on this repo; only Clean up is destructive", () => {
     const items = repoMenu(APP, worktrees);
     expect(items.map((i) => [i.action._tag, i.danger])).toEqual([
-      ["NewOrOpen", false],
+      ["NewOrOpenAt", false],
       ["Cleanup", true],
       ["Refresh", false],
       ["Reveal", false],
       ["Hide", false],
     ]);
     expect([items[0]?.action, items[3]?.action, items[4]?.action]).toEqual([
-      { _tag: "NewOrOpen", folder: "/r/app" },
+      { _tag: "NewOrOpenAt", at: { machine: THIS_MACHINE, folder: "/r/app" } },
       { _tag: "Reveal", path: "/r/app" },
       { _tag: "Hide", machine: THIS_MACHINE, root: "/r/app" },
     ]);
@@ -244,6 +254,14 @@ describe("repoMenu on another machine", () => {
       _tag: "Hide",
       machine: "linux",
       root: "/r/app",
+    });
+  });
+
+  test("opens the New-or-open dialog for the repo on its own machine", () => {
+    const items = repoMenu({ machine: "linux", root: "/srv/app" }, [FEAT]);
+    expect(items[0]?.action).toEqual({
+      _tag: "NewOrOpenAt",
+      at: { machine: "linux", folder: "/srv/app" },
     });
   });
 
@@ -639,5 +657,35 @@ describe("spaceWorktreeAction", () => {
     expect(spaceWorktreeAction("Remove", APP_REPO, LIST, "/elsewhere")).toEqual(
       Result.fail("/elsewhere isn't in a worktree of app."),
     );
+  });
+});
+
+describe("spaceStep", () => {
+  const places: readonly Place[] = [
+    { space: { id: "here", active: true }, machine: THIS_MACHINE, place: "/r/app.feat" },
+    { space: { id: "there", active: false }, machine: "linux", place: "/srv/app.fix/src" },
+  ];
+
+  test("a space on another machine is acted on where it is, on that machine", () => {
+    expect(spaceStep(places, "there", "Merge")).toEqual({
+      _tag: "Act",
+      act: "Merge",
+      at: { machine: "linux", folder: "/srv/app.fix/src" },
+    });
+  });
+
+  test("New and Open open their dialog for the space's repo, on its machine", () => {
+    const at = { machine: "linux", folder: "/srv/app.fix/src" };
+    expect([spaceStep(places, "there", "NewOrOpen"), spaceStep(places, "there", "Open")]).toEqual([
+      { _tag: "Dialog", mode: "new", at },
+      { _tag: "Dialog", mode: "open", at },
+    ]);
+  });
+
+  test("Remove removes, and a space with no folder anywhere has nothing to act on", () => {
+    expect([spaceStep(places, "here", "Remove"), spaceStep(places, "gone", "Merge")]).toEqual([
+      { _tag: "Act", act: "Remove", at: { machine: THIS_MACHINE, folder: "/r/app.feat" } },
+      { _tag: "NoFolder" },
+    ]);
   });
 });

@@ -1,7 +1,7 @@
 // The row and repo menus, the confirm dialog's text and what each action asks for.
 // Pure: no `herdr` or `gpui` imports. The shell (main.ts) draws these and runs the actions.
 import { Option, Result } from "effect";
-import type { MenuRequest } from "worktrunk-mailbox";
+import type { MenuRequest, SpaceAct } from "worktrunk-mailbox";
 import {
   cleanupScript,
   mergeScript,
@@ -16,12 +16,14 @@ import {
   repoKey,
   repoOfKey,
   THIS_MACHINE,
+  type Located,
   type Machine,
   type RepoId,
 } from "./machines.ts";
 import type { RepoList } from "./reads.ts";
 import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
+import type { Place } from "./spaces.ts";
 import type { Click } from "./view.ts";
 import type { Worktree } from "./worktrees.ts";
 
@@ -52,6 +54,18 @@ export type Action =
    * Other mods post these too (`worktrunk-mailbox`).
    */
   | MenuRequest
+  /** Open the New-or-open worktree dialog for the repo `at` is in, on its machine. */
+  | { readonly _tag: "NewOrOpenAt"; readonly at: Located }
+  /**
+   * Go to the worktree at `folder` on `machine`: select the space on it, else open a new
+   * space named `name` there.
+   */
+  | {
+      readonly _tag: "GoTo";
+      readonly machine: Machine;
+      readonly folder: string;
+      readonly name: string;
+    }
   /**
    * Switch to or create the worktree for `name` in the repo at `main` on `machine`;
    * `base` null for wt's default branch.
@@ -217,7 +231,7 @@ export const repoMenu = (
   { machine, root }: RepoId,
   worktrees: readonly Worktree[],
 ): readonly MenuItem[] => [
-  item("New or open worktree…", { _tag: "NewOrOpen", folder: root }),
+  item("New or open worktree…", { _tag: "NewOrOpenAt", at: { machine, folder: root } }),
   ...Option.toArray(cleanupAction([{ machine, root, worktrees }])).map((action) =>
     item(`Clean up ${cleanupCount(action)} merged…`, action, true),
   ),
@@ -425,3 +439,29 @@ export const busyNotice = (running: string): Notice => ({
   title: "worktrunk is busy",
   body: `Wait for "${running}" to finish.`,
 });
+
+/** What the panel does for a space menu's request, once it knows where the space is. */
+export type SpaceStep =
+  /** The space has no folder anywhere: nothing to act on. */
+  | { readonly _tag: "NoFolder" }
+  /** Open the New-or-open dialog (`new`) or the worktree picker (`open`) for `at`'s repo. */
+  | { readonly _tag: "Dialog"; readonly mode: "new" | "open"; readonly at: Located }
+  /** Merge or remove the worktree holding `at`, found through its repo on its machine. */
+  | { readonly _tag: "Act"; readonly act: "Merge" | "Remove"; readonly at: Located };
+
+/** The step for `act` on the space `space`, from where every space is now (`places`). */
+export const spaceStep = (places: readonly Place[], space: string, act: SpaceAct): SpaceStep =>
+  Option.match(Option.fromNullishOr(places.find((p) => p.space.id === space)), {
+    onNone: (): SpaceStep => ({ _tag: "NoFolder" }),
+    onSome: ({ machine, place }): SpaceStep => {
+      const at: Located = { machine, folder: place };
+      switch (act) {
+        case "NewOrOpen":
+          return { _tag: "Dialog", mode: "new", at };
+        case "Open":
+          return { _tag: "Dialog", mode: "open", at };
+        default:
+          return { _tag: "Act", act, at };
+      }
+    },
+  });

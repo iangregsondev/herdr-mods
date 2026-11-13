@@ -16,8 +16,8 @@ import {
   type Role,
   type SpaceAct,
 } from "worktrunk-mailbox";
-import type { DialogProps } from "./dialog.ts";
-import type { Machine } from "./machines.ts";
+import type { DialogMode, DialogProps } from "./dialog.ts";
+import type { Located, Machine, RepoId } from "./machines.ts";
 import { confirmFor, type Action, type Confirm, type MenuItem } from "./menus.ts";
 import { DEFAULT_VIEW_STATE, SHOWS, type Click, type Show, type ViewState } from "./view.ts";
 
@@ -64,8 +64,25 @@ const readMode = oneOf<MergeMode>(["squash", "keep"]);
 
 const readAct = oneOf<SpaceAct>(SPACE_ACTS);
 
+const readDialogMode = oneOf<DialogMode>(["new", "open"]);
+
 /** The machine a value names; no machine named is this machine. */
 const readMachine = (value: unknown): Machine => Option.getOrNull(text(value));
+
+/** A folder, and the machine it is on. */
+const readLocated = (value: unknown): Option.Option<Located> => {
+  const f = fields(value);
+  return Option.map(text(f.folder), (folder): Located => ({
+    machine: readMachine(f.machine),
+    folder,
+  }));
+};
+
+/** A repo: its main checkout's folder, and the machine it is on. */
+const readRepoId = (value: unknown): Option.Option<RepoId> => {
+  const f = fields(value);
+  return Option.map(text(f.root), (root): RepoId => ({ machine: readMachine(f.machine), root }));
+};
 
 const readClick = (value: unknown): Option.Option<Click> => {
   const f = fields(value);
@@ -134,6 +151,13 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       );
     case "NewOrOpen":
       return Option.map(textOrNull(f.folder), (folder): Action => ({ _tag: "NewOrOpen", folder }));
+    case "GoTo":
+      return Option.map(
+        Option.all({ folder: text(f.folder), name: text(f.name) }),
+        (go): Action => ({ _tag: "GoTo", ...go, machine: readMachine(f.machine) }),
+      );
+    case "NewOrOpenAt":
+      return Option.map(readLocated(f.at), (at): Action => ({ _tag: "NewOrOpenAt", at }));
     case "Create":
       return Option.map(
         Option.all({ main: text(f.main), name: text(f.name), base: textOrNull(f.base) }),
@@ -230,9 +254,12 @@ export const readTitlebarProps = (props: unknown): TitlebarProps => {
 export const readDialogProps = (props: unknown): DialogProps => {
   const f = fields(props);
   return {
-    repo: text(f.repo),
+    mode: Option.getOrElse(readDialogMode(f.mode), (): DialogMode => "new"),
+    repo: readRepoId(f.repo),
     branch: text(f.branch),
-    repos: Array.isArray(f.repos) ? f.repos.filter(Predicate.isString) : [],
+    repos: Array.isArray(f.repos)
+      ? f.repos.flatMap((repo) => Option.toArray(readRepoId(repo)))
+      : [],
   };
 };
 
@@ -263,17 +290,25 @@ export const titlebarProps = (
 
 /** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
 export const dialogProps = ({
+  mode,
   repo,
   branch,
   repos,
 }: DialogProps): PropsOf<
   "new",
   {
-    readonly repo: string | null;
+    readonly mode: DialogMode;
+    readonly repo: RepoId | null;
     readonly branch: string | null;
-    readonly repos: readonly string[];
+    readonly repos: readonly RepoId[];
   }
-> => ({ role: "new", repo: Option.getOrNull(repo), branch: Option.getOrNull(branch), repos });
+> => ({
+  role: "new",
+  mode,
+  repo: Option.getOrNull(repo),
+  branch: Option.getOrNull(branch),
+  repos,
+});
 
 /** The settings file's text the Settings dialog opens on; null when there was no file. */
 export const readSettingsText = (props: unknown): string | null =>

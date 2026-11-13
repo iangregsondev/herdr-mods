@@ -4,7 +4,7 @@
 // keeps what they return. Pure: no `herdr` or `gpui` imports.
 import { Data, Effect, Option, Result } from "effect";
 import { newScript, switchedTo } from "./commands.ts";
-import type { Branch, DialogProps } from "./dialog.ts";
+import type { Branch, DialogMode, DialogProps } from "./dialog.ts";
 import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
 import {
@@ -218,20 +218,26 @@ export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (focused: Loca
 }, asReason);
 
 /**
- * What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
- * empty for none) is in: that repo and the branch the folder is on, and the `listed`
- * repos to pick from, by folder name. None when there is no repo at all. A lookup that
- * fails is its one-line reason.
+ * What the worktree dialog in `mode` opens with, for the repo `at` (a folder on a
+ * machine; an empty folder for none) is in: that repo and the branch the folder is on,
+ * and the `listed` repos to pick from, by folder name. None when there is no repo at
+ * all. A lookup that fails is its one-line reason.
  */
 export const dialogFor = Effect.fn("dialogFor")(function* (
-  folder: string,
-  listed: readonly string[],
+  { machine, folder }: Located,
+  listed: readonly RepoId[],
+  mode: DialogMode = "new",
 ) {
-  const found = yield* repoAt(folder);
+  const found = yield* repoAt(folder, machine);
   // The branch is offered as a base only in the repo it belongs to.
-  const branch = Option.isSome(found) ? yield* branchAt(folder) : Option.none<string>();
-  const repos = [...listed].sort((a, b) => lastSegment(a).localeCompare(lastSegment(b)));
-  const props: DialogProps = { repo: Option.map(found, (repo) => repo.root), branch, repos };
+  const branch = Option.isSome(found) ? yield* branchAt(folder, machine) : Option.none<string>();
+  const repos = [...listed].sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
+  const props: DialogProps = {
+    mode,
+    repo: Option.map(found, ({ machine, root }): RepoId => ({ machine, root })),
+    branch,
+    repos,
+  };
   return Option.isNone(found) && repos.length === 0 ? Option.none() : Option.some(props);
 }, asReason);
 
@@ -257,15 +263,16 @@ export const readList = Effect.fn("readList")(function* (repo: RepoId) {
 
 /**
  * The Merge or Remove a space's menu asks for, of the worktree the space's folder
- * `folder` is in: found through its repo and that repo's list, read now, since the panel
- * may not list the repo (hidden, or outside the group folders). A failure, or a worktree
- * that can't be merged or removed, is its one-line reason.
+ * `folder` is in on `machine`: found through its repo and that repo's list, read now on
+ * that machine, since the panel may not list the repo (hidden, or outside the group
+ * folders). A failure, or a worktree that can't be merged or removed, is its one-line
+ * reason.
  */
 export const spaceWorktree = (
   act: "Merge" | "Remove",
-  folder: string,
+  { machine, folder }: Located,
 ): Effect.Effect<Result.Result<Action, string>, never, Shell> =>
-  holderRepo(folder).pipe(
+  holderRepo(folder, machine).pipe(
     Effect.map(
       Result.flatMap(
         Option.match({
@@ -276,9 +283,9 @@ export const spaceWorktree = (
     ),
   );
 
-/** The repo `folder` is in, with its worktrees; none outside every repo. */
-const holderRepo = Effect.fn("holderRepo")(function* (folder: string) {
-  const found = yield* repoAt(folder);
+/** The repo `folder` on `machine` is in, with its worktrees; none outside every repo. */
+const holderRepo = Effect.fn("holderRepo")(function* (folder: string, machine: Machine) {
+  const found = yield* repoAt(folder, machine);
   if (Option.isNone(found)) return Option.none();
   const worktrees = yield* wtList(found.value);
   return Option.some({ repo: found.value, worktrees });
