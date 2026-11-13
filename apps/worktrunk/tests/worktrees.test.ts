@@ -93,6 +93,62 @@ describe("parseList", () => {
     });
   });
 
+  describe("made from a main checkout that hasn't pulled main's tip", () => {
+    const MAIN_HEAD = "e99e586f0000000000000000000000000000000";
+    const mainCheckout = {
+      branch: "main",
+      head: { sha: MAIN_HEAD },
+      worktree: { path: "/work/repo", main: true },
+      display: { state: "is_main" },
+    };
+    const behind = (sha: string, changes: Record<string, boolean> = {}) => ({
+      branch: "fresh",
+      head: { sha },
+      worktree: { path: "/work/repo.fresh", changes },
+      display: { state: "integrated" },
+      default_branch: { ahead: 0, behind: 7, integration: { reason: "ancestor" } },
+    });
+    const stateIn = (items: readonly unknown[]) =>
+      Result.getOrThrow(parseList(JSON.stringify({ items }))).find(
+        (w) => w.path === "/work/repo.fresh",
+      )?.state;
+
+    test("at the main checkout's commit with no changes, it is New", () => {
+      expect(stateIn([mainCheckout, behind(MAIN_HEAD)])).toEqual({ _tag: "New" });
+    });
+
+    test("with uncommitted changes, it is Merged as before, not New", () => {
+      expect(stateIn([mainCheckout, behind(MAIN_HEAD, { untracked: true })])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
+    });
+
+    test("ahead of main's tip, it has commits of its own and is not New", () => {
+      // The main checkout holds commits not yet pushed, and the worktree shares them.
+      const ahead = {
+        ...behind(MAIN_HEAD),
+        display: { state: "ahead" },
+        default_branch: { ahead: 2, behind: 0 },
+      };
+      expect(stateIn([mainCheckout, ahead])).toEqual({ _tag: "Active" });
+    });
+
+    test("at another commit than the main checkout's, it is Merged: left behind", () => {
+      expect(stateIn([mainCheckout, behind("0123456789abcdef")])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
+    });
+
+    test("with no main checkout in the list, it is Merged as before", () => {
+      expect(stateIn([behind(MAIN_HEAD)])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
+    });
+  });
+
   test("a worktree that would conflict with main is Conflict", () => {
     expect(byBranch("states", "conflict").state).toEqual({ _tag: "Conflict" });
   });

@@ -52,7 +52,7 @@ A named folder (such as Work or Personal) on one machine that holds repos. A rep
 _Avoid_: category, workspace
 
 **New worktree**:
-A linked worktree whose branch is still at main's tip, with no commits and no changes of its own. Nothing in it to clean up yet.
+A linked worktree with no commits and no changes of its own, whose branch is still at main's tip or at the main checkout's commit (a main checkout that hasn't pulled lags main's tip). Nothing in it to clean up yet.
 _Avoid_: empty worktree
 
 **Merged worktree**:
