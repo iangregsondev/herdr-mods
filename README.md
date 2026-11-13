@@ -16,6 +16,10 @@ From a local clone (nothing needs pushing):
 
 Either way, the agent copies the folder into `~/.config/herdr-app/mods/` and runs `herdr-app check` on it. The copy is a snapshot: it doesn't follow later changes. To work on a mod and see each save live, use the dev loop below instead.
 
+## Removed mods
+
+`iangregsondev-hello` was a small example mod, and it is gone. If you installed it, delete its folder: `~/.config/herdr-app/mods/iangregsondev-hello/`.
+
 ## Develop
 
 ```bash
