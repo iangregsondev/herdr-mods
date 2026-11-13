@@ -264,7 +264,7 @@ export default class Main extends View {
     return v_flex()
       .size_full()
       .p(10)
-      .bg(t.background)
+      .bg(t.surface)
       .text_color(t.foreground)
       .child(div().child(__MOD_ID__));
   }
