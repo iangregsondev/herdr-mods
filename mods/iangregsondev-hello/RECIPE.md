@@ -1,5 +1,7 @@
 # hello
 
+Version 0.0.0 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/hello/CHANGELOG.md)
+
 A small panel docked on the right of the window that says how many spaces are open, such as "Hello! 3 spaces open.", with its own mod id, `iangregsondev-hello`, underneath. It is the example mod for this repo: the smallest working mod, and the one to copy when starting a new one.
 
 ![hello](preview.png)
