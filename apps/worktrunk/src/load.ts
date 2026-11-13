@@ -7,7 +7,7 @@ import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
 import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
-import { THIS_MACHINE, type RepoId } from "./machines.ts";
+import { THIS_MACHINE, type Homes, type Machine, type RepoId } from "./machines.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
@@ -28,6 +28,7 @@ import {
   goneFolders,
   JobNotStarted,
   loginShell,
+  machineHome,
   makeTempDir,
   removeDir,
   removeTerminal,
@@ -126,12 +127,44 @@ const asReason = <A, R>(
 ): Effect.Effect<Result.Result<A, string>, never, R> =>
   effect.pipe(Effect.result, Effect.map(Result.mapError(failureText)));
 
+/** A folder scan of every machine with group folders, and the homes it read there. */
+export interface Scanned extends Scan {
+  /** Each scanned machine's home, which a group folder's `~` means there. */
+  readonly homes: Homes;
+}
+
 export interface Found {
   /** What the folder scan found (this time, or the last time when none was due). */
-  readonly scanned: Scan;
+  readonly scanned: Scanned;
   /** The repos to list: scanned and open spaces' repos, grouped, by name, none hidden. */
   readonly repos: readonly Repo[];
 }
+
+/** The machines the group folders are on, each once, in the settings' order. */
+const folderMachines = (settings: Settings): readonly Machine[] =>
+  Array.from(new Set(settings.folders.map((folder) => folder.machine)));
+
+/**
+ * Scans the group folders on every machine they are on, each on its own machine, after
+ * reading that machine's home there (this machine's is `home`).
+ */
+const scanAll = Effect.fnUntraced(function* (settings: Settings, home: string) {
+  const machines = folderMachines(settings);
+  const homes: Homes = new Map(
+    yield* Effect.forEach(machines, (machine) =>
+      machine === THIS_MACHINE
+        ? Effect.succeed([machine, home] as const)
+        : Effect.map(machineHome(machine), (found) => [machine, found] as const),
+    ),
+  );
+  const scans = yield* Effect.forEach(machines, (machine) => scanRepos(settings, machine, homes));
+  const scanned: Scanned = {
+    repos: scans.flatMap((scan) => scan.repos),
+    missing: scans.flatMap((scan) => scan.missing),
+    homes: new Map([[THIS_MACHINE, home], ...homes]),
+  };
+  return scanned;
+});
 
 /**
  * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
@@ -142,16 +175,16 @@ export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
   home: string,
   places: readonly string[],
-  lastScan: Option.Option<Scan>,
+  lastScan: Option.Option<Scanned>,
   current: Option.Option<FoundRepo> = Option.none(),
 ) {
-  const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
+  const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanAll(settings, home);
   const owners = yield* reposOf(places);
   const repos = reposFrom(
     scanned.repos,
     [...owners, ...Option.toArray(current)],
     settings.folders,
-    new Map([[THIS_MACHINE, home]]),
+    scanned.homes,
   );
   const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
   return found;
@@ -189,18 +222,18 @@ export interface DialogRead {
   readonly branches: Result.Result<readonly Branch[], string>;
 }
 
-/** The worktrees and branches of the repo at `root`, for the New-or-open dialog. */
-export const readDialogRepo = (root: string): Effect.Effect<DialogRead, never, Shell> =>
-  Effect.all({ list: readList(root), branches: readBranches(root) }, { concurrency: 2 });
+/** The worktrees and branches of `repo`, for the New-or-open dialog. */
+export const readDialogRepo = (repo: RepoId): Effect.Effect<DialogRead, never, Shell> =>
+  Effect.all({ list: readList(repo), branches: readBranches(repo) }, { concurrency: 2 });
 
-/** The branches of the repo at `root`, or the one-line reason the read failed. */
-const readBranches = Effect.fn("readBranches")(function* (root: string) {
-  return yield* gitBranches(root);
+/** The branches of `repo`, or the one-line reason the read failed. */
+const readBranches = Effect.fn("readBranches")(function* (repo: RepoId) {
+  return yield* gitBranches(repo);
 }, asReason);
 
-/** The worktrees of the repo at `root`, or the one-line reason the read failed. */
-export const readList = Effect.fn("readList")(function* (root: string) {
-  return yield* wtList(root);
+/** The worktrees of `repo`, or the one-line reason the read failed. */
+export const readList = Effect.fn("readList")(function* (repo: RepoId) {
+  return yield* wtList(repo);
 }, asReason);
 
 /**
@@ -229,13 +262,13 @@ const holderRepo = Effect.fn("holderRepo")(function* (folder: string) {
   const found = yield* repoAt(folder);
   if (Option.isNone(found)) return Option.none();
   const root = found.value.root;
-  const worktrees = yield* wtList(root);
+  const worktrees = yield* wtList(found.value);
   return Option.some({ root, worktrees });
 }, asReason);
 
-/** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */
-export const readCi = Effect.fn("readCi")(function* (root: string) {
-  return yield* wtCi(root);
+/** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
+export const readCi = Effect.fn("readCi")(function* (repo: RepoId) {
+  return yield* wtCi(repo);
 }, asReason);
 
 /**

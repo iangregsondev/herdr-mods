@@ -311,7 +311,11 @@ describe("findRepos", () => {
       assert.deepStrictEqual(
         found,
         Result.succeed({
-          scanned: { repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }], missing: [] },
+          scanned: {
+            repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }],
+            missing: [],
+            homes: new Map([[THIS_MACHINE, "/h"]]),
+          },
           repos: [
             { machine: THIS_MACHINE, root: "/tmp/api", count: 2, group: "Other" },
             { machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" },
@@ -338,7 +342,11 @@ describe("findRepos", () => {
   it.effect("with no scan due, keeps the last scan and runs only the open spaces' lookup", () =>
     Effect.gen(function* () {
       const { api, ran } = scripts({ scan: "/w\t/w/new\t1\n", owners: "" });
-      const last = { repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }], missing: [] };
+      const last = {
+        repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }],
+        missing: [],
+        homes: new Map([[THIS_MACHINE, "/h"]]),
+      };
       const found = yield* findRepos(settings, "/h", ["/tmp"], Option.some(last)).pipe(
         Effect.provide(Shell.layer(api)),
       );
@@ -392,6 +400,69 @@ describe("findRepos", () => {
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(found, Result.fail("no scan"));
+    }),
+  );
+});
+
+describe("findRepos across machines", () => {
+  /**
+   * A Herdr API with a home and a folder scan answer per machine (`null`: this machine),
+   * recording each run as `[machine, what, args]`.
+   */
+  const machines = (answers: ReadonlyMap<string | null, { home: string; scan: string }>) => {
+    const ran: unknown[] = [];
+    const api: ExecApi = {
+      hc: noHc,
+      exec: (_command, args = [], options) => {
+        const on = options?.on ?? null;
+        const answer = answers.get(on);
+        const body = args[1] ?? "";
+        const what =
+          body.includes("$HOME") && !body.includes("walk()")
+            ? "home"
+            : body.includes("walk()")
+              ? "scan"
+              : "owners";
+        ran.push([on, what, args.slice(3)]);
+        const stdout = what === "home" ? answer?.home : what === "scan" ? answer?.scan : "";
+        return Promise.resolve({ code: 0, stdout: stdout ?? "", stderr: "" });
+      },
+    };
+    return { api, ran };
+  };
+
+  it.effect("scans each machine's group folders on it, ~ as its home, the same repo twice", () =>
+    Effect.gen(function* () {
+      const settings = {
+        ...DEFAULT_SETTINGS,
+        folders: [
+          { name: "Work", path: "/srv/code", machine: THIS_MACHINE },
+          { name: "Box", path: "~/code", machine: "linux" },
+        ],
+      };
+      const { api, ran } = machines(
+        new Map([
+          [THIS_MACHINE, { home: "/Users/me", scan: "/srv/code\t/srv/code/api\t1\n" }],
+          ["linux", { home: "/srv", scan: "/srv/code\t/srv/code/api\t2\n" }],
+        ]),
+      );
+      const found = yield* findRepos(settings, "/Users/me", [], Option.none()).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Result.map(found, (f) => f.repos),
+        Result.succeed([
+          { machine: THIS_MACHINE, root: "/srv/code/api", count: 1, group: "Work" },
+          { machine: "linux", root: "/srv/code/api", count: 2, group: "Box" },
+        ]),
+      );
+      assert.deepStrictEqual(
+        ran.filter((run) => Array.isArray(run) && run[1] === "scan"),
+        [
+          [THIS_MACHINE, "scan", ["4", "/node_modules//.cache/", "/srv/code"]],
+          ["linux", "scan", ["4", "/node_modules//.cache/", "/srv/code"]],
+        ],
+      );
     }),
   );
 });
@@ -539,7 +610,7 @@ describe("readDialogRepo", () => {
   it.effect("the repo's worktrees, from wt list, and its branches", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({ list: states, branches: "refs/heads/main\n" });
-      const read = yield* readDialogRepo("/r/app").pipe(Effect.provide(Shell.layer(api)));
+      const read = yield* readDialogRepo(here("/r/app")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(read, {
         list: parseList(states),
         branches: Result.succeed([{ name: "main", remote: false }]),
@@ -553,7 +624,7 @@ describe("readDialogRepo", () => {
   it.effect("each read that fails is its one-line reason, and the other still lands", () =>
     Effect.gen(function* () {
       const { api } = lookups({ list: states });
-      const read = yield* readDialogRepo("/r/app").pipe(Effect.provide(Shell.layer(api)));
+      const read = yield* readDialogRepo(here("/r/app")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(read, {
         list: parseList(states),
         branches: Result.fail("no branches"),
@@ -638,7 +709,7 @@ describe("readList", () => {
         exec: () => Promise.resolve({ code: 0, stdout: states, stderr: "" }),
         hc: noHc,
       };
-      const list = yield* readList("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      const list = yield* readList(here("/work/repo")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(list, parseList(states));
     }),
   );
@@ -650,7 +721,7 @@ describe("readList", () => {
         exec: () =>
           Promise.resolve({ code: 1, stdout: "", stderr: "fatal: not a git repository\n" }),
       };
-      const list = yield* readList("/gone").pipe(Effect.provide(Shell.layer(api)));
+      const list = yield* readList(here("/gone")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(list, Result.fail("fatal: not a git repository"));
     }),
   );
@@ -669,7 +740,7 @@ describe("readCi", () => {
             stderr: "",
           }),
       };
-      const read = yield* readCi("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      const read = yield* readCi(here("/work/repo")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(read, parseList(ci));
     }),
   );

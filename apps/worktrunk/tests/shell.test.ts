@@ -22,6 +22,7 @@ import {
   goneFolders,
   ListUnreadable,
   loginShell,
+  machineHome,
   makeTempDir,
   removeDir,
   repoAt,
@@ -42,6 +43,9 @@ import {
 import { parseList } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
+
+/** A repo on this machine. */
+const here = (root: string) => ({ machine: THIS_MACHINE, root });
 
 /** `hc` for fakes of tests that never call it. */
 const noHc: ExecApi["hc"] = () => Promise.reject(new Error("hc isn't called here"));
@@ -181,7 +185,9 @@ describe("runScript", () => {
   it.effect("a slow script runs for as long as it asks", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
-      yield* runScript("slow", "sleep 1", [], 240_000).pipe(Effect.provide(Shell.layer(api)));
+      yield* runScript("slow", "sleep 1", [], { timeout: 240_000 }).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(calls, [["sh", shArgs("sleep 1", []), { timeout: 240_000 }]]);
     }),
   );
@@ -201,7 +207,7 @@ describe("wtList", () => {
   it.effect("the worktrees wt list prints in the repo", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: states, stderr: "" });
-      const worktrees = yield* wtList("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      const worktrees = yield* wtList(here("/work/repo")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(worktrees, Result.getOrThrow(parseList(states)));
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(LIST_SCRIPT, ["/work/repo"]), { timeout: 60_000 }],
@@ -211,7 +217,7 @@ describe("wtList", () => {
 
   it.effect("output that isn't wt's JSON is ListUnreadable, with the reason", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.result(wtList("/r"));
+      const result = yield* Effect.result(wtList(here("/r")));
       assert.deepStrictEqual(
         failureOf(result),
         Result.fail(["ListUnreadable", "wt list printed no list of worktrees"]),
@@ -224,7 +230,7 @@ describe("wtCi", () => {
   it.effect("the worktrees and their CI, from wt list --full, for up to 4 minutes", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: ci, stderr: "" });
-      const worktrees = yield* wtCi("/work/repo").pipe(Effect.provide(Shell.layer(api)));
+      const worktrees = yield* wtCi(here("/work/repo")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(worktrees, Result.getOrThrow(parseList(ci)));
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(CI_SCRIPT, ["/work/repo"]), { timeout: 240_000 }],
@@ -234,7 +240,7 @@ describe("wtCi", () => {
 
   it.effect("a CI read that fails is CommandFailed, named wt list --full", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.result(wtCi("/r"));
+      const result = yield* Effect.result(wtCi(here("/r")));
       assert.deepStrictEqual(
         failureOf(result),
         Result.fail(["CommandFailed", "wt list --full", 1, "rate limited"]),
@@ -242,6 +248,111 @@ describe("wtCi", () => {
     }).pipe(
       Effect.provide(Shell.layer(answering({ code: 1, stdout: "", stderr: "rate limited" }))),
     ),
+  );
+});
+
+describe("runScript on a machine", () => {
+  it.effect("runs the script on the machine it is given", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "ok", stderr: "" });
+      yield* runScript("greet", "true", [], { on: "linux" }).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(calls, [["sh", shArgs("true", []), { timeout: 60_000, on: "linux" }]]);
+    }),
+  );
+});
+
+describe("reads on the repo's machine", () => {
+  const linux = { machine: "linux", root: "/srv/api" };
+  /** The machine each recorded call ran on: its `on`, none for this machine. */
+  const machinesOf = (calls: readonly unknown[]) =>
+    calls.map((call) => {
+      const options = Array.isArray(call) ? call[2] : undefined;
+      return options !== null && typeof options === "object" && "on" in options
+        ? options.on
+        : THIS_MACHINE;
+    });
+
+  it.effect("wt list runs on the repo's machine", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "[]", stderr: "" });
+      yield* wtList(linux).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(machinesOf(calls), ["linux"]);
+    }),
+  );
+
+  it.effect("CI's wt list --full runs on the repo's machine", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "[]", stderr: "" });
+      yield* wtCi(linux).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(machinesOf(calls), ["linux"]);
+    }),
+  );
+
+  it.effect("the branch list runs on the repo's machine", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "", stderr: "" });
+      yield* gitBranches(linux).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(machinesOf(calls), ["linux"]);
+    }),
+  );
+
+  it.effect("the owners script runs on the folders' machine, and finds repos there", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/srv/api\t2\n", stderr: "" });
+      const repos = yield* reposOf(["/srv/api/src"], "linux").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [machinesOf(calls), repos],
+        [["linux"], [{ machine: "linux", root: "/srv/api", count: 2 }]],
+      );
+    }),
+  );
+
+  it.effect("the folder scan runs on the folders' machine, and finds repos there", () =>
+    Effect.gen(function* () {
+      const settings = {
+        ...DEFAULT_SETTINGS,
+        folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+      };
+      const { api, calls } = recording({
+        code: 0,
+        stdout: "/home/ian/code\t/home/ian/code/api\t1\n",
+        stderr: "",
+      });
+      const scan = yield* scanRepos(settings, "linux", new Map([["linux", "/home/ian"]])).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [machinesOf(calls), scan.repos],
+        [["linux"], [{ machine: "linux", root: "/home/ian/code/api", count: 1 }]],
+      );
+    }),
+  );
+});
+
+describe("machineHome", () => {
+  it.effect("the home folder of the machine, read on that machine", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "/home/ian", stderr: "" });
+      const home = yield* machineHome("linux").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(
+        [home, calls],
+        ["/home/ian", [["sh", ["-c", 'printf %s "$HOME"'], { on: "linux" }]]],
+      );
+    }),
+  );
+});
+
+describe("machineHome with no $HOME", () => {
+  it.effect("an empty $HOME fails, naming the read", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(machineHome("linux"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["CommandFailed", "the home folder's lookup", 0, "$HOME is empty"]),
+      );
+    }).pipe(Effect.provide(Shell.layer(answering({ code: 0, stdout: "", stderr: "" })))),
   );
 });
 
@@ -258,7 +369,9 @@ describe("scanRepos", () => {
         stdout: "/h/work\t/h/work/api\t2\n",
         stderr: "",
       });
-      const repos = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
+      const repos = yield* scanRepos(settings, THIS_MACHINE, new Map([[THIS_MACHINE, "/h"]])).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(repos, {
         repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
         missing: [],
@@ -280,7 +393,9 @@ describe("scanRepos", () => {
         stdout: "/h/gone\n/h/work\t/h/work/api\t2\n",
         stderr: "",
       });
-      const scan = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
+      const scan = yield* scanRepos(settings, THIS_MACHINE, new Map([[THIS_MACHINE, "/h"]])).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(scan, {
         repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
         missing: ["/h/gone"],
@@ -291,7 +406,11 @@ describe("scanRepos", () => {
   it.effect("with no group folders there is nothing to scan, and nothing is run", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/x\t/x/y\t1\n", stderr: "" });
-      const repos = yield* scanRepos(DEFAULT_SETTINGS, "/h").pipe(Effect.provide(Shell.layer(api)));
+      const repos = yield* scanRepos(
+        DEFAULT_SETTINGS,
+        THIS_MACHINE,
+        new Map([[THIS_MACHINE, "/h"]]),
+      ).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual([repos, calls], [{ repos: [], missing: [] }, []]);
     }),
   );
@@ -369,7 +488,7 @@ describe("gitBranches", () => {
         stdout: "refs/heads/main\nrefs/remotes/origin/fix\n",
         stderr: "",
       });
-      const branches = yield* gitBranches("/r/api").pipe(Effect.provide(Shell.layer(api)));
+      const branches = yield* gitBranches(here("/r/api")).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(branches, [
         { name: "main", remote: false },
         { name: "fix", remote: true },
@@ -382,7 +501,7 @@ describe("gitBranches", () => {
 
   it.effect("a branch list that fails is CommandFailed, naming it", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.result(gitBranches("/gone"));
+      const result = yield* Effect.result(gitBranches(here("/gone")));
       assert.deepStrictEqual(
         failureOf(result),
         Result.fail(["CommandFailed", "the branch list", 128, "fatal: cannot change to '/gone'"]),
