@@ -14,9 +14,13 @@
 //   then rsyncs that into the Herdr host's mods/<mod id>/ after each good build.
 // When it starts, a watch prints its dev target and puts Herdr's type files from
 // that target into .herdr-types/ (scripts/herdr-types.ts).
-// Every read and write of the Herdr home goes through HerdrHost; the one file read
-// here directly is the mod's own assets/mod.json, in the repo.
-import { readFileSync } from "node:fs";
+// Every build stamps the copied RECIPE.md with the mod version and a changelog link
+// (scripts/recipe-stamp.ts); the source recipe stays unstamped.
+// Every read and write of the Herdr home goes through HerdrHost, except the build
+// output itself: vp pack writes it into the out dir, and the stamp edits the copied
+// RECIPE.md there in place. The other files read here directly are the mod's own
+// package.json and assets/mod.json, in the repo.
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Predicate, Result } from "effect";
@@ -38,6 +42,7 @@ import {
   type TransportError,
 } from "./scripts/herdr-host.ts";
 import { ensureSlot, ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
+import { stampRecipe } from "./scripts/recipe-stamp.ts";
 import { refreshHerdrTypes, TYPES_DIR, type TypesResult } from "./scripts/herdr-types.ts";
 
 type PackConfig = NonNullable<UserConfig["pack"]>;
@@ -96,9 +101,10 @@ export interface ModPackOptions {
   /** Build into the Herdr app (watch mode). Defaults to `--watch` or `-w` in argv. */
   watch?: boolean;
   /**
-   * The folder whose `assets/mod.json` the first watch build reads. Only that file is
-   * read from it: the entry, the copied assets and the out dir stay relative to the
-   * working directory. Defaults to the working directory.
+   * The mod's folder: every build reads the version in its `package.json` (for the
+   * recipe stamp), and the first watch build reads its `assets/mod.json`. Only those
+   * files are read from it: the entry, the copied assets and the out dir stay relative
+   * to the working directory. Defaults to the working directory.
    */
   modDir?: string;
   /**
@@ -363,7 +369,7 @@ export function modPack(
     onStarted = () => undefined,
   }: ModPackOptions = {},
 ): PackConfig {
-  if (!watch) return packConfig(name, `../../mods/${modId(name)}`);
+  if (!watch) return packConfig(name, modDir, `../../mods/${modId(name)}`);
   const target = devTarget();
   // Handed on before the out dir is claimed, so a caller can wait on the start
   // even when claiming it throws.
@@ -372,6 +378,7 @@ export function modPack(
     ? remoteWatchConfig(name, { target, modDir, slot, stagingRoot })
     : packConfig(
         name,
+        modDir,
         devOutDir(name, target.herdrHome),
         slotOnFirstBuild(name, { target, modDir, slot }),
       );
@@ -389,7 +396,27 @@ function remoteWatchConfig(
 ): PackConfig {
   const staging = stageDevBuild(name, stagingRoot);
   const slotStep = slotOnFirstBuild(name, { target, modDir, slot });
-  return packConfig(name, staging, syncAfterEachBuild(name, { staging, target, slotStep }));
+  return packConfig(name, modDir, staging, syncAfterEachBuild(name, { staging, target, slotStep }));
+}
+
+/** Where the changelog of the mod whose short name is `name` lives, on GitHub. */
+const changelogUrl = (name: string): string =>
+  `https://github.com/iangregsondev/herdr-mods/blob/main/apps/${name}/CHANGELOG.md`;
+
+/**
+ * Stamps the built `RECIPE.md` in `outDir` with the version in `modDir/package.json`
+ * and the mod's changelog link (see `scripts/recipe-stamp.ts`).
+ */
+function stampBuiltRecipe(name: string, modDir: string, outDir: string): void {
+  // `modDir/package.json` is the mod's own committed file, trusted unchecked.
+  const { version } = JSON.parse(readFileSync(resolve(modDir, "package.json"), "utf8")) as {
+    version: string;
+  };
+  const recipe = join(outDir, "RECIPE.md");
+  writeFileSync(
+    recipe,
+    stampRecipe(readFileSync(recipe, "utf8"), { version, changelogUrl: changelogUrl(name) }),
+  );
 }
 
 /**
@@ -398,6 +425,7 @@ function remoteWatchConfig(
  */
 function packConfig(
   name: string,
+  modDir: string,
   outDir: string,
   onSuccess?: () => void | Promise<void>,
 ): PackConfig {
@@ -424,6 +452,8 @@ function packConfig(
     clean: !watch,
     deps: { neverBundle: HERDR_BUILTINS },
     copy: [{ from: "assets/*", to: outDir }],
+    // After vp pack has copied the assets, stamp the copied recipe (never the source).
+    hooks: { "build:done": ({ options }) => stampBuiltRecipe(name, modDir, options.outDir) },
     ...(watch ? { onSuccess } : {}),
   };
 }
