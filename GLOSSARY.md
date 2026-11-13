@@ -47,6 +47,10 @@ _Avoid_: repo version, app version (Herdr has its own)
 A note added with a change, naming the mods it reaches, how far each one's version moves (major, minor or patch), and what a user of that mod sees.
 _Avoid_: change note, release note
 
+**Empty changeset**:
+A changeset that names no mods: an explicit statement that the change releases nothing. Every change without a mod to release carries one.
+_Avoid_: no-op changeset, skip
+
 **Changelog**:
 A mod's list of versions, each with the changes it brought, newest first.
 _Avoid_: history, release notes
