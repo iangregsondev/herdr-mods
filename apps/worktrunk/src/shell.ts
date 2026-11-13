@@ -335,6 +335,21 @@ export const waitForJob = (addr: string): Effect.Effect<Option.Option<number>, S
     }
   });
 
+/**
+ * Whether `folder` is a folder on `machine`, checked there. The test exits 1 for "no";
+ * any other failure (the machine can't be reached) is the check's own error.
+ */
+export const isFolder = Effect.fn("isFolder")(function* (folder: string, machine: Machine) {
+  const shell = yield* Shell;
+  return yield* shell.exec("sh", ["-c", '[ -d "$1" ]', "sh", folder], onMachine(machine, {})).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (failed) => failed._tag === "CommandFailed" && failed.code === 1,
+      () => Effect.succeed(false),
+    ),
+  );
+});
+
 /** Which of `folders` on `machine` no longer exist, checked there. */
 export const goneFolders = Effect.fn("goneFolders")(function* (
   folders: readonly string[],

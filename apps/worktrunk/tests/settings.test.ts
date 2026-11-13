@@ -3,9 +3,11 @@ import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   addFolder,
+  addFolderOn,
   DEFAULT_SETTINGS,
   hideRepo,
   moveFolder,
+  otherMachines,
   parseSettings,
   planImport,
   planSave,
@@ -520,6 +522,50 @@ describe("group folders on machines", () => {
     };
     expect(withFields(remote, { names: ["Box"], skip: "", depth: 4 }).folders).toEqual([
       { name: "Box", path: "/srv/x", machine: "linux" },
+    ]);
+  });
+});
+
+describe("adding a group folder on another machine", () => {
+  test("offers Herdr's machines other than this one, in Herdr's order", () => {
+    const list = [
+      { name: THIS_MACHINE, layout: "ready" as const },
+      { name: "linux", layout: "ready" as const },
+      { name: "nas", layout: "unavailable" as const },
+    ];
+    expect(otherMachines(list)).toEqual(["linux", "nas"]);
+  });
+
+  test("a typed folder joins the end on its machine, under that machine's home written with ~", () => {
+    const work = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Work", path: "~/work", machine: THIS_MACHINE }],
+    };
+    expect(addFolderOn(work, "linux", " /home/me/code/oss/ ", "/home/me").folders).toEqual([
+      { name: "Work", path: "~/work", machine: THIS_MACHINE },
+      { name: "oss", path: "~/code/oss", machine: "linux" },
+    ]);
+  });
+
+  test("a folder already listed on that machine changes nothing, however it is typed", () => {
+    const box = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect([
+      addFolderOn(box, "linux", "/home/me/code", "/home/me"),
+      addFolderOn(box, "linux", "~/code/", "/home/me"),
+    ]).toEqual([box, box]);
+  });
+
+  test("the same folder on another machine is a group of its own", () => {
+    const box = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect(addFolderOn(box, "nas", "~/code", "/home/me").folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+      { name: "code", path: "~/code", machine: "nas" },
     ]);
   });
 });

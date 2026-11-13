@@ -285,18 +285,31 @@ export const unhide = (settings: Settings, repo: RepoId): Settings => ({
  * added as the last group, named after its last segment and written with `~` under
  * `home`. A folder already listed on this machine changes nothing.
  */
-export const addFolder = (settings: Settings, picked: string, home: string): Settings => {
-  const path = tildePath(trimSlashes(picked), home);
+export const addFolder = (settings: Settings, picked: string, home: string): Settings =>
+  withFolder(settings, THIS_MACHINE, picked, home);
+
+/**
+ * The settings with `typed` on `machine` (whose home is `home`) added as the last group,
+ * named after its last segment and written with `~` under `home`. A blank folder, or one
+ * already listed on that machine, changes nothing.
+ */
+const withFolder = (
+  settings: Settings,
+  machine: Machine,
+  typed: string,
+  home: string,
+): Settings => {
+  const path = tildePath(trimSlashes(typed), home);
   if (path === "") return settings;
   const listed = settings.folders.some(
     (folder) =>
-      folder.machine === THIS_MACHINE && expandHome(folder.path, home) === expandHome(path, home),
+      folder.machine === machine && expandHome(folder.path, home) === expandHome(path, home),
   );
   return listed
     ? settings
     : {
         ...settings,
-        folders: [...settings.folders, { name: lastSegment(path), path, machine: THIS_MACHINE }],
+        folders: [...settings.folders, { name: lastSegment(path), path, machine }],
       };
 };
 
@@ -343,3 +356,18 @@ export const withFields = (settings: Settings, fields: Fields): Settings => ({
     .filter((name) => name !== ""),
   depth: clampDepth(fields.depth),
 });
+
+/** The machines a group folder can be added on by path: Herdr's machines other than this one. */
+export const otherMachines = (list: readonly { readonly name: Machine }[]): readonly string[] =>
+  list.flatMap(({ name }) => (name === null ? [] : [name]));
+
+/**
+ * The settings with the folder typed as `typed` on `machine` (whose home there is `home`)
+ * added as the last group, as `addFolder` adds one on this machine.
+ */
+export const addFolderOn = (
+  settings: Settings,
+  machine: string,
+  typed: string,
+  home: string,
+): Settings => withFolder(settings, machine, typed, home);

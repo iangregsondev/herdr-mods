@@ -3,6 +3,7 @@ import { machineStates, THIS_MACHINE } from "../src/machines.ts";
 import { Effect, Fiber, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
+  addGroupFolderOn,
   dialogFor,
   findRepos,
   hideInSettings,
@@ -1813,6 +1814,104 @@ describe("pickGroupFolder", () => {
       const api: FilesApi = { ...disk({}).api, pickFolder: () => Promise.reject("no window") };
       const picked = yield* pickGroupFolder().pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(picked, Result.fail("couldn't open the folder picker (no window)"));
+    }),
+  );
+});
+
+describe("addGroupFolderOn", () => {
+  /**
+   * A machine whose home is `home` and whose folders are `folders`: `$HOME` reads give the
+   * home, and any other run is the folder check of its last argument, which exits 1 for a
+   * folder it doesn't have. Records each run's machine and last argument.
+   */
+  const machine = (home: string, folders: readonly string[]) => {
+    const ran: unknown[] = [];
+    const api: ExecApi = {
+      exec: (_command, args = [], options) => {
+        const last = args.at(-1) ?? "";
+        ran.push([options?.on, last]);
+        if (last.includes("$HOME")) return Promise.resolve({ code: 0, stdout: home, stderr: "" });
+        return Promise.resolve({ code: folders.includes(last) ? 0 : 1, stdout: "", stderr: "" });
+      },
+      hc: noHc,
+    };
+    return { api, ran };
+  };
+
+  it.effect("checks the typed folder on the picked machine, then adds it there", () =>
+    Effect.gen(function* () {
+      const { api, ran } = machine("/home/me", ["/srv/code"]);
+      const added = yield* addGroupFolderOn(DEFAULT_SETTINGS, "linux", "/srv/code").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [added, ran.at(-1)],
+        [
+          Result.succeed({
+            ...DEFAULT_SETTINGS,
+            folders: [{ name: "code", path: "/srv/code", machine: "linux" }],
+          }),
+          ["linux", "/srv/code"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a folder that isn't there on that machine is reported, and not added", () =>
+    Effect.gen(function* () {
+      const { api } = machine("/home/me", ["/srv/code"]);
+      const added = yield* addGroupFolderOn(DEFAULT_SETTINGS, "linux", "/srv/cdoe").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(added, Result.fail("/srv/cdoe isn't a folder on linux"));
+    }),
+  );
+
+  it.effect("~ is the picked machine's home, read there, and the folder keeps it", () =>
+    Effect.gen(function* () {
+      const { api, ran } = machine("/home/me", ["/home/me/code"]);
+      const added = yield* addGroupFolderOn(DEFAULT_SETTINGS, "linux", "~/code").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [added, ran],
+        [
+          Result.succeed({
+            ...DEFAULT_SETTINGS,
+            folders: [{ name: "code", path: "~/code", machine: "linux" }],
+          }),
+          [
+            ["linux", 'printf %s "$HOME"'],
+            ["linux", "/home/me/code"],
+          ],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a check that can't run on that machine is reported with why, and adds nothing", () =>
+    Effect.gen(function* () {
+      const api: ExecApi = {
+        exec: () => Promise.resolve({ code: 255, stdout: "", stderr: "ssh: connect: refused" }),
+        hc: noHc,
+      };
+      const added = yield* addGroupFolderOn(DEFAULT_SETTINGS, "linux", "/srv/code").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        added,
+        Result.fail("couldn't check /srv/code on linux: ssh: connect: refused"),
+      );
+    }),
+  );
+
+  it.effect("a blank folder asks for one, and runs nothing", () =>
+    Effect.gen(function* () {
+      const { api, ran } = machine("/home/me", []);
+      const added = yield* addGroupFolderOn(DEFAULT_SETTINGS, "linux", "  ").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual([added, ran], [Result.fail("Type the folder's path on linux"), []]);
     }),
   );
 });
