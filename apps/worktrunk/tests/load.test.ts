@@ -717,8 +717,11 @@ describe("syncToast", () => {
         Effect.provide(Files.layer(api)),
       );
       assert.deepStrictEqual(
-        Option.map(toast, (notice) => notice.title),
-        Option.some("Herdr updated: run herdr:sync"),
+        Result.map(
+          toast,
+          Option.map((notice) => notice.title),
+        ),
+        Result.succeed(Option.some("Herdr updated: run herdr:sync")),
       );
       assert.deepStrictEqual(reads, [RECORD]);
     }),
@@ -730,17 +733,20 @@ describe("syncToast", () => {
       const toast = yield* syncToast(RECORD, "0.1.14", undefined).pipe(
         Effect.provide(Files.layer(api)),
       );
-      assert.deepStrictEqual(toast, Option.none());
+      assert.deepStrictEqual(toast, Result.succeed(Option.none()));
     }),
   );
 
-  it.effect("a record that can't be read, no toast", () =>
+  it.effect("a record that can't be read is its one-line reason, not a silent no toast", () =>
     Effect.gen(function* () {
       const api: FilesApi = { ...disk({}).api, readTextFile: () => Promise.reject("denied") };
       const toast = yield* syncToast(RECORD, "0.1.14", undefined).pipe(
         Effect.provide(Files.layer(api)),
       );
-      assert.deepStrictEqual(toast, Option.none());
+      assert.deepStrictEqual(
+        toast,
+        Result.fail("iangregsondev-sync.json: couldn't read it (denied)"),
+      );
     }),
   );
 });

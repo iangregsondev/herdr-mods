@@ -352,17 +352,22 @@ const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
     fn(cx);
   });
 
-/** Shows one toast when Herdr has moved past the version the sync record names. */
+/**
+ * Shows one toast when Herdr has moved past the version the sync record names, or says
+ * the record couldn't be read (not marked as told, so a readable record still toasts).
+ */
 const checkSync = async () => {
   const installed = updates().app.version;
-  // A defect here is a bug in the check, not something to tell you about: no toast.
   const toast = await runEdge(
     syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)),
-    () => Option.none(),
+    Result.fail,
   );
-  Option.map(toast, (notice) => {
-    setShared(SYNC_TOLD_KEY, installed);
-    notify({ ...notice, level: "warning" });
+  Result.match(toast, {
+    onFailure: (body) => notify({ title: "Couldn't check for herdr:sync", body, level: "warning" }),
+    onSuccess: Option.map((notice) => {
+      setShared(SYNC_TOLD_KEY, installed);
+      notify({ ...notice, level: "warning" });
+    }),
   });
 };
 
