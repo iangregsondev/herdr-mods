@@ -448,15 +448,29 @@ describe("loginShell", () => {
     }),
   );
 
-  it.effect("/bin/sh when $SHELL is empty or can't be read", () =>
+  it.effect("a $SHELL that can't be read is LoginShellUnknown, saying why, with no guess", () =>
     Effect.gen(function* () {
-      const empty = yield* loginShell().pipe(
-        Effect.provide(Shell.layer(answering({ code: 0, stdout: " ", stderr: "" }))),
-      );
       const failed = yield* loginShell().pipe(
         Effect.provide(Shell.layer({ exec: () => Promise.reject("no sh"), hc: noHc })),
+        Effect.result,
       );
-      assert.deepStrictEqual([empty, failed], ["/bin/sh", "/bin/sh"]);
+      assert.deepStrictEqual(
+        Result.mapError(failed, (error) => [error._tag, error.reason]),
+        Result.fail(["LoginShellUnknown", "couldn't read $SHELL: couldn't start: no sh"]),
+      );
+    }),
+  );
+
+  it.effect("an empty $SHELL is LoginShellUnknown, with no guess", () =>
+    Effect.gen(function* () {
+      const failed = yield* loginShell().pipe(
+        Effect.provide(Shell.layer(answering({ code: 0, stdout: " ", stderr: "" }))),
+        Effect.result,
+      );
+      assert.deepStrictEqual(
+        Result.mapError(failed, (error) => [error._tag, error.reason]),
+        Result.fail(["LoginShellUnknown", "$SHELL is empty"]),
+      );
     }),
   );
 });

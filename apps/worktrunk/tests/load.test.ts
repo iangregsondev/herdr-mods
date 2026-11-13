@@ -937,6 +937,7 @@ describe("runJob", () => {
           _tag: "Ended",
           code: Option.some(0),
           gone: ["/r/app.feat"],
+          problems: [],
         });
         assert.deepStrictEqual(log, [
           ["sh", "-c", 'printf %s "$SHELL"'],
@@ -948,6 +949,32 @@ describe("runJob", () => {
           ["gone", "/r/app.feat", "/r/app.other"],
         ]);
       }),
+  );
+
+  it.effect("a login shell that can't be found: the job never starts, and says why", () =>
+    Effect.gen(function* () {
+      const { api, log } = jobApi({});
+      const noShell: ExecApi = {
+        ...api,
+        exec: (command, args) =>
+          command === "sh" && args?.[1] === 'printf %s "$SHELL"'
+            ? Promise.reject("no sh")
+            : api.exec(command, args),
+      };
+      const outcome = yield* runJob(MERGE_JOB, () => undefined).pipe(
+        Effect.provide(Shell.layer(noShell)),
+      );
+      assert.deepStrictEqual(
+        [outcome, log],
+        [
+          {
+            _tag: "NotStarted",
+            reason: "couldn't find your login shell: couldn't read $SHELL: couldn't start: no sh",
+          },
+          [],
+        ],
+      );
+    }),
   );
 
   it.effect("a job that never started says why, and nothing more runs", () =>
@@ -964,18 +991,42 @@ describe("runJob", () => {
     }),
   );
 
-  it.effect("a removed folders' check that fails closes nothing, but the job still ended", () =>
+  it.effect("a removed folders' check that fails closes nothing and says so; the job ended", () =>
     Effect.gen(function* () {
       const { api } = jobApi({ goneFails: true });
       const outcome = yield* runJob(MERGE_JOB, () => undefined).pipe(
         Effect.provide(Shell.layer(api)),
       );
-      assert.deepStrictEqual(outcome, { _tag: "Ended", code: Option.some(0), gone: [] });
+      assert.deepStrictEqual(outcome, {
+        _tag: "Ended",
+        code: Option.some(0),
+        gone: [],
+        problems: ["Couldn't check which folders went, so no space was closed: no"],
+      });
+    }),
+  );
+
+  it.effect("a terminal that can't be removed is reported, and the job still ended", () =>
+    Effect.gen(function* () {
+      const { api } = jobApi({ gone: "/r/app.feat\n" });
+      const failingRm: ExecApi = {
+        ...api,
+        hc: (args) => (args[0] === "rm" ? Promise.reject("hc crashed") : api.hc(args)),
+      };
+      const outcome = yield* runJob(MERGE_JOB, () => undefined).pipe(
+        Effect.provide(Shell.layer(failingRm)),
+      );
+      assert.deepStrictEqual(outcome, {
+        _tag: "Ended",
+        code: Option.some(0),
+        gone: ["/r/app.feat"],
+        problems: ["Couldn't remove the job's terminal: couldn't start: hc crashed"],
+      });
     }),
   );
 
   it.effect(
-    "hc failing while it waits loses the job: it ended with no code, and its folders are checked",
+    "hc failing while it waits loses the job, and says so: no code, and its folders are checked",
     () =>
       Effect.gen(function* () {
         const { api, log } = jobApi({ gone: "/r/app.feat\n" });
@@ -990,6 +1041,7 @@ describe("runJob", () => {
           _tag: "Ended",
           code: Option.none(),
           gone: ["/r/app.feat"],
+          problems: ["Lost track of the job: couldn't start: hc crashed"],
         });
         assert.deepStrictEqual(log.at(-2), ["hc", "rm"]);
       }),
@@ -1000,7 +1052,15 @@ describe("newWorktree", () => {
   const TARGET = { main: "/r/app", name: "feat", base: null };
 
   /** The job API, plus mktemp and rm in `exec`, and wt's answer file on a fake disk. */
-  const newApi = (options: { readonly code?: number; readonly mktemp?: string } = {}) => {
+  const newApi = (
+    options: {
+      readonly code?: number;
+      readonly mktemp?: string;
+      /** wt's answer file; none leaves it missing. */
+      readonly answer?: Option.Option<string>;
+      readonly rmFails?: boolean;
+    } = {},
+  ) => {
     const jobs = jobApi({ waits: [`{"ended":true,"exit_code":${options.code ?? 0}}`] });
     const bodies: string[] = [];
     const exec: ExecApi["exec"] = (command, args = []) => {
@@ -1010,7 +1070,9 @@ describe("newWorktree", () => {
       }
       if (command === "rm") {
         jobs.log.push(["rm", ...args]);
-        return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+        return options.rmFails === true
+          ? Promise.resolve({ code: 1, stdout: "", stderr: "rm: busy" })
+          : Promise.resolve({ code: 0, stdout: "", stderr: "" });
       }
       return jobs.api.exec(command, args);
     };
@@ -1018,7 +1080,13 @@ describe("newWorktree", () => {
       if (args[0] === "run") bodies.push(args.at(-1) ?? "");
       return jobs.api.hc(args);
     };
-    const files = disk({ "/tmp/t1/switch.json": '{"branch":"feat","path":"/r/app.feat"}' });
+    const answer = options.answer ?? Option.some('{"branch":"feat","path":"/r/app.feat"}');
+    const files = disk(
+      Option.match(answer, {
+        onNone: () => ({}),
+        onSome: (text) => ({ "/tmp/t1/switch.json": text }),
+      }),
+    );
     const layer = Layer.mergeAll(Shell.layer({ exec, hc }), Files.layer(files.api));
     return { layer, log: jobs.log, bodies };
   };
@@ -1028,8 +1096,9 @@ describe("newWorktree", () => {
       const { layer, log, bodies } = newApi();
       const made = yield* newWorktree(TARGET, () => undefined).pipe(Effect.provide(layer));
       assert.deepStrictEqual(made, {
-        outcome: { _tag: "Ended", code: Option.some(0), gone: [] },
+        outcome: { _tag: "Ended", code: Option.some(0), gone: [], problems: [] },
         switched: Option.some({ branch: "feat", path: "/r/app.feat" }),
+        problems: [],
       });
       assert.deepStrictEqual(bodies, [
         newScript({
@@ -1048,10 +1117,50 @@ describe("newWorktree", () => {
       const { layer, log } = newApi({ code: 1 });
       const made = yield* newWorktree(TARGET, () => undefined).pipe(Effect.provide(layer));
       assert.deepStrictEqual(made, {
-        outcome: { _tag: "Ended", code: Option.some(1), gone: [] },
+        outcome: { _tag: "Ended", code: Option.some(1), gone: [], problems: [] },
         switched: Option.none(),
+        problems: [],
       });
       assert.deepStrictEqual(log.at(-1), ["rm", "-rf", "/tmp/t1"]);
+    }),
+  );
+
+  it.effect("an answer that can't be read is reported, and opens no space", () =>
+    Effect.gen(function* () {
+      const { layer, log } = newApi({ answer: Option.none() });
+      const made = yield* newWorktree(TARGET, () => undefined).pipe(Effect.provide(layer));
+      assert.deepStrictEqual(made, {
+        outcome: { _tag: "Ended", code: Option.some(0), gone: [], problems: [] },
+        switched: Option.none(),
+        problems: [
+          "Couldn't read wt's answer, so no space was opened: /tmp/t1/switch.json is missing",
+        ],
+      });
+      assert.deepStrictEqual(log.at(-1), ["rm", "-rf", "/tmp/t1"]);
+    }),
+  );
+
+  it.effect("an answer that isn't wt's switch JSON is reported, and opens no space", () =>
+    Effect.gen(function* () {
+      const { layer } = newApi({ answer: Option.some("not json") });
+      const made = yield* newWorktree(TARGET, () => undefined).pipe(Effect.provide(layer));
+      assert.deepStrictEqual(made, {
+        outcome: { _tag: "Ended", code: Option.some(0), gone: [], problems: [] },
+        switched: Option.none(),
+        problems: ["wt's answer names no branch and folder, so no space was opened: not json"],
+      });
+    }),
+  );
+
+  it.effect("a temp folder that can't be removed is reported; the worktree still opens", () =>
+    Effect.gen(function* () {
+      const { layer } = newApi({ rmFails: true });
+      const made = yield* newWorktree(TARGET, () => undefined).pipe(Effect.provide(layer));
+      assert.deepStrictEqual(made, {
+        outcome: { _tag: "Ended", code: Option.some(0), gone: [], problems: [] },
+        switched: Option.some({ branch: "feat", path: "/r/app.feat" }),
+        problems: ["Couldn't remove the temp folder /tmp/t1: rm: busy"],
+      });
     }),
   );
 
@@ -1065,6 +1174,7 @@ describe("newWorktree", () => {
           reason: "couldn't make a temp folder: mktemp printed no folder",
         },
         switched: Option.none(),
+        problems: [],
       });
       assert.deepStrictEqual(log, [["mktemp"]]);
     }),

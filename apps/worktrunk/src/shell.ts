@@ -192,15 +192,31 @@ export const causeText = (cause: unknown): string =>
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text: string): string => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
 
-/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
+/**
+ * The person's login shell couldn't be found, so a job would run with the wrong PATH.
+ * `reason` says why.
+ */
+export class LoginShellUnknown extends Data.TaggedError("LoginShellUnknown")<{
+  readonly reason: string;
+}> {}
+
+/**
+ * The person's login shell, from `$SHELL`. A read that fails is `LoginShellUnknown`:
+ * another shell would run the job with another PATH.
+ */
 export const loginShell = Effect.fn("loginShell")(function* () {
   const shell = yield* Shell;
-  const out = yield* shell.exec("sh", ["-c", 'printf %s "$SHELL"']).pipe(
-    Effect.map((run) => run.stdout),
-    // Any shell will do to run a job; the person's own is only preferred.
-    Effect.orElseSucceed(() => ""),
-  );
-  return out.trim() || "/bin/sh";
+  const out = yield* shell
+    .exec("sh", ["-c", 'printf %s "$SHELL"'])
+    .pipe(
+      Effect.mapError(
+        (failed) =>
+          new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` }),
+      ),
+    );
+  const found = out.stdout.trim();
+  if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
+  return found;
 });
 
 /** `hc run` printed no terminal address: the job never started. `reason` says why. */

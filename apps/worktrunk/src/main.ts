@@ -341,6 +341,10 @@ const ciIcon = (t: Colors, badge: CiBadge): readonly [string, Hex] => {
   }
 };
 
+/** One warning toast for each thing that went wrong around the job `title`. */
+const jobProblems = (title: string, problems: readonly string[]) =>
+  problems.forEach((body) => notify({ title, body, level: "warning" }));
+
 /** Defers work out of `render`, which may not notify. */
 const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
   cx.spawn(async (cx) => {
@@ -851,7 +855,10 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** What every job does once it has ended: say why it never started, or close spaces. */
+  /**
+   * What every job does once it has ended: say why it never started, or close spaces and
+   * say what went wrong around it.
+   */
   jobEnded(cx: AsyncContext, title: string, outcome: JobOutcome) {
     if (outcome._tag === "NotStarted") {
       notify({ title: `Couldn't start: ${title}`, body: outcome.reason, level: "error" });
@@ -859,6 +866,7 @@ export default class Worktrunk extends View {
       spacesInGone(spaces(), panes(), outcome.gone).forEach((id) =>
         run("space.close", { id, confirmed: true }),
       );
+      jobProblems(title, outcome.problems);
     }
     this.job = Option.none();
     cx.notify();
@@ -898,8 +906,10 @@ export default class Worktrunk extends View {
         (defect) => ({
           outcome: { _tag: "NotStarted", reason: defect } satisfies JobOutcome,
           switched: Option.none(),
+          problems: [],
         }),
       );
+      jobProblems(title, made.problems);
       Option.map(made.switched, ({ branch, path }) =>
         Option.match(
           Option.fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)),

@@ -5,7 +5,7 @@
 import { Data, Effect, Option, Result } from "effect";
 import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
-import { Files, type FileError } from "worktrunk-mailbox";
+import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
 import type { RepoId } from "./machines.ts";
 import {
@@ -335,7 +335,19 @@ export type JobOutcome =
       readonly _tag: "Ended";
       readonly code: Option.Option<number>;
       readonly gone: readonly string[];
+      /** What went wrong after it started, one line each: it ran, but these failed. */
+      readonly problems: readonly string[];
     };
+
+/** What the panel says about a file it couldn't read: one line. */
+const fileFailureText = (failed: FileMissing | FileError): string =>
+  failed._tag === "FileMissing" ? `${failed.path} is missing` : causeText(failed.cause);
+
+/** A step that failed as its one line, `what` went wrong and why; nothing when it worked. */
+const problemOf = <A>(
+  step: Result.Result<A, ShellError | CommandFailed | ListUnreadable>,
+  what: string,
+): readonly string[] => (Result.isFailure(step) ? [`${what}: ${failureText(step.failure)}`] : []);
 
 /**
  * Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
@@ -347,13 +359,22 @@ export const runJob = Effect.fn("runJob")(
     const shell = yield* loginShell();
     const addr = yield* startJob({ cwd: spec.cwd, shell, body: spec.body });
     yield* Effect.sync(() => shown(addr));
-    // Once started, the job runs on in its window whatever hc says: a wait or a removal
-    // that fails only loses track of it.
-    const code = yield* waitForJob(addr).pipe(Effect.orElseSucceed(() => Option.none<number>()));
-    yield* Effect.ignore(removeTerminal(addr));
+    // Once started, the job runs on in its window whatever hc says: a wait that fails
+    // loses track of it, with no exit code, and says so.
+    const waited = yield* Effect.result(waitForJob(addr));
+    const removed = yield* Effect.result(removeTerminal(addr));
     // A check that fails can't tell which folders went, so no space is closed.
-    const gone = yield* goneFolders(spec.gone).pipe(Effect.orElseSucceed(() => []));
-    const outcome: JobOutcome = { _tag: "Ended", code, gone };
+    const checked = yield* Effect.result(goneFolders(spec.gone));
+    const outcome: JobOutcome = {
+      _tag: "Ended",
+      code: Result.getOrElse(waited, () => Option.none<number>()),
+      gone: Result.getOrElse(checked, (): readonly string[] => []),
+      problems: [
+        ...problemOf(waited, "Lost track of the job"),
+        ...problemOf(removed, "Couldn't remove the job's terminal"),
+        ...problemOf(checked, "Couldn't check which folders went, so no space was closed"),
+      ],
+    };
     return outcome;
   },
   Effect.catchTags({
@@ -361,6 +382,11 @@ export const runJob = Effect.fn("runJob")(
       Effect.succeed<JobOutcome>({ _tag: "NotStarted", reason: failed.reason }),
     ShellError: (failed) =>
       Effect.succeed<JobOutcome>({ _tag: "NotStarted", reason: failureText(failed) }),
+    LoginShellUnknown: (failed) =>
+      Effect.succeed<JobOutcome>({
+        _tag: "NotStarted",
+        reason: `couldn't find your login shell: ${failed.reason}`,
+      }),
   }),
 );
 
@@ -368,7 +394,23 @@ export const runJob = Effect.fn("runJob")(
 export interface NewOutcome {
   readonly outcome: JobOutcome;
   readonly switched: Option.Option<{ readonly branch: string; readonly path: string }>;
+  /** What went wrong around the job, one line each: reading its answer, removing its temp folder. */
+  readonly problems: readonly string[];
 }
+
+/** The worktree wt's answer file names, from its `read`, or the one line saying why not. */
+const switchedFrom = (
+  read: Result.Result<string, FileMissing | FileError>,
+): Result.Result<{ readonly branch: string; readonly path: string }, string> =>
+  Result.match(read, {
+    onFailure: (failed) =>
+      Result.fail(`Couldn't read wt's answer, so no space was opened: ${fileFailureText(failed)}`),
+    onSuccess: (text) =>
+      Result.fromOption(
+        switchedTo(text),
+        () => `wt's answer names no branch and folder, so no space was opened: ${text.trim()}`,
+      ),
+  });
 
 /**
  * Switches to or creates the worktree for `name` in the repo at `main` as a job (see
@@ -396,16 +438,24 @@ export const newWorktree = Effect.fn("newWorktree")(
     const outcome = yield* runJob(spec, shown);
     const succeeded = outcome._tag === "Ended" && Option.contains(outcome.code, 0);
     // Only a job that succeeded wrote an answer worth reading.
-    const text = succeeded ? yield* Effect.option(disk.read(out)) : Option.none<string>();
-    // A temp folder left behind is harmless: the system clears its temp folders.
-    yield* Effect.ignore(removeDir(dir));
-    const answer: NewOutcome = { outcome, switched: Option.flatMap(text, switchedTo) };
+    const read = succeeded ? Option.some(yield* Effect.result(disk.read(out))) : Option.none();
+    const removed = yield* Effect.result(removeDir(dir));
+    const switched = Option.map(read, switchedFrom);
+    const answer: NewOutcome = {
+      outcome,
+      switched: Option.flatMap(switched, Result.getSuccess),
+      problems: [
+        ...Option.toArray(Option.flatMap(switched, Result.getFailure)),
+        ...problemOf(removed, `Couldn't remove the temp folder ${dir}`),
+      ],
+    };
     return answer;
   },
   Effect.catchTag("JobNotStarted", (failed) =>
     Effect.succeed<NewOutcome>({
       outcome: { _tag: "NotStarted", reason: failed.reason },
       switched: Option.none(),
+      problems: [],
     }),
   ),
 );
