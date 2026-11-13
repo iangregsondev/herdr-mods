@@ -322,7 +322,7 @@ describe("readTitlebarProps", () => {
   });
 
   test("falls back to the mod's name and no terminal", () => {
-    expect(readTitlebarProps({})).toEqual({ title: "worktrunk", addr: Option.none() });
+    expect(readTitlebarProps({})).toEqual({ title: "Worktrunk", addr: Option.none() });
   });
 });
 

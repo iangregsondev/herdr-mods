@@ -1312,7 +1312,7 @@ export default class Worktrunk extends View {
       .border_b(1)
       .border_color(t.border)
       .child(icon("git", 16, t.accent))
-      .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
+      .child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk"))
       .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
       .child(iconButton("new", "plus", () => send({ _tag: "NewOrOpen", folder: null })))
       .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
@@ -2211,7 +2211,7 @@ export default class Worktrunk extends View {
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click(() => Option.map(block, (b) => run("layout.toggle", { id: b.id })))
           .child(icon("git", 14, on ? t.foreground : t.muted))
-          .child("worktrunk"),
+          .child("Worktrunk"),
       );
   }
 

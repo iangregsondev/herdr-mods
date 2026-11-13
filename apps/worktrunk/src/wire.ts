@@ -257,7 +257,7 @@ export interface TitlebarProps {
 
 export const readTitlebarProps = (props: unknown): TitlebarProps => {
   const f = fields(props);
-  return { title: Option.getOrElse(text(f.title), () => "worktrunk"), addr: text(f.addr) };
+  return { title: Option.getOrElse(text(f.title), () => "Worktrunk"), addr: text(f.addr) };
 };
 
 /** The New-or-open dialog's props read back; anything missing or mistyped is none. */
