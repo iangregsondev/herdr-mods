@@ -53,6 +53,12 @@ A panel docked on the right of the window that lists your git repos and their [w
   - merged: "same files as main", "squash-merged", "in main's history", or "merged" for any other reason;
   - in progress and conflicts: "↑ahead ↓behind vs main", "+added −deleted" when any lines changed, "↓N remote" when behind its upstream;
   - then "uncommitted changes" when dirty.
+- **Hover labels:** every status mark explains itself after a half-second hover, with the same text announced to a screen reader:
+  - the row's dot: its state ("Main checkout", "Merged", "In progress" or "Conflicts with main"), then " · open in a space" or " · no space open";
+  - the "new" badge: "No commits or changes yet"; the uncommitted-changes dot: "Uncommitted changes";
+  - "open": "Open in a space", or "Open in a space on <machine>" for a repo on another machine;
+  - the CI icon: "CI passed", "CI is running", "CI failed", "Conflicts with main" or "No CI status", plus " on an older commit than the one pushed" when it is dimmed;
+  - the header's turning ring: "Refreshing worktrees".
 - With no repos: "Looking for repos…" during the first scan; "No repos yet. Add your repo folders in Settings, or in iangregsondev-worktrunk.json in Herdr's folder." with no group folders set; else "No repos found in your group folders." When the search or the toggle leaves the Repos view empty: `Nothing matches "<search>".` while searching (the flat views say the same), else "No repos with worktrees here. Choose All repos to see the rest."
 
 ## How it behaves

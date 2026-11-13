@@ -3162,6 +3162,37 @@ const flatMap$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(s
 */
 const flatten$1 = /*#__PURE__*/ flatMap$3(identity);
 /**
+* Combines two `Option`s into a `Some` containing a tuple `[A, B]` if both
+* are `Some`.
+*
+* **When to use**
+*
+* Use when you need to require two `Option` values to both be `Some` and keep
+* both values as a tuple.
+*
+* **Details**
+*
+* - Both `Some` → `Some([a, b])`
+* - Either `None` → `None`
+*
+* **Example** (Pairing two Options)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.product(Option.some("hello"), Option.some(42)) // => Option.some(["hello", 42])
+* Option.product(Option.none(), Option.some(42)) // => Option.none()
+* ```
+*
+* @see {@link zipWith} to combine with a function instead of a tuple
+* @see {@link all} to combine many `Option`s
+*
+* @stability stable
+* @category combining
+* @since 2.0.0
+*/
+const product = /*#__PURE__*/ dual(2, (self, that) => isSome(self) && isSome(that) ? some([self.value, that.value]) : none());
+/**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
 *
@@ -3218,6 +3249,39 @@ const all$2 = (input) => {
 	}
 	return some(out);
 };
+/**
+* Combines two `Option`s using a provided function.
+*
+* **When to use**
+*
+* Use when you need to combine two present `Option` values into a computed
+* result.
+*
+* **Details**
+*
+* - Both `Some` → applies `f(a, b)` and wraps in `Some`
+* - Either `None` → `None`
+*
+* **Example** (Combining with a function)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.zipWith(
+*   Option.some("John"),
+*   Option.some(25),
+*   (name, age) => ({ name: name.toUpperCase(), age })
+* ) // => Option.some({ name: "JOHN", age: 25 })
+* ```
+*
+* @see {@link product} to combine into a tuple instead
+* @see {@link lift2} to lift a binary function
+*
+* @stability stable
+* @category zipping
+* @since 2.0.0
+*/
+const zipWith = /*#__PURE__*/ dual(3, (self, that, f) => map$3(product(self, that), ([a, b]) => f(a, b)));
 /**
 * Converts an `Option` into an `Array`.
 *
@@ -12119,6 +12183,15 @@ const DEFAULT_VIEW_STATE = {
 	only: true,
 	machine: none()
 };
+const CI_TOOLTIPS = {
+	passed: "CI passed",
+	running: "CI is running",
+	failed: "CI failed",
+	conflicts: "Conflicts with main",
+	unknown: "No CI status"
+};
+/** What a row's CI badge means, for its hover label. */
+const ciTooltip = (badge) => badge.stale ? `${CI_TOOLTIPS[badge.status]} on an older commit than the one pushed` : CI_TOOLTIPS[badge.status];
 const SECTIONS = [
 	["merged", "Merged · ready to clean up"],
 	["active", "In progress"],
@@ -12197,34 +12270,55 @@ const badgeOf = (ci) => {
 };
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
 const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repoKey(repo))?.byPath.get(worktree.path)), () => worktree.ci);
-const rowView = (snapshot, repo, worktree, space) => ({
-	key: repoKey({
-		machine: repo.machine,
-		root: worktree.path
-	}),
-	repo: repo.root,
-	label: getOrElse$1(worktree.branch, () => "(detached)"),
-	tone: getOrElse$1(kindOf(worktree), () => "main"),
-	hollow: isNone(space),
-	dirty: worktree.dirty,
-	open: isSome(space),
-	current: exists(space, (s) => s.active),
-	subline: subline(worktree, snapshot.now),
-	badge: worktree.state._tag === "New" ? some("new") : none(),
-	ci: badgeOf(ciOf(snapshot, repo, worktree)),
-	click: match$5(space, {
-		onNone: () => ({
-			_tag: "New",
-			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
-			folder: worktree.path,
-			machine: repo.machine
+const TONE_TOOLTIPS = {
+	main: "Main checkout",
+	merged: "Merged",
+	active: "In progress",
+	conflict: "Conflicts with main"
+};
+const dotTooltip = (tone, open) => `${TONE_TOOLTIPS[tone]} · ${open ? "open in a space" : "no space open"}`;
+/** The hover label of the open marker: names the space's machine when it isn't this one. */
+const openTooltip = (machine) => machine === null ? "Open in a space" : `Open in a space on ${machineName(machine)}`;
+const rowView = (snapshot, repo, worktree, space) => {
+	const tone = getOrElse$1(kindOf(worktree), () => "main");
+	const isNew = worktree.state._tag === "New";
+	const ci = badgeOf(ciOf(snapshot, repo, worktree));
+	return {
+		key: repoKey({
+			machine: repo.machine,
+			root: worktree.path
 		}),
-		onSome: (s) => ({
-			_tag: "Select",
-			space: s.id
+		repo: repo.root,
+		label: getOrElse$1(worktree.branch, () => "(detached)"),
+		tone,
+		hollow: isNone(space),
+		dirty: worktree.dirty,
+		open: isSome(space),
+		current: exists(space, (s) => s.active),
+		subline: subline(worktree, snapshot.now),
+		badge: isNew ? some("new") : none(),
+		ci,
+		tips: {
+			dot: dotTooltip(tone, isSome(space)),
+			badge: isNew ? some("No commits or changes yet") : none(),
+			dirty: worktree.dirty ? some("Uncommitted changes") : none(),
+			open: map$3(space, () => openTooltip(repo.machine)),
+			ci: map$3(ci, ciTooltip)
+		},
+		click: match$5(space, {
+			onNone: () => ({
+				_tag: "New",
+				name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
+				folder: worktree.path,
+				machine: repo.machine
+			}),
+			onSome: (s) => ({
+				_tag: "Select",
+				space: s.id
+			})
 		})
-	})
-});
+	};
+};
 const newestFirst = (a, b) => getOrElse$1(b.committedAt, () => 0) - getOrElse$1(a.committedAt, () => 0);
 const statusOf = (list) => match$5(list, {
 	onNone: () => ({ _tag: "Reading" }),
@@ -12504,6 +12598,7 @@ const buildView = (whole) => {
 	const places = spacePlaces(snapshot.spaces, snapshot.panes);
 	return {
 		loading: snapshot.loading,
+		spinnerTip: snapshot.loading ? some("Refreshing worktrees") : none(),
 		machineFilter: machineFilterOf(whole),
 		chips: chipsOf(snapshot),
 		views: SHOWS.map(([show, label]) => ({
@@ -12850,6 +12945,8 @@ const fontSizes = () => {
 	};
 };
 const icon = (name, size, color) => svg(`mods/iangregsondev-worktrunk/${name}.svg`).size(size).flex_none().text_color(color);
+/** `el` with a hover label, announced the same way to a screen reader. */
+const labelled = (el, text) => el.tooltip(text).accessibility_label(text);
 const dot = (color, size, hollow) => hollow ? div().w(size).h(size).flex_none().rounded_full().border(1.5).border_color(color) : div().w(size).h(size).flex_none().rounded_full().bg(color);
 const BUTTON_COLORS = {
 	plain: (t) => [t.raised, t.foreground],
@@ -13730,7 +13827,7 @@ var Worktrunk = class extends View {
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
-		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("new", "plus", () => send({
+		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk")).children(toArray(view.spinnerTip).map((tip) => labelled(div().flex_none().child(icon("ring", 13, t.muted).spin(900)), tip))).child(iconButton("new", "plus", () => send({
 			_tag: "NewOrOpen",
 			folder: null
 		}))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
@@ -13970,11 +14067,17 @@ var Worktrunk = class extends View {
 		return v_flex().child(h_flex().id(`group-${section.key}`).min_h(26).pl(18).pr(10).pt(6).gap(6).items_center().cursor_pointer().on_click(() => toggleFold(section.key)).child(icon(section.folded ? "chevron-right" : "chevron-down", 12, color)).child(div().flex_1().text_size(sizes.label).font_semibold().text_color(color).child(`${section.label} · ${section.count}`))).children(section.rows.map((row) => this.renderRow(style, row)));
 	}
 	renderRow({ t, sizes }, row) {
-		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).children(toArray(row.badge).map((word) => div().flex_none().px(5).rounded(4).bg(t.hover).text_size(sizes.label).text_color(t.working).child(word))).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
+		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(labelled(dot(toneColor(t, row.tone), 8, row.hollow), row.tips.dot)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).children(toArray(row.badge).map((word) => {
+			const badge = div().flex_none().px(5).rounded(4).bg(t.hover).text_size(sizes.label).text_color(t.working).child(word);
+			return match$5(row.tips.badge, {
+				onNone: () => badge,
+				onSome: (tip) => labelled(badge, tip)
+			});
+		})).children(toArray(row.tips.dirty).map((tip) => labelled(dot(t.blocked, 6, false), tip)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(zipWith(row.ci, row.tips.ci, (badge, tip) => [badge, tip])).map(([badge, tip]) => {
 			const [name, color] = ciIcon(t, badge);
 			const drawn = icon(name, 13, badge.stale ? t.dim : color);
-			return badge.status === "running" ? drawn.spin(1200) : drawn;
-		})).when(row.open, (el) => el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")));
+			return labelled(div().flex_none().child(badge.status === "running" ? drawn.spin(1200) : drawn), tip);
+		})).children(toArray(row.tips.open).map((tip) => labelled(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open"), tip)));
 	}
 };
 
