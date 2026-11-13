@@ -12064,9 +12064,8 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 * failed check is its one-line reason, so no space closes on a guess.
 */
 const checkGone = fn("checkGone")(function* (paths, machine) {
-	const checked = yield* result(goneFolders(paths, machine));
-	return mapError$2(checked, failureText);
-});
+	return yield* goneFolders(paths, machine);
+}, asReason);
 
 // src/spaces.ts
 /**

@@ -243,6 +243,14 @@ describe("closeOrAsk", () => {
     expect(closeOrAsk(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
   });
 
+  test("a space with only mod panes in it closes at once, since nothing but shells runs there", () => {
+    const panes: readonly ProgramPane[] = [
+      { tab: "t1", cwd: null, terminal: null },
+      { tab: "t2", cwd: null, terminal: null },
+    ];
+    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Close");
+  });
+
   test("what runs in another space doesn't count", () => {
     const panes = [terminal("t0", "/r/other", false), terminal("t1", "/r/app.feat", true)];
     expect(closeOrAsk(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
