@@ -20,6 +20,10 @@ type: Bug
 - Herdr app version:
 - OS:
 
+## Changeset
+
+<!-- `<mod>: <bump>` for each mod the fix releases (`worktrunk: patch`), or `empty` when it releases nothing. -->
+
 ## Logs or screenshots
 
 <!-- `herdr-app check <mod folder>` output, `herdr-app status`, or a `herdr-app shot` screenshot. -->

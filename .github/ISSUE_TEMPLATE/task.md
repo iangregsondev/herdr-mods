@@ -13,6 +13,10 @@ What should be done, and why.
 
 - [ ]
 
+## Changeset
+
+`<mod>: <bump>` for each mod this releases (`worktrunk: patch`), or `empty` when it releases nothing.
+
 ## Out of scope
 
 ## Notes
