@@ -28,14 +28,14 @@ Never commit to `main`. Work on a branch named `<type>/<issue>-<short-descriptio
 - `<issue>` is the GitHub issue number. With no issue, leave it out.
 - `<short-description>` is kebab-case.
 
-Examples: `feat/12-pr-list-mod`, `fix/15-hello-empty-state`, `chore/initial-setup`.
+Examples: `feat/12-pr-list-mod`, `fix/15-worktrunk-empty-state`, `chore/initial-setup`.
 
 ## Commit messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <description>`.
 
 - Write the description in the imperative, lower-case, with no full stop.
-- The scope is optional. Use the mod's name when the change sits in one mod: `fix(hello): …`.
+- The scope is optional. Use the mod's name when the change sits in one mod: `fix(worktrunk): …`.
 - Mark a breaking change with `!` and a `BREAKING CHANGE:` footer. For a mod, breaking means anything that breaks an installed copy: a renamed folder, changed keys, or moved state.
 - When the commit belongs to an issue, add a `Refs #123` footer.
 

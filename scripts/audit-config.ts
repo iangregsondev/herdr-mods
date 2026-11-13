@@ -60,7 +60,7 @@ export const pathRefs = (markdown: string, roots: readonly string[]): readonly s
 
 /**
  * A task a `vp run` command names: at the root, in every package (`-r`), in one package
- * (`hello#dev`), or in some package left as a placeholder (`<name>#dev`).
+ * (`worktrunk#dev`), or in some package left as a placeholder (`<name>#dev`).
  */
 export type TaskRef =
   | { readonly _tag: "Root"; readonly task: string }
@@ -102,7 +102,7 @@ const taskRef = (words: readonly string[]): readonly TaskRef[] => {
 
 /**
  * The task each `vp run` command in a doc's backticks names, every command in a span
- * joined with `&&`, `||` or `;`: `vp run -r build`, `vp run hello#dev`.
+ * joined with `&&`, `||` or `;`: `vp run -r build`, `vp run worktrunk#dev`.
  */
 export const vpRunTasks = (markdown: string): readonly TaskRef[] =>
   [...markdown.matchAll(/`([^`\n]+)`/g)]

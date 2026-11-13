@@ -5,13 +5,13 @@ How to work on a mod and see each change live in Herdr, start a new mod, and get
 ## Quick start
 
 ```bash
-vp run hello#dev          # 1. start: the iangregsondev-hello panel appears on the right of Herdr
-                          # 2. edit apps/hello/src/greeting.ts and save: the panel updates within a second or two
-                          # 3. stop the watch with ctrl-c when you're done
-vp run dev:remove hello   # 4. clean up: the files and the panel go
+vp run worktrunk#dev          # 1. start: the iangregsondev-worktrunk panel appears on the right of Herdr
+                              # 2. edit apps/worktrunk/src/view.ts and save: the panel updates within a second or two
+                              # 3. stop the watch with ctrl-c when you're done
+vp run dev:remove worktrunk   # 4. clean up: the files and the panel go
 ```
 
-Swap `hello` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0002](adr/0002-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
+Swap `worktrunk` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0002](adr/0002-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
 
 This works as it is when Herdr runs on the same machine as the repo. If Herdr runs on another machine, set that up first: [Remote Herdr host](#remote-herdr-host).
 
@@ -180,7 +180,7 @@ Nothing from the repo runs on the Herdr host.
    `host` (a name or an IP) and `user` are required. `port`, `herdrHome` and `herdrApp` can be left out; the values above are their defaults. A misspelt or unknown field is an error naming that field, never a quiet fall back to `local`. `"target": "local"`, or no file at all, means `local`.
 
 2. Run `vp run types`. It copies Herdr's type files from the Herdr host into `.herdr-types/`, so `vp check` passes here. `vp install` and every `#dev` watch do the same; run it again after updating Herdr on the host. A host that can't be reached only warns, but a broken `herdr-dev.json` makes `vp install` fail, naming the field to fix.
-3. Run `vp run hello#dev`. The first line should read `target: remote <user>@<host>:<port> (herdr-dev.json)`.
+3. Run `vp run worktrunk#dev`. The first line should read `target: remote <user>@<host>:<port> (herdr-dev.json)`.
 
 `herdr-dev.json` is git-ignored: it names a real host and user, and this repo is public. Only `herdr-dev.example.json`, with placeholder values, is committed.
 
@@ -209,20 +209,84 @@ CI fails if `mods/` doesn't match the source. Every PR also needs a changeset, a
 
 ## Start a new mod
 
-1. Copy `apps/hello/` to `apps/<name>/`.
-2. Rename it in `package.json` (`"name"`), `vite.config.ts` (`modPack("<name>")`) and `assets/mod.json` (`"title"`), using the short name. Set `"place"` and `"size"` in `mod.json`.
-3. Run `vp install`.
-4. Run `vp run <name>#dev` and build it up, test-first for pure logic (`apps/<name>/tests/`).
-5. Write its `RECIPE.md` and `preview.png` (below).
-6. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/iangregsondev-<name>/`.
-7. Add a changeset for it: a `minor` bump takes it from `0.0.0` to `0.1.0`, its first release. See [Releases](#releases).
+A mod needs only a few files. Make them in `apps/<name>/`, with `<name>` the short name.
+
+`package.json`. Keep `"version"` at `0.0.0`: the release workflow moves it.
+
+```json
+{
+  "name": "<name>",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Herdr mod: <what it does, in one line>.",
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}
+```
+
+`vite.config.ts`. `modPack` gives the shared build settings and the mod id.
+
+```ts
+import { defineConfig } from "vite-plus";
+import { modPack } from "../../mod-pack.ts";
+
+export default defineConfig({
+  pack: modPack("<name>"),
+});
+```
+
+`assets/mod.json` says where the mod first appears. `"place"` is a side such as `"right"`, or `"none"` for a mod with no panel of its own; `"size"` is the panel's width in pixels.
+
+```json
+{ "place": "right", "size": 240, "title": "<name>" }
+```
+
+`src/main.ts` default-exports a class that extends `View`. Keep it to drawing; logic goes in other modules under `src/`, with tests.
+
+```ts
+import { View, div } from "gpui-kit";
+import { v_flex } from "gpui-base";
+import { theme } from "herdr";
+
+type Colors = Record<string, `#${string}`>;
+
+export default class Main extends View {
+  render() {
+    // theme() is typed as plain strings, but the style methods want hex colours.
+    const t = theme() as Colors;
+    return v_flex()
+      .size_full()
+      .p(10)
+      .bg(t.background)
+      .text_color(t.foreground)
+      .child(div().child(__MOD_ID__));
+  }
+}
+```
+
+`assets/RECIPE.md` and `assets/preview.png`: see [Recipe and preview](#recipe-and-preview). Write them once the mod works.
+
+Herdr's `AGENTS.md` is the source of truth for these shapes; check them against it. Then:
+
+1. Run `vp install`. To use Effect, run `vp -C apps/<name> add -D effect @effect/vitest` and check the diff says `"catalog:"`.
+2. Run `vp run <name>#dev` and build it up, test-first for pure logic (`apps/<name>/tests/`).
+3. Write its `RECIPE.md` and `preview.png` (below).
+4. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/iangregsondev-<name>/`.
+5. Add a changeset for it: a `minor` bump takes it from `0.0.0` to `0.1.0`, its first release. See [Releases](#releases).
 
 ## Recipe and preview
 
 Herdr's shared-mod format expects both in every mod folder. Its rules are in `~/.config/herdr-app/AGENTS.md`, section "Layouts and mods other people made". Read that section before writing: Herdr updates it.
 
 - Keep both in `apps/<name>/assets/`. The build copies them into `mods/iangregsondev-<name>/`.
-- **`RECIPE.md`** is a brief another agent could rebuild the mod from, starting with an empty folder. Its sections, in order: `# Name` with one paragraph and `![Name](preview.png)`, then **What you see**, **How it behaves**, **Built from**, **Watch out** and **Done when**. Write it from the real files, exact over vague. `apps/hello/assets/RECIPE.md` shows the shape.
+- **`RECIPE.md`** is a brief another agent could rebuild the mod from, starting with an empty folder. Its sections, in order: `# Name` with one paragraph and `![Name](preview.png)`, then **What you see**, **How it behaves**, **Built from**, **Watch out** and **Done when**. Write it from the real files, exact over vague. `apps/worktrunk/assets/RECIPE.md` shows the shape.
 - **`preview.png`** is a screenshot of the mod. Take one with `vp run herdr shot apps/<name>/assets/preview.png --crop x,y,w,h` while the dev build runs, cropped to the mod alone. This repo is public, so nothing else from your window may show: other panels, repo or branch names, paths, terminal text.
 - Update the recipe in the same change as any behaviour change.
 - Don't write a version in the source recipe. Every build adds one line under the title of the copied `RECIPE.md`: `Version <x.y.z> · [Changelog](<link>)`, from the mod's `package.json` (`scripts/recipe-stamp.ts`, called by `mod-pack.ts`).
@@ -285,7 +349,7 @@ Or write the file by hand, in the shape above. Commit it with the change. One ch
 3. You merge the version PR when you want a release.
 4. The workflow then makes one **release** per bumped mod: a git tag and a GitHub release, carrying that version's changelog entry.
 
-Tags and releases use the mod id, not the package name: `iangregsondev-worktrunk@0.1.0`, never `worktrunk@0.1.0` ([ADR 0004](adr/0004-release-tags-use-mod-ids.md)). `vp run release:tags` (`scripts/release-tags.ts`) lists each mod whose tag isn't on GitHub yet, and the workflow makes those. A mod still at `0.0.0` has never been released and gets no tag (that is why `hello`, a temporary example mod, has none). Once every tag exists, a run of the workflow makes nothing.
+Tags and releases use the mod id, not the package name: `iangregsondev-worktrunk@0.1.0`, never `worktrunk@0.1.0` ([ADR 0004](adr/0004-release-tags-use-mod-ids.md)). `vp run release:tags` (`scripts/release-tags.ts`) lists each mod whose tag isn't on GitHub yet, and the workflow makes those. A mod still at `0.0.0` has never been released and gets no tag. Once every tag exists, a run of the workflow makes nothing.
 
 The CI changeset check skips the version PR: it changes mods but adds no changesets. It skips Dependabot PRs too (see [When you need one](#when-you-need-one)).
 
@@ -302,4 +366,4 @@ The mods take `worktrunk-mailbox` through `catalog:`, and changesets ignores tha
 
 ### Backfill
 
-Changes made before changesets came in are backfilled, so each mod's first release, `0.1.0`, lists the PRs that built it. There is one changeset per past PR per mod, each with a `pr: #N` line at the top of its text, which makes the changelog link that PR and its author. Today that is menus and worktrunk, both from #17. `hello` has no backfill and stays at `0.0.0`.
+Changes made before changesets came in are backfilled, so each mod's first release, `0.1.0`, lists the PRs that built it. There is one changeset per past PR per mod, each with a `pr: #N` line at the top of its text, which makes the changelog link that PR and its author. Today that is menus and worktrunk, both from #17.

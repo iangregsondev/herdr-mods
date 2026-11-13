@@ -42,7 +42,7 @@ Effect v3 code (most examples online, other repos) won't compile here: `Either`,
 ## Git and GitHub — IMPORTANT
 
 - **Never commit or push to `main`.** Branch as `<type>/<issue>-<short-description>` (issue number left out when there's none), created as a worktree with `wt`. Agent-only local branches, `research/<slug>` and `prototype/<slug>` are exempt.
-- Commits and PR titles follow Conventional Commits (`fix(hello): handle no spaces`), with a `Refs #123` footer when there's an issue. The PR title becomes the squash commit on `main`.
+- Commits and PR titles follow Conventional Commits (`fix(worktrunk): handle no spaces`), with a `Refs #123` footer when there's an issue. The PR title becomes the squash commit on `main`.
 - Issues use the `.github/ISSUE_TEMPLATE/` templates, every section filled (`None` where empty). Issues made by skills (`/to-spec`, `/to-tickets`, `/triage`, wayfinder) use the skill's own format.
 - **Feature**, **Task** and **Idea** are issues waiting to be picked up. Feature (issue type) is new behaviour to build, Task (issue type) is a chore (tooling, docs, upkeep), and Idea (`idea` label, since personal repos can't add custom types) is a maybe. When the user names some (`/grill-with-docs #23 #25`), read them as the starting brief and list them in the grill record. `/to-spec` links each from the spec issue, then closes it with a comment naming the spec. An Idea set aside is closed as not planned, with the reason.
 - Write issue and PR bodies to `.scratch/<name>.md` and pass `--body-file`. Write PR bodies with the `pr` skill, and add the template's **Related issues** section (`Closes #123` for completed issues).
