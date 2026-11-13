@@ -11,7 +11,7 @@ vp run worktrunk#dev          # 1. start: the iangregsondev-worktrunk panel appe
 vp run dev:remove worktrunk   # 4. clean up: the files and the panel go
 ```
 
-Swap `worktrunk` for any mod in `apps/`. You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0002](adr/0002-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
+Swap `worktrunk` for any mod in `apps/`. If that mod is already installed in Herdr, step 1 refuses: see [Dev build or installed mod](#dev-build-or-installed-mod). You always type the short mod name; the build and `dev:remove` add the `iangregsondev-` namespace, so Herdr knows the mod as `iangregsondev-<name>` ([ADR 0002](adr/0002-namespace-mod-ids.md)). In code, a mod reads its full id as the constant `__MOD_ID__` (declared in `mod-env.d.ts`): use it for shared-state keys, settings files and layout references.
 
 This works as it is when Herdr runs on the same machine as the repo. If Herdr runs on another machine, set that up first: [Remote Herdr host](#remote-herdr-host).
 
@@ -275,7 +275,7 @@ export default class Main extends View {
 
 Herdr's `AGENTS.md` is the source of truth for these shapes; check them against it. Then:
 
-1. Run `vp install`. To use Effect, run `vp -C apps/<name> add -D effect @effect/vitest` and check the diff says `"catalog:"`.
+1. Add Effect, which mods use for their logic and every call to Herdr's promise API (`.claude/rules/effect.md`): run `vp -C apps/<name> add -D effect @effect/vitest` and check the diff says `"catalog:"`. Then run `vp install`.
 2. Run `vp run <name>#dev` and build it up, test-first for pure logic (`apps/<name>/tests/`).
 3. Write its `RECIPE.md` and `preview.png` (below).
 4. Stop the watch, `vp run dev:remove <name>`, then the steps in "Before you commit", and commit `apps/<name>/` with `mods/iangregsondev-<name>/`.
