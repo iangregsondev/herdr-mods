@@ -236,11 +236,16 @@ describe("buildView: rows", () => {
   test("hollow and not open when no space sits on it; a click opens a new space there", () => {
     const r = row(snapshot(), "/w/api.new");
     expect(r).toMatchObject({ hollow: true, open: false, current: false });
-    expect(r.click).toEqual({ _tag: "New", name: "new", folder: "/w/api.new" });
+    expect(r.click).toEqual({ _tag: "New", name: "new", folder: "/w/api.new", machine: null });
   });
 
   test("a new space on the main checkout is named after the repo", () => {
-    expect(row(snapshot(), "/w/api").click).toEqual({ _tag: "New", name: "api", folder: "/w/api" });
+    expect(row(snapshot(), "/w/api").click).toEqual({
+      _tag: "New",
+      name: "api",
+      folder: "/w/api",
+      machine: null,
+    });
   });
 
   test("a space on it: solid, open, and a click switches to that space", () => {
@@ -263,7 +268,7 @@ describe("buildView: rows", () => {
     expect(row(s, "/w/api").current).toBe(true);
   });
 
-  test("a space on another machine doesn't count as open", () => {
+  test("a space at the same folder on another machine doesn't count as open", () => {
     const s = snapshot({ spaces: [space("s1", "/w/api", { machine: "vps" })] });
     expect(row(s, "/w/api").open).toBe(false);
   });
@@ -280,7 +285,7 @@ describe("buildView: rows", () => {
     const list = read([wt("/w/api", "main", MAIN), wt("/w/api.d", null, ACTIVE)]);
     const r = row(snapshot({ lists: new Map([[API.root, list]]) }), "/w/api.d");
     expect(r.label).toBe("(detached)");
-    expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d" });
+    expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d", machine: null });
   });
 
   test("a New worktree carries a new badge; no other row has one", () => {
@@ -936,6 +941,17 @@ describe("buildView: the same folder on two machines", () => {
     expect(body._tag === "Flat" && body.summary).toEqual(Option.some("2 merged in 2 repos"));
   });
 
+  test("each row's key names its machine, so the same folder's rows never share one", () => {
+    const lists = new Map([
+      [repoKey(API), read([wt("/w/api", "main", MAIN)])],
+      [repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])],
+    ]);
+    expect(both({ lists }).map((r) => r.main[0]?.key)).toEqual([
+      "/w/api",
+      repoKey({ machine: "linux", root: "/w/api" }),
+    ]);
+  });
+
   test("each repo shows its own CI", () => {
     const lists = new Map([
       [repoKey(API), read([wt("/w/api", "main", MAIN)])],
@@ -954,7 +970,68 @@ describe("buildView: the same folder on two machines", () => {
   });
 });
 
+describe("buildView: spaces on other machines", () => {
+  const lists = new Map([
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(API_LINUX), read(API_WORKTREES)],
+  ]);
+  const onLinux = space("s1", "/w/api.new", { machine: "linux" });
+
+  test("a space opens the worktree on its own machine, not the same folder here", () => {
+    const [here, linux] = tree(snapshot({ repos: [API, API_LINUX], lists, spaces: [onLinux] }));
+    const openOf = (r: RepoView | undefined) =>
+      r
+        ? allRows(r)
+            .filter((x) => x.open)
+            .map((x) => x.label)
+        : [];
+    expect([openOf(here), openOf(linux)]).toEqual([[], ["new"]]);
+  });
+
+  test("a worktree with no space opens a new one on its repo's machine", () => {
+    const [, linux] = tree(snapshot({ repos: [API, API_LINUX], lists }));
+    const fight = linux ? allRows(linux).find((x) => x.label === "fight") : undefined;
+    expect(fight?.click).toEqual({
+      _tag: "New",
+      name: "fight",
+      folder: "/w/api.fight",
+      machine: "linux",
+    });
+  });
+
+  test("the Open view lists a worktree whose space is on another machine", () => {
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      spaces: [onLinux],
+      view: { ...DEFAULT_VIEW_STATE, show: "open" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => [r.label, r.open])).toEqual([
+      ["new", true],
+    ]);
+  });
+});
+
 describe("buildView: machine labels", () => {
+  test("with repos on more than one machine, a flat row names its machine before its repo", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      spaces: [space("s1", "/w/api"), space("s2", "/w/api.new", { machine: "linux" })],
+      view: { ...DEFAULT_VIEW_STATE, show: "open" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => r.subline.split(" · ")[0])).toEqual([
+      "linux: api",
+      "this machine: api",
+    ]);
+  });
+
   test("with repos on more than one machine, each repo names its machine", () => {
     const repos = tree(snapshot({ repos: [API, API_LINUX] }));
     expect(repos.map((r) => r.machine)).toEqual([

@@ -204,13 +204,19 @@ export const reposOf = Effect.fn("reposOf")(function* (
 });
 
 /**
- * The repo the folder `folder` is in (the Current repo of the focused folder), through
- * its shared git folder, so a linked worktree names its repo; none outside every repo.
+ * The repo the folder `folder` on `machine` is in (the Current repo of the focused
+ * folder), looked up there through its shared git folder, so a linked worktree names its
+ * repo; none outside every repo.
  */
-export const repoAt = Effect.fn("repoAt")(function* (folder: string) {
+export const repoAt = Effect.fn("repoAt")(function* (
+  folder: string,
+  machine: Machine = THIS_MACHINE,
+) {
   if (folder === "") return Option.none<FoundRepo>();
-  const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-  return currentRepo(run.stdout, THIS_MACHINE);
+  const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder], {
+    on: machine,
+  });
+  return currentRepo(run.stdout, machine);
 });
 
 /** The local and origin branches of `repo`, read on its machine, for the New-or-open dialog. */
@@ -221,9 +227,12 @@ export const gitBranches = Effect.fn("gitBranches")(function* (repo: RepoId) {
   return parseBranches(run.stdout);
 });
 
-/** The branch the folder `folder` is on; none when its HEAD is detached. */
-export const branchAt = Effect.fn("branchAt")(function* (folder: string) {
-  const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+/** The branch the folder `folder` on `machine` is on, read there; none when its HEAD is detached. */
+export const branchAt = Effect.fn("branchAt")(function* (
+  folder: string,
+  machine: Machine = THIS_MACHINE,
+) {
+  const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder], { on: machine });
   return Option.liftPredicate(run.stdout.trim(), (branch) => branch !== "");
 });
 

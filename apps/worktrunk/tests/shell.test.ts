@@ -309,6 +309,29 @@ describe("reads on the repo's machine", () => {
     }),
   );
 
+  it.effect(
+    "the Current repo's lookup runs on the folder's machine, and finds the repo there",
+    () =>
+      Effect.gen(function* () {
+        const { api, calls } = recording({ code: 0, stdout: "/srv/api\t2\n", stderr: "" });
+        const found = yield* repoAt("/srv/api/src", "linux").pipe(Effect.provide(Shell.layer(api)));
+        assert.deepStrictEqual(
+          [machinesOf(calls), found],
+          [["linux"], Option.some({ machine: "linux", root: "/srv/api", count: 2 })],
+        );
+      }),
+  );
+
+  it.effect("the branch lookup runs on the folder's machine", () =>
+    Effect.gen(function* () {
+      const { api, calls } = recording({ code: 0, stdout: "feat/a\n", stderr: "" });
+      const branch = yield* branchAt("/srv/api.feat", "linux").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual([machinesOf(calls), branch], [["linux"], Option.some("feat/a")]);
+    }),
+  );
+
   it.effect("the folder scan runs on the folders' machine, and finds repos there", () =>
     Effect.gen(function* () {
       const settings = {

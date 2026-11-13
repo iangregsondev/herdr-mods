@@ -1,7 +1,7 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
-import { repoKey, type Homes } from "./machines.ts";
+import { repoKey, type Homes, type Located } from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -200,8 +200,11 @@ export const currentRepoOf = (
 
 /** The Current view following focus. */
 export interface Follow {
-  /** The focused folder last looked up ("" for none); none while the view isn't shown. */
-  readonly folder: Option.Option<string>;
+  /**
+   * The focused folder last looked up, on its machine ("" for none); none while the view
+   * isn't shown.
+   */
+  readonly folder: Option.Option<Located>;
   readonly found: CurrentLookup;
 }
 
@@ -209,13 +212,13 @@ export const NOT_FOLLOWING: Follow = { folder: Option.none(), found: Option.none
 
 /**
  * What a render looks up: while the Current view shows (`following`), the focused
- * folder, when it isn't the one last looked up. Herdr renders on every focus change,
- * so this never polls.
+ * folder, when it isn't the one last looked up (the same path on another machine is
+ * another folder). Herdr renders on every focus change, so this never polls.
  */
 export const followFocus = (
   follow: Follow,
-  { following, folder }: { readonly following: boolean; readonly folder: string },
-): { readonly follow: Follow; readonly lookUp: Option.Option<string> } =>
+  { following, folder }: { readonly following: boolean; readonly folder: Located },
+): { readonly follow: Follow; readonly lookUp: Option.Option<Located> } =>
   !following
     ? { follow: { ...follow, folder: Option.none() }, lookUp: Option.none() }
     : Option.contains(follow.folder, folder)
@@ -229,7 +232,7 @@ export const followFocus = (
  */
 export const takeLookup = (
   follow: Follow,
-  folder: string,
+  folder: Located,
   answer: Result.Result<Option.Option<FoundRepo>, string>,
 ): { readonly follow: Follow; readonly refresh: boolean } =>
   Option.contains(follow.folder, folder)

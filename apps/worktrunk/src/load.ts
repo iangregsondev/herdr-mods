@@ -7,7 +7,7 @@ import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
 import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
-import { THIS_MACHINE, type Homes, type Machine, type RepoId } from "./machines.ts";
+import { THIS_MACHINE, type Homes, type Located, type Machine, type RepoId } from "./machines.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
@@ -166,20 +166,32 @@ const scanAll = Effect.fnUntraced(function* (settings: Settings, home: string) {
   return scanned;
 });
 
+/** The repos the folders are in, each looked up on its own machine. */
+const ownersOf = Effect.fnUntraced(function* (places: readonly Located[]) {
+  const machines = Array.from(new Set(places.map((place) => place.machine)));
+  const found = yield* Effect.forEach(machines, (machine) =>
+    reposOf(
+      places.filter((place) => place.machine === machine).map((place) => place.folder),
+      machine,
+    ),
+  );
+  return found.flat();
+});
+
 /**
  * The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
- * repos the open spaces are in (`places`) and the Current repo (`current`), less the
+ * repos the open spaces are in (`places`, each on its machine) and the Current repo (`current`), less the
  * hidden ones. A failure is its one-line reason.
  */
 export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
   home: string,
-  places: readonly string[],
+  places: readonly Located[],
   lastScan: Option.Option<Scanned>,
   current: Option.Option<FoundRepo> = Option.none(),
 ) {
   const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanAll(settings, home);
-  const owners = yield* reposOf(places);
+  const owners = yield* ownersOf(places);
   const repos = reposFrom(
     scanned.repos,
     [...owners, ...Option.toArray(current)],
@@ -191,11 +203,11 @@ export const findRepos = Effect.fn("findRepos")(function* (
 }, asReason);
 
 /**
- * The Current repo: the repo `folder` (the focused folder; empty for none) is in, if any,
- * or the one-line reason the lookup failed.
+ * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
+ * empty for none) is in, if any, or the one-line reason the lookup failed.
  */
-export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (folder: string) {
-  return yield* repoAt(folder);
+export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (focused: Located) {
+  return yield* repoAt(focused.folder, focused.machine);
 }, asReason);
 
 /**

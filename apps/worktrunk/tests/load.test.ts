@@ -30,6 +30,9 @@ import { DEFAULT_SETTINGS, parseSettings, serializeSettings } from "../src/setti
 /** A repo on this machine. */
 const here = (root: string) => ({ machine: THIS_MACHINE, root });
 
+/** A folder on this machine. */
+const local = (folder: string) => ({ machine: THIS_MACHINE, folder });
+
 /** The folder picker for fakes of tests that never open it. */
 const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
@@ -305,7 +308,7 @@ describe("findRepos", () => {
   it.effect("scans the group folders and adds the open spaces' repos", () =>
     Effect.gen(function* () {
       const { api } = scripts({ scan: "/w\t/w/zed\t1\n", owners: "/tmp/api\t2\n" });
-      const found = yield* findRepos(settings, "/h", ["/tmp/api/src"], Option.none()).pipe(
+      const found = yield* findRepos(settings, "/h", [local("/tmp/api/src")], Option.none()).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
@@ -329,7 +332,7 @@ describe("findRepos", () => {
     Effect.gen(function* () {
       const { api } = scripts({ scan: "/w\t/w/zed\t1\n/w\t/w/old\t1\n", owners: "/tmp/api\t2\n" });
       const hiding = { ...settings, hidden: [here("/w/old"), here("/tmp/api")] };
-      const found = yield* findRepos(hiding, "/h", ["/tmp/api"], Option.none()).pipe(
+      const found = yield* findRepos(hiding, "/h", [local("/tmp/api")], Option.none()).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
@@ -347,7 +350,7 @@ describe("findRepos", () => {
         missing: [],
         homes: new Map([[THIS_MACHINE, "/h"]]),
       };
-      const found = yield* findRepos(settings, "/h", ["/tmp"], Option.some(last)).pipe(
+      const found = yield* findRepos(settings, "/h", [local("/tmp")], Option.some(last)).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
@@ -409,7 +412,9 @@ describe("findRepos across machines", () => {
    * A Herdr API with a home and a folder scan answer per machine (`null`: this machine),
    * recording each run as `[machine, what, args]`.
    */
-  const machines = (answers: ReadonlyMap<string | null, { home: string; scan: string }>) => {
+  const machines = (
+    answers: ReadonlyMap<string | null, { home: string; scan: string; owners?: string }>,
+  ) => {
     const ran: unknown[] = [];
     const api: ExecApi = {
       hc: noHc,
@@ -424,7 +429,8 @@ describe("findRepos across machines", () => {
               ? "scan"
               : "owners";
         ran.push([on, what, args.slice(3)]);
-        const stdout = what === "home" ? answer?.home : what === "scan" ? answer?.scan : "";
+        const stdout =
+          what === "home" ? answer?.home : what === "scan" ? answer?.scan : answer?.owners;
         return Promise.resolve({ code: 0, stdout: stdout ?? "", stderr: "" });
       },
     };
@@ -465,13 +471,44 @@ describe("findRepos across machines", () => {
       );
     }),
   );
+
+  it.effect("finds each open space's repo on the space's machine", () =>
+    Effect.gen(function* () {
+      const { api, ran } = machines(
+        new Map([
+          [THIS_MACHINE, { home: "/Users/me", scan: "", owners: "/Users/me/tool\t1\n" }],
+          ["linux", { home: "/srv", scan: "", owners: "/srv/api\t2\n" }],
+        ]),
+      );
+      const places = [local("/Users/me/tool/src"), { machine: "linux", folder: "/srv/api.feat" }];
+      const found = yield* findRepos(DEFAULT_SETTINGS, "/Users/me", places, Option.none()).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        Result.map(found, (f) => f.repos),
+        Result.succeed([
+          { machine: "linux", root: "/srv/api", count: 2, group: "Other" },
+          { machine: THIS_MACHINE, root: "/Users/me/tool", count: 1, group: "Other" },
+        ]),
+      );
+      assert.deepStrictEqual(
+        ran.filter((run) => Array.isArray(run) && run[1] === "owners"),
+        [
+          [THIS_MACHINE, "owners", ["/Users/me/tool/src"]],
+          ["linux", "owners", ["/srv/api.feat"]],
+        ],
+      );
+    }),
+  );
 });
 
 describe("lookUpCurrent", () => {
   it.effect("the repo the focused folder is in", () =>
     Effect.gen(function* () {
       const { api } = scripts({ owners: "/r/api\t2\n" });
-      const found = yield* lookUpCurrent("/r/api.feat").pipe(Effect.provide(Shell.layer(api)));
+      const found = yield* lookUpCurrent({ machine: THIS_MACHINE, folder: "/r/api.feat" }).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(
         found,
         Result.succeed(Option.some({ machine: THIS_MACHINE, root: "/r/api", count: 2 })),
@@ -479,10 +516,25 @@ describe("lookUpCurrent", () => {
     }),
   );
 
+  it.effect("a folder on another machine is in a repo on that machine", () =>
+    Effect.gen(function* () {
+      const { api } = scripts({ owners: "/srv/api\t2\n" });
+      const found = yield* lookUpCurrent({ machine: "linux", folder: "/srv/api.feat" }).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        found,
+        Result.succeed(Option.some({ machine: "linux", root: "/srv/api", count: 2 })),
+      );
+    }),
+  );
+
   it.effect("a lookup that fails is its one-line reason", () =>
     Effect.gen(function* () {
       const { api } = scripts({});
-      const found = yield* lookUpCurrent("/r/api").pipe(Effect.provide(Shell.layer(api)));
+      const found = yield* lookUpCurrent({ machine: THIS_MACHINE, folder: "/r/api" }).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(found, Result.fail("no owners"));
     }),
   );

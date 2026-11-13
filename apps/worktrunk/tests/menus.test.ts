@@ -43,7 +43,12 @@ const MAIN: WorktreeState = { _tag: "Main" };
 const ACTIVE: WorktreeState = { _tag: "Active" };
 const MERGED: WorktreeState = { _tag: "Merged", reason: Option.none() };
 
-const CLICK: Click = { _tag: "New", name: "feat/x", folder: "/r/app.feat-x" };
+const CLICK: Click = {
+  _tag: "New",
+  name: "feat/x",
+  folder: "/r/app.feat-x",
+  machine: THIS_MACHINE,
+};
 const FEAT = wt("/r/app.feat-x", "feat/x", ACTIVE);
 
 const labels = (items: readonly { readonly label: string }[]) => items.map((i) => i.label);
@@ -243,11 +248,12 @@ describe("findWorktree", () => {
     );
   });
 
-  test("a list kept for another machine names that machine and the bare folder", () => {
-    const linux = new Map([
+  test("a row key names the machine: the same folder on another machine is another worktree", () => {
+    const both = new Map([
+      [repoKey({ machine: THIS_MACHINE, root: "/r/lib" }), list([wt("/r/lib.y", "y", ACTIVE)])],
       [repoKey({ machine: "linux", root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
     ]);
-    expect(findWorktree(linux, "/r/lib.y")).toEqual(
+    expect(findWorktree(both, repoKey({ machine: "linux", root: "/r/lib.y" }))).toEqual(
       Option.some({ machine: "linux", root: "/r/lib", worktree: wt("/r/lib.y", "y", MERGED) }),
     );
   });
@@ -276,7 +282,8 @@ describe("findWorktree", () => {
       [repoKey({ machine: THIS_MACHINE, root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
       [repoKey({ machine: "linux", root: "/r/lib" }), list([wt("/r/lib.z", "z", MERGED)])],
     ]);
-    const batches = Option.map(cleanupFor(two, ["/r/lib.y", "/r/lib.z"]), (a) => a.batches);
+    const keys = ["/r/lib.y", repoKey({ machine: "linux", root: "/r/lib.z" })];
+    const batches = Option.map(cleanupFor(two, keys), (a) => a.batches);
     expect(batches).toEqual(
       Option.some([
         { main: "/r/lib", branches: ["y"] },
