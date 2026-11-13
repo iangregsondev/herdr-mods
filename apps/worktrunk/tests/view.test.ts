@@ -486,14 +486,14 @@ describe("buildView: views", () => {
   const show = (view: Snapshot["view"]["show"], more: Partial<Snapshot> = {}) =>
     both({ view: { ...DEFAULT_VIEW_STATE, only: false, show: view }, ...more });
 
-  test("the view picker lists every view, the selected one marked", () => {
+  test("the view picker lists every view, Current first, the selected one marked", () => {
     expect(buildView(show("active")).views).toEqual([
+      { show: "current", label: "Current", selected: false },
       { show: "repos", label: "Repos", selected: false },
       { show: "merged", label: "Clean up", selected: false },
       { show: "active", label: "Active", selected: true },
       { show: "conflict", label: "Conflicts", selected: false },
       { show: "open", label: "Open", selected: false },
-      { show: "current", label: "Current", selected: false },
     ]);
   });
 

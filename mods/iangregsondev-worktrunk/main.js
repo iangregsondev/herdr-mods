@@ -11428,12 +11428,12 @@ const focusedFolder = (focus, places) => orElse(fromNullishOr(focus?.cwd || null
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
 const SHOWS = [
+	["current", "Current"],
 	["repos", "Repos"],
 	["merged", "Clean up"],
 	["active", "Active"],
 	["conflict", "Conflicts"],
-	["open", "Open"],
-	["current", "Current"]
+	["open", "Open"]
 ];
 const DEFAULT_VIEW_STATE = {
 	group: none(),
