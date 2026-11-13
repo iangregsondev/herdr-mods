@@ -188,6 +188,15 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.some({ _tag: "Settings" });
     case "Focus":
       return Option.some({ _tag: "Focus" });
+    case "PickMachine":
+      return f.machine === null
+        ? Option.some({ _tag: "PickMachine", machine: null })
+        : Option.map(readMachineFilter(f.machine), (name): Action => ({
+            _tag: "PickMachine",
+            machine: { name },
+          }));
+    case "PickGroup":
+      return Option.map(textOrNull(f.group), (group): Action => ({ _tag: "PickGroup", group }));
 
     default:
       return Option.none();
@@ -212,7 +221,12 @@ export const overlayOf = (props: unknown): Option.Option<string> => text(fields(
 
 const readMenuItem = (value: unknown): Option.Option<MenuItem> => {
   const f = fields(value);
-  return Option.all({ label: text(f.label), danger: bool(f.danger), action: readAction(f.action) });
+  return Option.all({
+    label: text(f.label),
+    danger: bool(f.danger),
+    checked: bool(f.checked),
+    action: readAction(f.action),
+  });
 };
 
 /** A menu overlay's props (a type, not an interface, so it passes as `openOverlay`'s props). */

@@ -40,7 +40,7 @@ export const SHOWS: readonly (readonly [Show, string])[] = [
 
 /** How the list is sliced; remembered across restarts. */
 export interface ViewState {
-  /** The selected group chip; none for All. */
+  /** The group filter: the one group in view; none for All. */
   readonly group: Option.Option<string>;
   readonly show: Show;
   /** "With worktrees": the Repos view hides repos with only a main checkout. */
@@ -192,6 +192,7 @@ export interface ShowOption {
   readonly selected: boolean;
 }
 
+/** One choice in the group filter. */
 export interface Chip {
   readonly label: string;
   /** The group it selects; none for All. */
@@ -212,7 +213,7 @@ export interface PanelView {
   readonly loading: boolean;
   /** The machine filter: All, then each machine. */
   readonly machineFilter: readonly MachineChoice[];
-  /** All, then one per group. */
+  /** The group filter: All, then one per group. */
   readonly chips: readonly Chip[];
   /** The view picker. */
   readonly views: readonly ShowOption[];
@@ -487,7 +488,7 @@ const emptyText = (snapshot: Snapshot): string => {
   return "No repos found in your group folders.";
 };
 
-/** Group names in chip order: Settings order, then unknown names sorted, then Other. */
+/** Group names in the group filter's order: Settings order, then unknown names sorted, then Other. */
 const orderGroups = (names: readonly string[], settings: Settings): readonly string[] => {
   const have = new Set(names);
   const order = settings.folders.map((folder) => folder.name);
@@ -503,12 +504,12 @@ const orderGroups = (names: readonly string[], settings: Settings): readonly str
   );
 };
 
-/** What decides which repos a group chip lets through. */
+/** What decides which repos the group filter lets through. */
 type Scope = Pick<Snapshot, "repos" | "discovered" | "settings" | "view">;
 
 /**
  * The selected group. A saved group no repo is in any more falls back to All, but only
- * once the repos are known, so a saved chip never flashes back to All at start.
+ * once the repos are known, so a saved group never flashes back to All at start.
  */
 const selectedGroup = ({ repos, discovered, view }: Scope): Option.Option<string> =>
   Option.filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
@@ -539,7 +540,7 @@ const reposOnMachine = (scope: Scope): readonly Repo[] =>
     onSome: (machine) => scope.repos.filter((repo) => repo.machine === machine),
   });
 
-/** The repos the machine filter and the selected group chip let through, in order. */
+/** The repos the machine filter and the group filter let through, in order. */
 export const reposInGroup = (scope: Scope): readonly Repo[] => {
   const repos = reposOnMachine(scope);
   return Option.match(selectedGroup({ ...scope, repos }), {
@@ -549,7 +550,7 @@ export const reposInGroup = (scope: Scope): readonly Repo[] => {
 };
 
 /**
- * The repos worth reading: the selected chip's; in the Current view the Current repo
+ * The repos worth reading: the selected group's; in the Current view the Current repo
  * alone, or every repo on the filtered machines (for the Open list) when the focused
  * folder is in none. None on a machine that can't be read now.
  */
@@ -606,7 +607,7 @@ const treeBody = (snapshot: Snapshot, places: readonly Place[]): Body => {
           l.worktrees.some((w) => matches(query, repo, w)),
         ),
     );
-  // Every chip has repos, so only the search or the toggle can leave the tree empty.
+  // Every group offered has repos, so only the search or the toggle can leave the tree empty.
   if (repos.length === 0) {
     return {
       _tag: "Message",
@@ -663,7 +664,7 @@ const flatBody = (
 };
 
 /**
- * The Current repo as one expanded repo of the tree, whatever the group chip. Outside
+ * The Current repo as one expanded repo of the tree, whatever the group filter. Outside
  * every repo: a line saying so, over the Open view's list across all repos.
  */
 const currentBody = (snapshot: Snapshot, places: readonly Place[]): Body => {
