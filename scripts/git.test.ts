@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
 import { Git } from "./git.ts";
-import { git, tempDir, writeFile } from "./test-support.ts";
+import { commitFiles, git, tempDir, writeFile } from "./test-support.ts";
 
 /** A new repo on `main` with one commit holding `README.md`. */
 const repoWithCommit = (): string => {
@@ -12,13 +12,6 @@ const repoWithCommit = (): string => {
   git(repo, ["add", "."]);
   git(repo, ["commit", "-q", "-m", "first"]);
   return repo;
-};
-
-/** Writes `files` (path to content) in `repo` and commits them. */
-const commitFiles = (repo: string, files: Record<string, string>): void => {
-  Object.entries(files).forEach(([path, content]) => writeFile(repo, path, content));
-  git(repo, ["add", "-A"]);
-  git(repo, ["commit", "-q", "-m", "change"]);
 };
 
 describe("Git.changedFiles, live layer", () => {

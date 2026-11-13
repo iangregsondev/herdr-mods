@@ -2,28 +2,19 @@ import { join, relative } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import {
   type ShResult,
+  type VpPlace,
   fakeLoggingBin,
   loggedLines,
   runSh,
   tempDir,
   toolPath,
+  vpEnv,
+  vpFolder,
   writeFile,
 } from "./test-support.ts";
 
 const repoRoot = join(import.meta.dirname, "..");
 const hook = join(repoRoot, ".claude", "hooks", "format-edited.sh");
-
-/** Where a fake `vp` can sit: on PATH, or in one of the Vite+ bin folders. */
-type VpPlace = "path" | "vpHome" | "home" | "xdg";
-
-/** The folder for `place` under `root`, given the env `setup` builds. */
-const vpFolder = (root: string, place: VpPlace): string =>
-  ({
-    path: join(root, "bin"),
-    vpHome: join(root, "vp-home", "bin"),
-    home: join(root, "home", ".vite-plus", "bin"),
-    xdg: join(root, "xdg", "vite-plus", "bin"),
-  })[place];
 
 interface Setup {
   project: string;
@@ -35,8 +26,8 @@ interface Setup {
 /**
  * A project folder and a PATH of only `tools`. A fake `vp` that logs its args, prints some
  * chatter and exits with `vpExit` sits in `vpIn` (default: on PATH; none when null). HOME,
- * VP_HOME and XDG_DATA_HOME all point under the temp folder, so the machine's real vp is
- * never found. With `relative`, the hook runs by a path relative to the repo root.
+ * VP_HOME and XDG_DATA_HOME all point under the temp folder (`vpEnv`), so the machine's
+ * real vp is never found. With `relative`, the hook runs by a path relative to the repo root.
  */
 function setup(
   tools: readonly string[],
@@ -64,9 +55,7 @@ function setup(
         stdin,
         env: {
           PATH: bin,
-          HOME: join(root, "home"),
-          VP_HOME: join(root, "vp-home"),
-          XDG_DATA_HOME: join(root, "xdg"),
+          ...vpEnv(root),
           CLAUDE_PROJECT_DIR: project,
         },
       }),
