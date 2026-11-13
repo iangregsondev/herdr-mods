@@ -34,7 +34,7 @@ import { parseList } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 import { Shell, type ExecApi } from "../src/shell.ts";
-import type { MachineLists } from "../src/reads.ts";
+import { BUSY, type MachineLists } from "../src/reads.ts";
 import {
   DEFAULT_SETTINGS,
   parseSettings,
@@ -992,6 +992,19 @@ describe("lookUpCurrent", () => {
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(found, Result.fail("no owners"));
+    }),
+  );
+
+  it.effect("a lookup the machine refuses for full exec slots is busy", () =>
+    Effect.gen(function* () {
+      const api: ExecApi = {
+        hc: noHc,
+        exec: () => Promise.reject(new Error("`herdr.exec`: 16 execs are running already")),
+      };
+      const found = yield* lookUpCurrent({ machine: "linux", folder: "/srv/api" }).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(found, BUSY);
     }),
   );
 });

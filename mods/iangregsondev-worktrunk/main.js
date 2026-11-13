@@ -11045,6 +11045,209 @@ const groupMenu = (chips) => chips.map((chip) => ({
 */
 const filterButton = (items) => (items.find((i) => i.checked) ?? items[0])?.label ?? "";
 
+// src/reads.ts
+/** A repo's list after a read: the new worktrees, or the old ones with the read's error. */
+const foldList = (old, read) => match$4(read, {
+	onSuccess: (worktrees) => ({
+		_tag: "Read",
+		worktrees,
+		error: none()
+	}),
+	onFailure: (error) => ({
+		_tag: "Read",
+		worktrees: match$5(old, {
+			onNone: () => [],
+			onSome: (list) => list.worktrees
+		}),
+		error: some(error)
+	})
+});
+/** What the panel keeps after `machine`'s batched list read answers. */
+const keepLists = (kept, machine, answer) => match$4(answer, {
+	onFailure: (status) => ({
+		...kept,
+		machines: new Map([...kept.machines, [machine, status]])
+	}),
+	onSuccess: (read) => ({
+		...kept,
+		lists: new Map([...kept.lists, ...Array.from(read, ([key, list]) => [key, foldList(fromNullishOr(kept.lists.get(key)), list)])])
+	})
+});
+/** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
+const foldCi = (old, read) => match$4(read, {
+	onSuccess: (worktrees) => ({
+		byPath: new Map(worktrees.map((w) => [w.path, w.ci])),
+		error: none()
+	}),
+	onFailure: (error) => ({
+		byPath: match$5(old, {
+			onNone: () => /* @__PURE__ */ new Map(),
+			onSome: (ci) => ci.byPath
+		}),
+		error: some(error)
+	})
+});
+/**
+* Whether the group folders are scanned again: always the first time, when `forced`,
+* when the settings change what to scan (`key`), and once the last scan is older than
+* `every` ms.
+*/
+const scanDue = (last, now) => match$5(last, {
+	onNone: () => true,
+	onSome: (scan) => now.forced || now.key !== scan.key || now.now - scan.at > now.every
+});
+/**
+* Whether a refresh reads CI too: when there is no last CI read (`last`, when it started,
+* in ms; none before the first, or once something asks for fresh CI), and once the last
+* is older than `every` ms.
+*/
+const ciDue = (last, { now, every }) => match$5(last, {
+	onNone: () => true,
+	onSome: (at) => now - at > every
+});
+const IDLE = { _tag: "Idle" };
+/**
+* Asking for a refresh: an idle panel starts it; a loading one keeps a single refresh to
+* run after, which scans if any ask did.
+*/
+const askRefresh = (loader, ask) => loader._tag === "Idle" ? {
+	loader: {
+		_tag: "Loading",
+		again: none()
+	},
+	start: some(ask)
+} : {
+	loader: {
+		_tag: "Loading",
+		again: some({ scan: ask.scan || exists(loader.again, (again) => again.scan) })
+	},
+	start: none()
+};
+/** A refresh finished: idle again, with the refresh asked for meanwhile, if any. */
+const refreshDone = (loader) => ({
+	loader: IDLE,
+	again: loader._tag === "Loading" ? loader.again : none()
+});
+const NO_READS = {
+	started: false,
+	wasHidden: false,
+	group: ""
+};
+/**
+* What a render starts: `Start` reads everything when the panel first shows, or shows
+* again after being hidden; `NewGroup` reads the repos of a newly picked group chip, CI
+* included; `None` otherwise. Nothing is read while hidden.
+*/
+const onRender = (reads, now) => {
+	const wasHidden = !now.shown;
+	if (now.shown && (!reads.started || reads.wasHidden)) return {
+		reads: {
+			started: true,
+			wasHidden,
+			group: now.group
+		},
+		step: "Start"
+	};
+	if (now.shown && now.group !== reads.group) return {
+		reads: {
+			...reads,
+			wasHidden,
+			group: now.group
+		},
+		step: "NewGroup"
+	};
+	return {
+		reads: {
+			...reads,
+			wasHidden
+		},
+		step: "None"
+	};
+};
+/**
+* The Current repo from its lookup: the listed repo (same machine and folder), or one the
+* panel doesn't list (a hidden one, say), grouped by the group folders.
+*/
+const currentRepoOf = (found, repos, folders, homes) => match$5(found, {
+	onNone: () => ({ _tag: "Looking" }),
+	onSome: match$4({
+		onFailure: (reason) => ({
+			_tag: "Failed",
+			reason
+		}),
+		onSuccess: match$5({
+			onNone: () => ({ _tag: "NotInRepo" }),
+			onSome: (repo) => ({
+				_tag: "InRepo",
+				repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
+					...repo,
+					group: groupOf(repo, folders, homes)
+				}
+			})
+		})
+	})
+});
+const NOT_FOLLOWING = {
+	folder: none(),
+	found: none()
+};
+/**
+* What a render looks up: while the Current view shows (`following`), the focused
+* folder, when it isn't the one last looked up (the same path on another machine is
+* another folder). Herdr renders on every focus change, so this never polls.
+*/
+const followFocus = (follow, { following, folder }) => !following ? {
+	follow: {
+		...follow,
+		folder: none()
+	},
+	lookUp: none()
+} : contains(follow.folder, folder) ? {
+	follow,
+	lookUp: none()
+} : {
+	follow: {
+		...follow,
+		folder: some(folder)
+	},
+	lookUp: some(folder)
+};
+/**
+* A lookup the machine's Herdr refused to start: every exec slot was taken. It answers
+* nothing about the folder.
+*/
+const BUSY = { _tag: "Busy" };
+/**
+* A lookup's answer for `folder`: kept, unless the focus moved on since (an answer for
+* an older focus is dropped). `refresh` when it names another repo than before, or is
+* the first answer, so the lists read the new Current repo. A `BUSY` lookup keeps the
+* last answer and forgets the folder, so the next render looks it up again.
+*/
+const takeLookup = (follow, folder, answer) => !contains(follow.folder, folder) ? {
+	follow,
+	refresh: false
+} : answer._tag === "Busy" ? {
+	follow: {
+		...follow,
+		folder: none()
+	},
+	refresh: false
+} : {
+	follow: {
+		...follow,
+		found: some(answer)
+	},
+	refresh: match$5(follow.found, {
+		onNone: () => true,
+		onSome: (before) => keyOf(before) !== keyOf(answer)
+	})
+};
+/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
+const keyOf = (answer) => match$4(answer, {
+	onFailure: () => void 0,
+	onSuccess: (found) => getOrUndefined$1(map$3(found, repoKey))
+});
+
 // src/sync.ts
 const parseRecord$1 = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
 	layout: text(at(json, "layout")),
@@ -11564,11 +11767,12 @@ const foundOf = (settings, home, places, searches, current = none()) => {
 };
 /**
 * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
-* empty for none) is in, if any, or the one-line reason the lookup failed.
+* empty for none) is in, if any, the one-line reason the lookup failed, or `BUSY` when
+* the machine had no free exec slot to run it.
 */
 const lookUpCurrent = fn("lookUpCurrent")(function* (focused) {
 	return yield* repoAt(focused.folder, focused.machine);
-}, asReason);
+}, (effect) => effect.pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) ? BUSY : fail$2(failureText(failed))))));
 /**
 * What the worktree dialog in `mode` opens with, for the repo `at` (a folder on a
 * machine; an empty folder for none) is in: that repo and the branch the folder is on,
@@ -11855,197 +12059,6 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 	SettingsUnreadable: (failed) => succeed(fail$2(unreadableText(files.name, failed))),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
-
-// src/reads.ts
-/** A repo's list after a read: the new worktrees, or the old ones with the read's error. */
-const foldList = (old, read) => match$4(read, {
-	onSuccess: (worktrees) => ({
-		_tag: "Read",
-		worktrees,
-		error: none()
-	}),
-	onFailure: (error) => ({
-		_tag: "Read",
-		worktrees: match$5(old, {
-			onNone: () => [],
-			onSome: (list) => list.worktrees
-		}),
-		error: some(error)
-	})
-});
-/** What the panel keeps after `machine`'s batched list read answers. */
-const keepLists = (kept, machine, answer) => match$4(answer, {
-	onFailure: (status) => ({
-		...kept,
-		machines: new Map([...kept.machines, [machine, status]])
-	}),
-	onSuccess: (read) => ({
-		...kept,
-		lists: new Map([...kept.lists, ...Array.from(read, ([key, list]) => [key, foldList(fromNullishOr(kept.lists.get(key)), list)])])
-	})
-});
-/** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
-const foldCi = (old, read) => match$4(read, {
-	onSuccess: (worktrees) => ({
-		byPath: new Map(worktrees.map((w) => [w.path, w.ci])),
-		error: none()
-	}),
-	onFailure: (error) => ({
-		byPath: match$5(old, {
-			onNone: () => /* @__PURE__ */ new Map(),
-			onSome: (ci) => ci.byPath
-		}),
-		error: some(error)
-	})
-});
-/**
-* Whether the group folders are scanned again: always the first time, when `forced`,
-* when the settings change what to scan (`key`), and once the last scan is older than
-* `every` ms.
-*/
-const scanDue = (last, now) => match$5(last, {
-	onNone: () => true,
-	onSome: (scan) => now.forced || now.key !== scan.key || now.now - scan.at > now.every
-});
-/**
-* Whether a refresh reads CI too: when there is no last CI read (`last`, when it started,
-* in ms; none before the first, or once something asks for fresh CI), and once the last
-* is older than `every` ms.
-*/
-const ciDue = (last, { now, every }) => match$5(last, {
-	onNone: () => true,
-	onSome: (at) => now - at > every
-});
-const IDLE = { _tag: "Idle" };
-/**
-* Asking for a refresh: an idle panel starts it; a loading one keeps a single refresh to
-* run after, which scans if any ask did.
-*/
-const askRefresh = (loader, ask) => loader._tag === "Idle" ? {
-	loader: {
-		_tag: "Loading",
-		again: none()
-	},
-	start: some(ask)
-} : {
-	loader: {
-		_tag: "Loading",
-		again: some({ scan: ask.scan || exists(loader.again, (again) => again.scan) })
-	},
-	start: none()
-};
-/** A refresh finished: idle again, with the refresh asked for meanwhile, if any. */
-const refreshDone = (loader) => ({
-	loader: IDLE,
-	again: loader._tag === "Loading" ? loader.again : none()
-});
-const NO_READS = {
-	started: false,
-	wasHidden: false,
-	group: ""
-};
-/**
-* What a render starts: `Start` reads everything when the panel first shows, or shows
-* again after being hidden; `NewGroup` reads the repos of a newly picked group chip, CI
-* included; `None` otherwise. Nothing is read while hidden.
-*/
-const onRender = (reads, now) => {
-	const wasHidden = !now.shown;
-	if (now.shown && (!reads.started || reads.wasHidden)) return {
-		reads: {
-			started: true,
-			wasHidden,
-			group: now.group
-		},
-		step: "Start"
-	};
-	if (now.shown && now.group !== reads.group) return {
-		reads: {
-			...reads,
-			wasHidden,
-			group: now.group
-		},
-		step: "NewGroup"
-	};
-	return {
-		reads: {
-			...reads,
-			wasHidden
-		},
-		step: "None"
-	};
-};
-/**
-* The Current repo from its lookup: the listed repo (same machine and folder), or one the
-* panel doesn't list (a hidden one, say), grouped by the group folders.
-*/
-const currentRepoOf = (found, repos, folders, homes) => match$5(found, {
-	onNone: () => ({ _tag: "Looking" }),
-	onSome: match$4({
-		onFailure: (reason) => ({
-			_tag: "Failed",
-			reason
-		}),
-		onSuccess: match$5({
-			onNone: () => ({ _tag: "NotInRepo" }),
-			onSome: (repo) => ({
-				_tag: "InRepo",
-				repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
-					...repo,
-					group: groupOf(repo, folders, homes)
-				}
-			})
-		})
-	})
-});
-const NOT_FOLLOWING = {
-	folder: none(),
-	found: none()
-};
-/**
-* What a render looks up: while the Current view shows (`following`), the focused
-* folder, when it isn't the one last looked up (the same path on another machine is
-* another folder). Herdr renders on every focus change, so this never polls.
-*/
-const followFocus = (follow, { following, folder }) => !following ? {
-	follow: {
-		...follow,
-		folder: none()
-	},
-	lookUp: none()
-} : contains(follow.folder, folder) ? {
-	follow,
-	lookUp: none()
-} : {
-	follow: {
-		...follow,
-		folder: some(folder)
-	},
-	lookUp: some(folder)
-};
-/**
-* A lookup's answer for `folder`: kept, unless the focus moved on since (an answer for
-* an older focus is dropped). `refresh` when it names another repo than before, or is
-* the first answer, so the lists read the new Current repo.
-*/
-const takeLookup = (follow, folder, answer) => contains(follow.folder, folder) ? {
-	follow: {
-		...follow,
-		found: some(answer)
-	},
-	refresh: match$5(follow.found, {
-		onNone: () => true,
-		onSome: (before) => keyOf(before) !== keyOf(answer)
-	})
-} : {
-	follow,
-	refresh: false
-};
-/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
-const keyOf = (answer) => match$4(answer, {
-	onFailure: () => void 0,
-	onSuccess: (found) => getOrUndefined$1(map$3(found, repoKey))
-});
 
 // src/spaces.ts
 /**

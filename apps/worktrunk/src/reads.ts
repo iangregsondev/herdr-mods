@@ -265,24 +265,36 @@ export const followFocus = (
       : { follow: { ...follow, folder: Option.some(folder) }, lookUp: Option.some(folder) };
 
 /**
+ * A lookup the machine's Herdr refused to start: every exec slot was taken. It answers
+ * nothing about the folder.
+ */
+export const BUSY = { _tag: "Busy" } as const;
+
+/** What a Current lookup came back with: an answer, or `BUSY`. */
+export type LookupAnswer = Result.Result<Option.Option<FoundRepo>, string> | typeof BUSY;
+
+/**
  * A lookup's answer for `folder`: kept, unless the focus moved on since (an answer for
  * an older focus is dropped). `refresh` when it names another repo than before, or is
- * the first answer, so the lists read the new Current repo.
+ * the first answer, so the lists read the new Current repo. A `BUSY` lookup keeps the
+ * last answer and forgets the folder, so the next render looks it up again.
  */
 export const takeLookup = (
   follow: Follow,
   folder: Located,
-  answer: Result.Result<Option.Option<FoundRepo>, string>,
+  answer: LookupAnswer,
 ): { readonly follow: Follow; readonly refresh: boolean } =>
-  Option.contains(follow.folder, folder)
-    ? {
-        follow: { ...follow, found: Option.some(answer) },
-        refresh: Option.match(follow.found, {
-          onNone: () => true,
-          onSome: (before) => keyOf(before) !== keyOf(answer),
-        }),
-      }
-    : { follow, refresh: false };
+  !Option.contains(follow.folder, folder)
+    ? { follow, refresh: false }
+    : answer._tag === "Busy"
+      ? { follow: { ...follow, folder: Option.none() }, refresh: false }
+      : {
+          follow: { ...follow, found: Option.some(answer) },
+          refresh: Option.match(follow.found, {
+            onNone: () => true,
+            onSome: (before) => keyOf(before) !== keyOf(answer),
+          }),
+        };
 
 /** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
 const keyOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>

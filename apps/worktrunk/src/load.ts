@@ -32,7 +32,7 @@ import {
   type Settings,
 } from "./settings.ts";
 import { reposFrom, withoutHidden, type FoundRepo, type Repo, type Scan } from "./repos.ts";
-import type { MachineLists } from "./reads.ts";
+import { BUSY, type LookupAnswer, type MachineLists } from "./reads.ts";
 import { syncNotice, type Notice } from "./sync.ts";
 import {
   branchAt,
@@ -380,11 +380,22 @@ export const foundOf = (
 
 /**
  * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
- * empty for none) is in, if any, or the one-line reason the lookup failed.
+ * empty for none) is in, if any, the one-line reason the lookup failed, or `BUSY` when
+ * the machine had no free exec slot to run it.
  */
-export const lookUpCurrent = Effect.fn("lookUpCurrent")(function* (focused: Located) {
-  return yield* repoAt(focused.folder, focused.machine);
-}, asReason);
+export const lookUpCurrent = Effect.fn("lookUpCurrent")(
+  function* (focused: Located) {
+    return yield* repoAt(focused.folder, focused.machine);
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.map((found): LookupAnswer => Result.succeed(found)),
+      // A machine with every exec slot taken is busy: the lookup answers nothing yet.
+      Effect.catch((failed) =>
+        Effect.succeed<LookupAnswer>(slotsFull(failed) ? BUSY : Result.fail(failureText(failed))),
+      ),
+    ),
+);
 
 /**
  * What the worktree dialog in `mode` opens with, for the repo `at` (a folder on a
