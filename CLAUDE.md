@@ -12,7 +12,8 @@ Mods and layouts for the Herdr app (GUI, `~/.config/herdr-app`). Not the Herdr T
 - Installed mods carry the `iangregsondev-` namespace: `apps/<name>/` builds to `mods/iangregsondev-<name>/` (ADR 0002). Commands take the short name. In mod code, use the build constant `__MOD_ID__` wherever the mod names itself (shared-state keys, settings file, layouts).
 - To see a mod running, use the dev loop: `vp run <name>#dev` builds into the Herdr app, shows its panel and reloads on save; `vp run dev:remove <name>` (watch stopped first) removes the files and the panel. Both act on the dev target: this machine's Herdr, or a remote Herdr host over SSH when `herdr-dev.json` says `remote`. Run `herdr-app` as `vp run herdr <args…>` in both modes, and prove a change with `vp run herdr status` and `vp run herdr shot <file> --crop x,y,w,h`. Steps and never-dos: `.claude/rules/dev-loop.md`; human guide and remote setup: `docs/develop.md`. Never symlink a mod into Herdr: it doesn't hot-reload.
 - Every mod ships `assets/RECIPE.md` and `assets/preview.png` (`.claude/rules/mod-sharing.md`).
-- Every change to a mod or to `packages/` carries a changeset; CI fails the PR without one. Rules and bumps: `.claude/rules/changesets.md`.
+- Every PR carries a changeset, an empty one when nothing is released; CI fails the PR without one. Write it with the `changeset` skill. Rules and bumps: `.claude/rules/changesets.md`.
+- Every spec and ticket body has a **Changeset** line: `<mod>: <bump>` per mod, or `empty`.
 
 ## TDD — IMPORTANT
 
