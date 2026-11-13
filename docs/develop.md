@@ -205,7 +205,7 @@ vp run verify         # format, lint, type-check, all tests, config audit
 vp run check:mods     # herdr-app check on every built mod, on the dev target's Herdr host
 ```
 
-CI fails if `mods/` doesn't match the source. A change to a mod or to `packages/` also needs a changeset: see [Releases](#releases).
+CI fails if `mods/` doesn't match the source. Every PR also needs a changeset, an empty one when nothing is released: see [Releases](#releases).
 
 ## Start a new mod
 
@@ -247,14 +247,18 @@ The Clean up view no longer lists the main worktree.
 
 ### When you need one
 
+Every PR carries a changeset. When the PR releases nothing, that is an **empty changeset**: one that names no mods.
+
 | You changed                            | You need                                               |
 | -------------------------------------- | ------------------------------------------------------ |
 | anything under `apps/<name>/`          | a changeset that names `<name>`                        |
 | anything under `packages/`             | a changeset: name the mods it reaches, or an empty one |
-| a mod's whole folder, deleted          | nothing for that mod                                   |
-| anything else (root scripts, docs, CI) | nothing                                                |
+| a mod's whole folder, deleted          | nothing for that mod, but still a changeset for the PR |
+| anything else (root scripts, docs, CI) | an empty changeset (`vp exec changeset --empty`)       |
 
-CI checks this on every PR (`vp run check:changesets`, `scripts/changeset-check.ts`). It fails naming each changed mod with no changeset, and tells you the command to add one. You can run it yourself before you push: it compares your branch with `origin/main`.
+Editing or deleting a changeset already waiting in `.changeset/` doesn't count: the PR must add one.
+
+CI checks this on every PR (`vp run check:changesets`, `scripts/changeset-check.ts`). It fails when the PR adds no changeset, or names each changed mod that no changeset names, and tells you the command to add one. You can run it yourself before you push: it compares your branch with `origin/main`. Two PRs are exempt: the version PR (below) and Dependabot PRs (head branch `dependabot/...`), which only bump pinned GitHub Actions and never release a mod.
 
 ### Bump rules
 
@@ -267,7 +271,7 @@ CI checks this on every PR (`vp run check:changesets`, `scripts/changeset-check.
 
 ```bash
 vp exec changeset           # asks which mods, the bump for each, and the summary
-vp exec changeset --empty   # a change with nothing for users (say, an internal refactor in packages/)
+vp exec changeset --empty   # a change with nothing for users (docs, root scripts, CI, an internal refactor in packages/)
 ```
 
 Or write the file by hand, in the shape above. Commit it with the change. One changeset can name several mods, each with its own bump.
@@ -283,7 +287,7 @@ Or write the file by hand, in the shape above. Commit it with the change. One ch
 
 Tags and releases use the mod id, not the package name: `iangregsondev-worktrunk@0.1.0`, never `worktrunk@0.1.0` ([ADR 0004](adr/0004-release-tags-use-mod-ids.md)). `vp run release:tags` (`scripts/release-tags.ts`) lists each mod whose tag isn't on GitHub yet, and the workflow makes those. A mod still at `0.0.0` has never been released and gets no tag (that is why `hello`, a temporary example mod, has none). Once every tag exists, a run of the workflow makes nothing.
 
-The CI changeset check skips the version PR: it changes mods but adds no changesets.
+The CI changeset check skips the version PR: it changes mods but adds no changesets. It skips Dependabot PRs too (see [When you need one](#when-you-need-one)).
 
 ### A harmless warning
 

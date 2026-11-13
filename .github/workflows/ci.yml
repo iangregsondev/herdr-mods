@@ -4,7 +4,9 @@ name: CI
 # build. Two things run only locally: the type-check with the type-aware lint
 # rules (vite.config.ts turns both off when CI is set) and `herdr-app check`.
 # Both need the Herdr app installed (see docs/types.md). On a PR, a second job checks
-# that each changed mod has a changeset (scripts/changeset-check.ts).
+# that every PR adds a changeset, an empty one when nothing is released, and that it
+# names each changed mod (scripts/changeset-check.ts). The version PR and Dependabot
+# PRs are exempt.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -40,6 +42,8 @@ jobs:
     name: Changesets
     # A PR only: the check compares the PR with its base branch. GitHub sets
     # GITHUB_BASE_REF and GITHUB_HEAD_REF on pull_request runs, and the script reads both.
+    # From the head branch it skips the version PR (changeset-release/main) and
+    # Dependabot PRs (dependabot/...); every other PR must add a changeset.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -51,5 +55,5 @@ jobs:
         with:
           node-version: "24"
           cache: true
-      - name: Each changed mod has a changeset
+      - name: Every PR has a changeset
         run: vp run check:changesets

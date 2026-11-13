@@ -17,6 +17,10 @@
 
 **Blast Radius:**
 
+## Changeset
+
+<!-- `<mod>: <bump>` for each mod this PR releases (`worktrunk: patch`), or `empty` for an empty changeset. Match the branch's `.changeset/` files. -->
+
 ## Related issues
 
 <!-- `Closes #123` for each issue this PR completes; plain `#123` for issues it only relates to. -->

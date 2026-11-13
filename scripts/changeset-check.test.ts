@@ -88,11 +88,7 @@ describe("runChangesetCheck, mods", () => {
     });
     return Effect.gen(function* () {
       const result = yield* runChangesetCheck({ repo, base: "main" });
-      assert.deepStrictEqual(result, {
-        code: 0,
-        stdout: "changeset-check: every changed mod and package has a changeset\n",
-        stderr: "",
-      });
+      assert.deepStrictEqual(result, { code: 0, stdout: PASSED_STDOUT, stderr: "" });
     });
   });
 
@@ -128,16 +124,57 @@ describe("runChangesetCheck, changesets already on the base", () => {
   });
 });
 
-describe("runChangesetCheck, nothing that needs a changeset", () => {
-  it.effect("passes when the PR changes no file", () => {
+/** What the check prints when the PR adds no changeset and no more specific rule applies. */
+const NO_CHANGESET_STDERR =
+  "changeset-check: the PR adds no changeset, and every PR needs one: when it releases " +
+  "nothing, add an empty one (vp exec changeset --empty)\n" +
+  "changeset-check: add one with: vp exec changeset\n";
+
+/** What the check prints when the PR passes. */
+const PASSED_STDOUT =
+  "changeset-check: the PR adds a changeset, as every PR must, and it names every " +
+  "changed mod\n";
+
+describe("runChangesetCheck, a PR that only touches a pending changeset", () => {
+  /** `prRepo` with a pending changeset on `main`, and HEAD back on `feature` from there. */
+  const pendingRepo = (): string => {
     const repo = prRepo();
+    git(repo, ["switch", "-q", "main"]);
+    commitFiles(repo, { ".changeset/old-news.md": '---\n"hello": patch\n---\n\nold.\n' });
+    git(repo, ["switch", "-q", "-C", "feature"]);
+    return repo;
+  };
+
+  it.effect("fails a PR that only edits a pending changeset", () => {
+    const repo = pendingRepo();
+    commitFiles(repo, { ".changeset/old-news.md": '---\n"hello": patch\n---\n\nreworded.\n' });
     return Effect.gen(function* () {
       const result = yield* runChangesetCheck({ repo, base: "main" });
-      assert.strictEqual(result.code, 0);
+      assert.deepStrictEqual(result, { code: 1, stdout: "", stderr: NO_CHANGESET_STDERR });
     });
   });
 
-  it.effect("passes a change to root scripts, docs, CI and config with no changeset", () => {
+  it.effect("fails a PR that only deletes a pending changeset", () => {
+    const repo = pendingRepo();
+    git(repo, ["rm", "-q", ".changeset/old-news.md"]);
+    commitFiles(repo, {});
+    return Effect.gen(function* () {
+      const result = yield* runChangesetCheck({ repo, base: "main" });
+      assert.deepStrictEqual(result, { code: 1, stdout: "", stderr: NO_CHANGESET_STDERR });
+    });
+  });
+});
+
+describe("runChangesetCheck, a PR with no mod change", () => {
+  it.effect("fails when the PR changes no file and adds no changeset", () => {
+    const repo = prRepo();
+    return Effect.gen(function* () {
+      const result = yield* runChangesetCheck({ repo, base: "main" });
+      assert.deepStrictEqual(result, { code: 1, stdout: "", stderr: NO_CHANGESET_STDERR });
+    });
+  });
+
+  it.effect("fails a change to root scripts, docs, CI and config with no changeset", () => {
     const repo = prRepo();
     commitFiles(repo, {
       "scripts/tool.ts": "tool again\n",
@@ -148,27 +185,41 @@ describe("runChangesetCheck, nothing that needs a changeset", () => {
     });
     return Effect.gen(function* () {
       const result = yield* runChangesetCheck({ repo, base: "main" });
-      assert.deepStrictEqual(result, {
-        code: 0,
-        stdout: "changeset-check: every changed mod and package has a changeset\n",
-        stderr: "",
-      });
+      assert.deepStrictEqual(result, { code: 1, stdout: "", stderr: NO_CHANGESET_STDERR });
+    });
+  });
+
+  it.effect("passes a docs change that adds an empty changeset", () => {
+    const repo = prRepo();
+    commitFiles(repo, {
+      "docs/develop.md": "docs again\n",
+      ".changeset/quiet-owls.md": "---\n---\n\nDocs only.\n",
+    });
+    return Effect.gen(function* () {
+      const result = yield* runChangesetCheck({ repo, base: "main" });
+      assert.deepStrictEqual(result, { code: 0, stdout: PASSED_STDOUT, stderr: "" });
     });
   });
 });
 
 describe("runChangesetCheck, a deleted mod", () => {
-  it.effect("needs no changeset for a mod the PR deletes", () => {
+  it.effect("fails a PR that deletes a mod and adds no changeset", () => {
     const repo = prRepo();
     git(repo, ["rm", "-q", "-r", "apps/hello"]);
     commitFiles(repo, {});
     return Effect.gen(function* () {
       const result = yield* runChangesetCheck({ repo, base: "main" });
-      assert.deepStrictEqual(result, {
-        code: 0,
-        stdout: "changeset-check: every changed mod and package has a changeset\n",
-        stderr: "",
-      });
+      assert.deepStrictEqual(result, { code: 1, stdout: "", stderr: NO_CHANGESET_STDERR });
+    });
+  });
+
+  it.effect("passes a PR that deletes a mod with an empty changeset that doesn't name it", () => {
+    const repo = prRepo();
+    git(repo, ["rm", "-q", "-r", "apps/hello"]);
+    commitFiles(repo, { ".changeset/gone-hello.md": "---\n---\n\nhello is gone.\n" });
+    return Effect.gen(function* () {
+      const result = yield* runChangesetCheck({ repo, base: "main" });
+      assert.deepStrictEqual(result, { code: 0, stdout: PASSED_STDOUT, stderr: "" });
     });
   });
 });
@@ -275,6 +326,30 @@ describe("runChangesetCheck, the version PR", () => {
       });
     });
   });
+});
+
+describe("runChangesetCheck, Dependabot PRs", () => {
+  it.effect(
+    "skips a dependabot/ head branch, which bumps Action pins and adds no changeset",
+    () => {
+      const repo = prRepo();
+      commitFiles(repo, { ".github/workflows/ci.yml": "name: CI\n# pin bumped\n" });
+      return Effect.gen(function* () {
+        const result = yield* runChangesetCheck({
+          repo,
+          base: "main",
+          headBranch: "dependabot/github_actions/actions/checkout-7.0.2",
+        });
+        assert.deepStrictEqual(result, {
+          code: 0,
+          stdout:
+            "changeset-check: skipped: dependabot/github_actions/actions/checkout-7.0.2 is a " +
+            "Dependabot branch\n",
+          stderr: "",
+        });
+      });
+    },
+  );
 });
 
 describe("runChangesetCheck, git fails", () => {
