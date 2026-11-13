@@ -110,6 +110,34 @@ const shownOutput = (stderr: string): string[] => {
   return lines.slice(1);
 };
 
+/** Commits `file` with `content` on the current branch. */
+const commitFile = (project: string, file: string, content: string, message: string): void => {
+  writeFile(project, file, content);
+  git(project, ["add", "."]);
+  git(project, ["commit", "-q", "-m", message]);
+};
+
+/** Squash-merges the branch: a new commit on origin/main with the same tree as HEAD. */
+const squashOntoMain = (project: string): void => {
+  const squash = git(project, [
+    "commit-tree",
+    "HEAD^{tree}",
+    "-p",
+    "refs/remotes/origin/main",
+    "-m",
+    "squash",
+  ]).trim();
+  git(project, ["update-ref", "refs/remotes/origin/main", squash]);
+};
+
+/** Commits `file` with `content` on origin/main, leaving the branch checked out. */
+const commitOnMain = (project: string, file: string, content: string, message: string): void => {
+  git(project, ["checkout", "-q", "--detach", "refs/remotes/origin/main"]);
+  commitFile(project, file, content, message);
+  git(project, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(project, ["checkout", "-q", "work"]);
+};
+
 describe("stop-check.sh", () => {
   test("lets the stop through without checks when stop_hook_active is set", () => {
     const { project, log, run } = setup({ vpExit: 1 });
@@ -155,6 +183,59 @@ describe("stop-check.sh", () => {
     writeFile(project, "b.txt", "two\n");
     git(project, ["add", "."]);
     git(project, ["commit", "-q", "-m", "second"]);
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("lets the stop through without checks on a squash-merged branch", () => {
+    const { project, log, run } = setup({ vpExit: 1 });
+    commitFile(project, "b.txt", "two\n", "second");
+    squashOntoMain(project);
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual([]);
+  });
+
+  test("lets the stop through without checks on a squash-merged branch after main moves on", () => {
+    const { project, log, run } = setup({ vpExit: 1 });
+    commitFile(project, "b.txt", "two\n", "second");
+    squashOntoMain(project);
+    commitOnMain(project, "c.txt", "three\n", "unrelated");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual([]);
+  });
+
+  test("runs vp run verify on a squash-merged branch with a dirty tree", () => {
+    const { project, log, run } = setup();
+    commitFile(project, "b.txt", "two\n", "second");
+    squashOntoMain(project);
+    writeFile(project, "b.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("runs vp run verify when the branch conflicts with origin/main", () => {
+    const { project, log, run } = setup();
+    commitFile(project, "a.txt", "branch\n", "branch edit");
+    commitOnMain(project, "a.txt", "main\n", "main edit");
+    const result = run();
+    expect(result.code).toBe(0);
+    expect(loggedLines(log)).toEqual(["run verify"]);
+  });
+
+  test("runs vp run verify when only the remote, not the local origin/main, holds the squash", () => {
+    const { project, log, run } = setup();
+    const remote = join(tempDir(), "remote.git");
+    git(project, ["init", "-q", "--bare", remote]);
+    git(project, ["remote", "add", "origin", remote]);
+    const stale = git(project, ["rev-parse", "refs/remotes/origin/main"]).trim();
+    commitFile(project, "b.txt", "two\n", "second");
+    squashOntoMain(project);
+    git(project, ["push", "-q", "origin", "refs/remotes/origin/main:refs/heads/main"]);
+    git(project, ["update-ref", "refs/remotes/origin/main", stale]);
     const result = run();
     expect(result.code).toBe(0);
     expect(loggedLines(log)).toEqual(["run verify"]);
