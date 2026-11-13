@@ -30,6 +30,7 @@ scripts/copy-dev-config.sh  copies herdr-dev.json into a new worktree (run by .c
 scripts/dev-config.ts     reads the dev target from herdr-dev.json (or HERDR_DEV_CONFIG)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from the dev target's Herdr host
 scripts/git.ts            Git: the Effect service for git in a repo folder (files changed since a base ref, tags on origin)
+scripts/mod-folders.ts    a mod's package.json (name and version, read with Schema) and the folders under apps/ or mods/
 scripts/recipe-stamp.ts   stampRecipe: the "Version x.y.z · Changelog" line mod-pack.ts puts under the built RECIPE.md's title
 scripts/release-tags.ts   vp run release:tags: the publish script of the release workflow (.github/workflows/release.yml); lists the mod-id tags not yet on origin for changesets/action
 scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls (local, or remote over SSH)

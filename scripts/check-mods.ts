@@ -4,10 +4,10 @@
 // the run exits 1 naming each one that failed.
 //
 //   vp run check:mods
-import { readdirSync } from "node:fs";
 import { Effect, Result } from "effect";
 import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import { causeText, HerdrHost, hostLayer, TransportError } from "./herdr-host.ts";
+import { subfolders } from "./mod-folders.ts";
 
 /** What to print and the exit code. */
 export interface CheckModsResult {
@@ -33,14 +33,7 @@ const failure = (message: string): CheckModsResult => ({
 
 /** The mod folders in `modsDir`, sorted by name. */
 const modNames = (modsDir: string): Effect.Effect<ReadonlyArray<string>, TransportError> =>
-  Effect.try({
-    try: () =>
-      readdirSync(modsDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort(),
-    catch: (cause) => new TransportError({ operation: `list ${modsDir}`, cause }),
-  });
+  subfolders(modsDir, (cause) => new TransportError({ operation: `list ${modsDir}`, cause }));
 
 /** One result from every mod's check: exit 1 naming the mods that failed, if any. */
 const summary = (checks: ReadonlyArray<ModCheck>): CheckModsResult => {
