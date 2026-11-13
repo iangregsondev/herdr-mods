@@ -4,6 +4,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   clickCommand,
   focusedFolder,
+  focusedOrHere,
   goTo,
   spacePlaces,
   placeOf,
@@ -181,6 +182,12 @@ describe("focusedFolder", () => {
   test("nothing focused, or a focused space with no place: none", () => {
     expect(focusedFolder(null, places)).toEqual(Option.none());
     expect(focusedFolder({ space: "remote/s9", cwd: null }, places)).toEqual(Option.none());
+  });
+});
+
+describe("focusedOrHere", () => {
+  test("nothing focused: this machine, with no folder", () => {
+    expect(focusedOrHere(null, [])).toEqual({ machine: THIS_MACHINE, folder: "" });
   });
 });
 

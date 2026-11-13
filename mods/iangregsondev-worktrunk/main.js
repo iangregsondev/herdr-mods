@@ -11977,6 +11977,14 @@ const focusedFolder = (focus, places) => {
 	})));
 };
 /**
+* The focused folder (see `focusedFolder`), or this machine with no folder when nothing
+* is focused: what the panel looks up when it needs a place to start.
+*/
+const focusedOrHere = (focus, places) => getOrElse$1(focusedFolder(focus, places), () => ({
+	machine: null,
+	folder: ""
+}));
+/**
 * The Herdr command a click on a worktree row runs: select its space, or open a new one
 * on the worktree's machine (Herdr's `space.new` takes no machine for this one).
 */
@@ -12997,10 +13005,7 @@ var Worktrunk = class extends View {
 	*/
 	openNewOrOpen(cx, folder, mode = "new") {
 		const places = spacePlaces(spaces(), panes());
-		const at = getOrElse$1(orElse(folder, () => focusedFolder(focused(), places)), () => ({
-			machine: null,
-			folder: ""
-		}));
+		const at = getOrElse$1(folder, () => focusedOrHere(focused(), places));
 		const listed = this.repos.map(({ machine, root }) => ({
 			machine,
 			root
@@ -13426,10 +13431,7 @@ var Worktrunk = class extends View {
 	*/
 	followFocus(cx, following) {
 		const places = spacePlaces(spaces(), panes());
-		const folder = getOrElse$1(focusedFolder(focused(), places), () => ({
-			machine: null,
-			folder: ""
-		}));
+		const folder = focusedOrHere(focused(), places);
 		const step = followFocus(this.follow, {
 			following,
 			folder

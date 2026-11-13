@@ -164,7 +164,7 @@ import {
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
 import {
   clickCommand,
-  focusedFolder,
+  focusedOrHere,
   goTo,
   spaceGroups,
   spacePlaces,
@@ -612,10 +612,7 @@ export default class Worktrunk extends View {
    */
   openNewOrOpen(cx: AsyncContext, folder: Option.Option<Located>, mode: DialogMode = "new") {
     const places = spacePlaces(spaces(), panes());
-    const at: Located = Option.getOrElse(
-      Option.orElse(folder, () => focusedFolder(focused(), places)),
-      (): Located => ({ machine: THIS_MACHINE, folder: "" }),
-    );
+    const at = Option.getOrElse(folder, () => focusedOrHere(focused(), places));
     const listed = this.repos.map(({ machine, root }): RepoId => ({ machine, root }));
     cx.spawn(async () => {
       const opened = await runEdge(dialogFor(at, listed, mode), Result.fail);
@@ -1065,10 +1062,7 @@ export default class Worktrunk extends View {
    */
   followFocus(cx: Context, following: boolean) {
     const places = spacePlaces(spaces(), panes());
-    const folder = Option.getOrElse(focusedFolder(focused(), places), (): Located => ({
-      machine: THIS_MACHINE,
-      folder: "",
-    }));
+    const folder = focusedOrHere(focused(), places);
     const step = followFocus(this.follow, { following, folder });
     this.follow = step.follow;
     Option.map(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
