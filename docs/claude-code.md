@@ -12,14 +12,14 @@ What the tracked Claude Code setup does, and what to put in your own settings. T
 
 ## Hooks (apply to everyone)
 
-Both hooks need [`jq`](https://jqlang.org) on your `PATH`. Without it they print why to stderr and do nothing.
+Both hooks need [`jq`](https://jqlang.org) on your `PATH`. Without it they say so in one line on stderr and do nothing; the edit or the stop still goes through.
 
 | When                    | Script                           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | After an edit           | `.claude/hooks/format-edited.sh` | Formats the edited file with `vp fmt`. Never blocks.                                                                                                                                                                                                                                                                                                                                                                              |
 | When Claude ends a turn | `.claude/hooks/stop-check.sh`    | Runs `vp run verify` (`vp check --deny-warnings`, every test suite and `vp run audit:config`) unless the tree is clean and merging the branch into the local `origin/main` would change nothing (an untouched or squash-merged branch; it never fetches). On failure it blocks the stop and hands Claude the errors. The next stop after a block goes through unchecked, and so does a run that hits the 600-second hook timeout. |
 
-The Stop hook finds `vp` even when Claude Code was started without your shell profile (desktop app, IDE extension): when `vp` isn't on `PATH`, `.claude/hooks/find-vp.sh` looks in `$VP_HOME/bin` (only when `VP_HOME` is set), then `~/.vite-plus/bin`, then `${XDG_DATA_HOME:-~/.local/share}/vite-plus/bin`. If `vp` or `jq` is missing, the hook says so in one line and the stop goes through.
+Both hooks find `vp` even when Claude Code was started without your shell profile (desktop app, IDE extension): when `vp` isn't on `PATH`, `.claude/hooks/find-vp.sh` looks in `$VP_HOME/bin` (only when `VP_HOME` is set), then `~/.vite-plus/bin`, then `${XDG_DATA_HOME:-~/.local/share}/vite-plus/bin`. If `vp` or `jq` is missing, the hook says so in one line and the edit or the stop goes through.
 
 Checks run at the end of a turn, not after every edit: mid-turn code is often half finished on purpose (a red test, a change across files). Commits made during the turn are still checked, since the pre-commit hook runs no tests.
 
