@@ -2,6 +2,7 @@ import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   askRefresh,
+  BUSY,
   ciDue,
   currentRepoOf,
   foldCi,
@@ -378,6 +379,20 @@ describe("takeLookup", () => {
     const before = Option.some(Result.succeed(Option.some(API)));
     const answer = Result.succeed(Option.some({ ...API, machine: "linux" }));
     expect(takeLookup(following("/w/api", before), here("/w/api"), answer).refresh).toBe(true);
+  });
+
+  test("a lookup refused for full exec slots keeps the last answer and looks up again", () => {
+    const before = Option.some(Result.succeed(Option.some(API)));
+    const taken = takeLookup(following("/w/api", before), here("/w/api"), BUSY);
+    expect(taken).toEqual({ follow: { folder: Option.none(), found: before }, refresh: false });
+    expect(followFocus(taken.follow, { following: true, folder: here("/w/api") }).lookUp).toEqual(
+      Option.some(here("/w/api")),
+    );
+  });
+
+  test("a refused lookup for an older focus is dropped", () => {
+    const follow = following("/p/web");
+    expect(takeLookup(follow, here("/w/api"), BUSY)).toEqual({ follow, refresh: false });
   });
 
   test("an answer naming another repo than before refreshes", () => {
