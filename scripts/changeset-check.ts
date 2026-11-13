@@ -121,10 +121,10 @@ const PACKAGES_PROBLEM =
   "or add an empty one (vp exec changeset --empty)";
 
 /** Exit 1 with `message` on stderr. */
-const problem = (message: string): ScriptResult => scriptFailure(PREFIX, [message]);
+const failure = (message: string): ScriptResult => scriptFailure(PREFIX, [message]);
 
 /** Exit 1 with each of `lines` on stderr, then how to add a changeset. */
-const failure = (lines: ReadonlyArray<string>): ScriptResult =>
+const failureWithAddHint = (lines: ReadonlyArray<string>): ScriptResult =>
   scriptFailure(PREFIX, [...lines, "add one with: vp exec changeset"]);
 
 /**
@@ -162,15 +162,15 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
     ];
     return problems.length === 0
       ? { code: 0, stdout: `${PREFIX} every changed mod and package has a changeset\n`, stderr: "" }
-      : failure(problems);
+      : failureWithAddHint(problems);
   }).pipe(
     Effect.provide(Git.layer),
     Effect.catchTags({
-      ChangesetMalformed: ({ file, reason }) => Effect.succeed(problem(`${file}: ${reason}`)),
+      ChangesetMalformed: ({ file, reason }) => Effect.succeed(failure(`${file}: ${reason}`)),
       ChangesetUnreadable: ({ file, cause }) =>
-        Effect.succeed(problem(`couldn't read ${file} (${causeText(cause)})`)),
-      GitNotStarted: (error) => Effect.succeed(problem(gitErrorText(error))),
-      GitFailed: (error) => Effect.succeed(problem(gitErrorText(error))),
+        Effect.succeed(failure(`couldn't read ${file} (${causeText(cause)})`)),
+      GitNotStarted: (error) => Effect.succeed(failure(gitErrorText(error))),
+      GitFailed: (error) => Effect.succeed(failure(gitErrorText(error))),
     }),
   );
 });
