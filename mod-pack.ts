@@ -42,6 +42,7 @@ import {
   type TransportError,
 } from "./scripts/herdr-host.ts";
 import { ensureSlot, ensureSlotOnHost, type ModJson } from "./scripts/herdr-slots.ts";
+import { readModPackage } from "./scripts/mod-folders.ts";
 import { stampRecipe } from "./scripts/recipe-stamp.ts";
 import { refreshHerdrTypes, TYPES_DIR, type TypesResult } from "./scripts/herdr-types.ts";
 
@@ -405,13 +406,17 @@ const changelogUrl = (name: string): string =>
 
 /**
  * Stamps the built `RECIPE.md` in `outDir` with the version in `modDir/package.json`
- * and the mod's changelog link (see `scripts/recipe-stamp.ts`).
+ * and the mod's changelog link (see `scripts/recipe-stamp.ts`). Throws, naming the
+ * file, when the package.json has no name and version, so the build fails and the
+ * recipe is left unstamped.
  */
 function stampBuiltRecipe(name: string, modDir: string, outDir: string): void {
-  // `modDir/package.json` is the mod's own committed file, trusted unchecked.
-  const { version } = JSON.parse(readFileSync(resolve(modDir, "package.json"), "utf8")) as {
-    version: string;
-  };
+  const read = Effect.runSync(Effect.result(readModPackage(resolve(modDir, "package.json"))));
+  if (Result.isFailure(read)) {
+    const { path, cause } = read.failure;
+    throw new Error(`mod-pack: couldn't read ${path} (${causeText(cause)})`, { cause });
+  }
+  const { version } = read.success;
   const recipe = join(outDir, "RECIPE.md");
   writeFileSync(
     recipe,

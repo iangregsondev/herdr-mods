@@ -8,28 +8,29 @@
 //   vp run check:changesets   (CI, on pull_request; compares with origin/<base branch>)
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Data, Effect, Result } from "effect";
-import { Git } from "./git.ts";
+import { Data, Effect, Option, Result, Schema } from "effect";
+import { Git, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
+import { runMain, type ScriptResult, scriptFailure } from "./script-result.ts";
 
 /** How far a changeset moves a package's version. */
-export type Bump = "major" | "minor" | "patch";
+export const Bump = Schema.Literals(["major", "minor", "patch"]);
+export type Bump = typeof Bump.Type;
+
+const isBump = Schema.is(Bump);
 
 /** The packages a changeset names, each with its bump. Empty for an empty changeset. */
 export type ChangesetBumps = Readonly<Record<string, Bump>>;
 
-/** One frontmatter line: a package name, quoted or not, then its bump. */
-const BUMP_LINE = /^(["']?)([^"'\s:]+)\1\s*:\s*(major|minor|patch)$/;
+/** One frontmatter line: a package name, quoted or not, a colon, then one word (the bump). */
+const BUMP_LINE = /^(["']?)([^"'\s:]+)\1\s*:\s*(\S+)$/;
 
 const FENCE = "---";
 
 /** `line` as a package name and its bump, if it is a frontmatter bump line. */
-const bumpEntry = (line: string): ReadonlyArray<readonly [string, Bump]> => {
-  const match = BUMP_LINE.exec(line);
-  const [, , name, bump] = match ?? [];
-  return name !== undefined && (bump === "major" || bump === "minor" || bump === "patch")
-    ? [[name, bump]]
-    : [];
+const bumpEntry = (line: string): Option.Option<readonly [string, Bump]> => {
+  const [, , name, bump] = BUMP_LINE.exec(line) ?? [];
+  return name !== undefined && isBump(bump) ? Option.some([name, bump]) : Option.none();
 };
 
 /**
@@ -43,19 +44,13 @@ export const parseChangeset = (text: string): Result.Result<ChangesetBumps, stri
     return Result.fail("no frontmatter: the file must open and close with a --- line");
   }
   const body = lines.slice(1, close).filter((line) => line !== "");
-  const bad = body.find((line) => bumpEntry(line).length === 0);
+  const entries = body.map((line) => ({ line, entry: bumpEntry(line) }));
+  const bad = entries.find(({ entry }) => Option.isNone(entry));
   if (bad !== undefined) {
-    return Result.fail(`frontmatter line isn't "<package>": major|minor|patch: ${bad}`);
+    return Result.fail(`frontmatter line isn't "<package>": major|minor|patch: ${bad.line}`);
   }
-  return Result.succeed(Object.fromEntries(body.flatMap(bumpEntry)));
+  return Result.succeed(Object.fromEntries(entries.flatMap(({ entry }) => Option.toArray(entry))));
 };
-
-/** What to print and the exit code. */
-export interface ChangesetCheckResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
 
 export interface ChangesetCheckOptions {
   /** The repo folder. Default: the current folder. */
@@ -82,8 +77,8 @@ const changedMods = (files: ReadonlyArray<string>): ReadonlyArray<string> =>
  * package.json, and changesets can't name a package that no longer exists, so it needs
  * no changeset.
  */
-const modExists = (repo: string, name: string): boolean =>
-  existsSync(join(repo, "apps", name, "package.json"));
+const modExists = (repo: string, name: string): Effect.Effect<boolean> =>
+  Effect.sync(() => existsSync(join(repo, "apps", name, "package.json")));
 
 /** A changeset file the PR adds that couldn't be read. */
 export class ChangesetUnreadable extends Data.TaggedError("ChangesetUnreadable")<{
@@ -127,20 +122,11 @@ const PACKAGES_PROBLEM =
   "or add an empty one (vp exec changeset --empty)";
 
 /** Exit 1 with `message` on stderr. */
-const problem = (message: string): ChangesetCheckResult => ({
-  code: 1,
-  stdout: "",
-  stderr: `${PREFIX} ${message}\n`,
-});
+const failure = (message: string): ScriptResult => scriptFailure(PREFIX, [message]);
 
 /** Exit 1 with each of `lines` on stderr, then how to add a changeset. */
-const failure = (lines: ReadonlyArray<string>): ChangesetCheckResult => ({
-  code: 1,
-  stdout: "",
-  stderr: [...lines, "add one with: vp exec changeset"]
-    .map((line) => `${PREFIX} ${line}\n`)
-    .join(""),
-});
+const failureWithAddHint = (lines: ReadonlyArray<string>): ScriptResult =>
+  scriptFailure(PREFIX, [...lines, "add one with: vp exec changeset"]);
 
 /**
  * Checks that the PR (`base...HEAD` in `repo`) carries the changesets its changes need.
@@ -148,7 +134,7 @@ const failure = (lines: ReadonlyArray<string>): ChangesetCheckResult => ({
  */
 export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
   options: ChangesetCheckOptions = {},
-): Effect.fn.Return<ChangesetCheckResult> {
+): Effect.fn.Return<ScriptResult> {
   const repo = options.repo ?? ".";
   const base = options.base ?? "origin/main";
   if (options.headBranch === VERSION_BRANCH) {
@@ -166,7 +152,10 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
       readChangeset(repo, file),
     );
     const named = new Set(changesets.flatMap((bumps) => Object.keys(bumps)));
-    const missing = changedMods(files).filter((mod) => modExists(repo, mod) && !named.has(mod));
+    const missing = yield* Effect.filter(
+      changedMods(files).filter((mod) => !named.has(mod)),
+      (mod) => modExists(repo, mod),
+    );
     const packagesUncovered =
       files.some((file) => file.startsWith("packages/")) && changesets.length === 0;
     const problems = [
@@ -177,17 +166,15 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
     ];
     return problems.length === 0
       ? { code: 0, stdout: `${PREFIX} every changed mod and package has a changeset\n`, stderr: "" }
-      : failure(problems);
+      : failureWithAddHint(problems);
   }).pipe(
     Effect.provide(Git.layer),
     Effect.catchTags({
-      ChangesetMalformed: ({ file, reason }) => Effect.succeed(problem(`${file}: ${reason}`)),
+      ChangesetMalformed: ({ file, reason }) => Effect.succeed(failure(`${file}: ${reason}`)),
       ChangesetUnreadable: ({ file, cause }) =>
-        Effect.succeed(problem(`couldn't read ${file} (${causeText(cause)})`)),
-      GitNotStarted: ({ cwd, cause }) =>
-        Effect.succeed(problem(`couldn't run git in ${cwd} (${causeText(cause)})`)),
-      GitFailed: ({ args, code, stderr }) =>
-        Effect.succeed(problem(`git ${args.join(" ")} failed (exit ${code}): ${stderr.trim()}`)),
+        Effect.succeed(failure(`couldn't read ${file} (${causeText(cause)})`)),
+      GitNotStarted: (error) => Effect.succeed(failure(gitErrorText(error))),
+      GitFailed: (error) => Effect.succeed(failure(gitErrorText(error))),
     }),
   );
 });
@@ -197,13 +184,10 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
 // PR's branch). Elsewhere both are unset or empty, and the defaults apply.
 if (import.meta.main) {
   const { GITHUB_BASE_REF: baseRef = "", GITHUB_HEAD_REF: headRef = "" } = process.env;
-  const result = await Effect.runPromise(
+  await runMain(
     runChangesetCheck({
       ...(baseRef === "" ? {} : { base: `origin/${baseRef}` }),
       ...(headRef === "" ? {} : { headBranch: headRef }),
     }),
   );
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  process.exitCode = result.code;
 }

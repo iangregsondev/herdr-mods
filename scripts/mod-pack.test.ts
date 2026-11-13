@@ -270,6 +270,19 @@ describe("modPack, build mode", () => {
     );
   });
 
+  test.each([
+    ["no version", { name: "hello" }],
+    ["a non-string version", { name: "hello", version: 1 }],
+  ])("fails the build naming the package.json when it has %s", async (_, pkg) => {
+    const modDir = modSourceWithRecipe("1.2.3");
+    const packageFile = writeFile(modDir, "package.json", JSON.stringify(pkg));
+    const outDir = copiedAssets(modDir);
+    await expect(runBuildDone(modPack("hello", { watch: false, modDir }), outDir)).rejects.toThrow(
+      packageFile,
+    );
+    expect(readFileSync(join(outDir, "RECIPE.md"), "utf8")).toBe(RECIPE);
+  });
+
   test("leaves the source RECIPE.md and the built mod.json as they were", async () => {
     const modDir = modSourceWithRecipe("1.2.3");
     const outDir = copiedAssets(modDir);
