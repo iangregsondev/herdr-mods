@@ -1,11 +1,13 @@
 // The panel's settings: a JSON file in Herdr's folder, named after the mod id, that the
 // person may edit by hand. Pure: no `herdr` or `gpui` imports.
 //
-// { "folders": [{ "name": "Work", "path": "~/code/work" }], "depth": 4, "skip": [...],
+// { "folders": [{ "name": "Work", "path": "~/code/work" },
+//               { "name": "Box", "path": "~/code", "machine": "linux" }],
+//   "depth": 4, "skip": [...],
 //   "hidden": ["/code/work/old-repo", { "machine": "linux", "path": "/srv/old" }],
 //   "noWrapper": false }
-// Each folder is scanned for repos and names a group. A hidden repo written as a bare
-// folder is on this machine.
+// Each folder is scanned for repos on its machine and names a group. A folder without
+// `machine`, and a hidden repo written as a bare folder, are on this machine.
 import { Option, Predicate, Result } from "effect";
 import { finite, parseJson } from "worktrunk-mailbox";
 import { repoKey, THIS_MACHINE, type Machine, type RepoId } from "./machines.ts";

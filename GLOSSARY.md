@@ -48,7 +48,7 @@ One checkout of a repo on one branch. The main checkout is a worktree too.
 _Avoid_: checkout (except for the main checkout), clone
 
 **Group**:
-A named folder (such as Work or Personal) that holds repos. A repo belongs to the deepest group folder that contains it, or to Other.
+A named folder (such as Work or Personal) on one machine that holds repos. A repo belongs to the deepest group folder on its machine that contains it, or to Other.
 _Avoid_: category, workspace
 
 **New worktree**:
