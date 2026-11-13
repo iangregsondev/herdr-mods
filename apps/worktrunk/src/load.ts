@@ -20,7 +20,9 @@ import {
   type RepoId,
 } from "./machines.ts";
 import {
+  addFolderOn,
   DEFAULT_SETTINGS,
+  expandHome,
   lastSegment,
   parseSettings,
   hideRepo,
@@ -38,6 +40,7 @@ import {
   failureText,
   gitBranches,
   goneFolders,
+  isFolder,
   JobNotStarted,
   loginShell,
   machineHome,
@@ -709,6 +712,31 @@ export const pickGroupFolder = Effect.fn("pickGroupFolder")(
   Effect.catchTag("PickerFailed", (failed) =>
     Effect.succeed(Result.fail(`couldn't open the folder picker (${causeText(failed.cause)})`)),
   ),
+);
+
+/**
+ * The settings with the folder typed as `typed` on `machine` added as a group, once a
+ * check run there finds it (`~` is that machine's home, read there). A folder that isn't
+ * there, or a check that can't run, is the answer's reason instead: nothing is added.
+ */
+export const addGroupFolderOn = Effect.fn("addGroupFolderOn")(
+  function* (settings: Settings, machine: string, typed: string) {
+    const path = typed.trim();
+    if (path === "") return Result.fail(`Type the folder's path on ${machine}`);
+    const home = yield* machineHome(machine);
+    const found = yield* isFolder(expandHome(path, home), machine);
+    const answer: Result.Result<Settings, string> = found
+      ? Result.succeed(addFolderOn(settings, machine, path, home))
+      : Result.fail(`${path} isn't a folder on ${machine}`);
+    return answer;
+  },
+  (effect, _settings, machine, typed) => {
+    const cantCheck = (failed: CommandFailed | ShellError) =>
+      Effect.succeed(
+        Result.fail(`couldn't check ${typed.trim()} on ${machine}: ${failureText(failed)}`),
+      );
+    return effect.pipe(Effect.catchTags({ CommandFailed: cantCheck, ShellError: cantCheck }));
+  },
 );
 
 /** The settings file's text for the Settings dialog to open on (null: no file), or why it can't be read. */

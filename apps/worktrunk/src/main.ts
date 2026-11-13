@@ -66,6 +66,7 @@ import {
 } from "worktrunk-mailbox";
 import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
 import {
+  addGroupFolderOn,
   dialogFor,
   findRepos,
   hideInSettings,
@@ -144,6 +145,7 @@ import {
   addFolder,
   lastSegment,
   moveFolder,
+  otherMachines,
   parseSettings,
   removeFolder,
   skipText,
@@ -460,7 +462,13 @@ interface SettingsDraft {
   /** One name field per group folder, in the folders' order. */
   names: InputState[];
   readonly skip: InputState;
-  /** A save or a folder pick that didn't happen, and why. */
+  /** The other machine a typed group folder is added on; none until one is picked. */
+  machine: Option.Option<string>;
+  /** The folder's path on that machine, as typed. */
+  readonly typed: InputState;
+  /** A typed folder's check is running on its machine. */
+  checking: boolean;
+  /** A save, a folder pick or a typed folder that didn't happen, and why. */
   note: string;
 }
 
@@ -723,6 +731,9 @@ export default class Worktrunk extends View {
       broken: parsed.error,
       names: [],
       skip,
+      machine: Option.none(),
+      typed: InputState.new({ placeholder: "~/code" }),
+      checking: false,
       note: "",
     };
     this.nameFields(draft);
@@ -772,10 +783,40 @@ export default class Worktrunk extends View {
   }
 
   /**
+   * Adds the typed folder on the picked machine once a check there finds it. A folder
+   * that isn't there, or a check that can't run, is the dialog's note; nothing is added.
+   */
+  addTypedFolder(cx: Context, draft: SettingsDraft, machine: string) {
+    if (draft.checking) return;
+    draft.checking = true;
+    draft.note = "";
+    const settings = this.drafted(draft);
+    cx.spawn(async (cx) => {
+      const added = await runEdge(
+        addGroupFolderOn(settings, machine, draft.typed.value()),
+        Result.fail,
+      );
+      draft.checking = false;
+      Result.match(added, {
+        onSuccess: (next) => {
+          this.editDraft(draft, () => next);
+          draft.typed.set_value("");
+        },
+        onFailure: (reason) => {
+          draft.note = reason;
+        },
+      });
+      cx.notify();
+    });
+  }
+
+  /**
    * Saves the draft, never over a hand edit made since the dialog opened; then the panel
    * reads everything again and the dialog closes. A save that didn't happen says why.
    */
   saveSettings(cx: Context, draft: SettingsDraft) {
+    // A typed folder still being checked would be lost: it joins the draft only once found.
+    if (draft.checking) return;
     const settings = this.drafted(draft);
     cx.spawn(async (cx) => {
       const saved = await runEdge(
@@ -1674,7 +1715,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(folder.path),
+            .child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`),
         )
         .child(
           small(
@@ -1726,6 +1767,29 @@ export default class Worktrunk extends View {
           ),
         ),
     );
+    const others = otherMachines(machines());
+    const machineChips = others.map((machine) => {
+      const on = Option.contains(draft.machine, machine);
+      return h_flex()
+        .id(`machine-${machine}`)
+        .h(24)
+        .px(9)
+        .flex_none()
+        .items_center()
+        .rounded(12)
+        .cursor_pointer()
+        .border_1()
+        .border_color(on ? t.accent : t.border)
+        .bg(on ? t.selected : t.input)
+        .text_size(sizes.label)
+        .text_color(on ? t.foreground : t.muted)
+        .hover((s) => s.text_color(t.foreground))
+        .on_click((_e: unknown, cx: Context) => {
+          draft.machine = Option.some(machine);
+          cx.notify();
+        })
+        .child(machine);
+    });
     const check = div()
       .size(16)
       .flex_none()
@@ -1743,10 +1807,38 @@ export default class Worktrunk extends View {
       .when(folders.length === 0, (el) => el.child(hint("No group folders yet.")))
       .child(
         h_flex().child(
-          button(t, "add-folder", "Add folder…", "plain", (_e, cx) =>
+          button(t, "add-folder", "Add folder on this machine…", "plain", (_e, cx) =>
             this.pickGroupFolder(cx, draft),
           ),
         ),
+      )
+      .when(others.length > 0, (el) =>
+        el
+          .child(
+            hint(
+              "Or pick another machine, type the folder's path there (~ is its home) and add it.",
+            ),
+          )
+          .child(h_flex().gap(6).flex_wrap().children(machineChips))
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(field(draft.typed, Option.none()))
+              .child(
+                Option.match(draft.machine, {
+                  onNone: () => hint("Pick a machine first"),
+                  onSome: (machine) =>
+                    button(
+                      t,
+                      "add-typed",
+                      draft.checking ? `Checking on ${machine}…` : `Add on ${machine}`,
+                      "plain",
+                      (_e, cx) => this.addTypedFolder(cx, draft, machine),
+                    ),
+                }),
+              ),
+          ),
       )
       .child(heading("Scan", "How deep to look for repos, and folder names never to enter."))
       .child(

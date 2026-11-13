@@ -6396,7 +6396,7 @@ const fromIteratorUnsafe = /*#__PURE__*/ function() {
 	};
 }();
 /** @internal */
-const as = /*#__PURE__*/ dual(2, (self, value) => new ContImpl(self, returnPayload, succeed$2(value)));
+const as$1 = /*#__PURE__*/ dual(2, (self, value) => new ContImpl(self, returnPayload, succeed$2(value)));
 const evaluateCont = function(fiber) {
 	fiber._stack.push(this);
 	return this[args];
@@ -6520,7 +6520,7 @@ const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(s
 /** @internal */
 const catch_$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
 /** @internal */
-const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
+const catchIf$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
 	if (!predicate(error.success)) return orElse ? orElse(error.success) : failCause(cause);
@@ -6537,7 +6537,7 @@ const catchFilter = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, filte
 /** @internal */
 const catchTag$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, k, f, orElse) => {
 	const pred = Array.isArray(k) ? (e) => hasProperty(e, "_tag") && k.includes(e._tag) : isTagged(k);
-	return catchIf(self, pred, f, orElse);
+	return catchIf$1(self, pred, f, orElse);
 });
 /** @internal */
 const catchTags$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, cases, orElse) => {
@@ -6845,14 +6845,14 @@ const forEach$1 = /*#__PURE__*/ dual((args) => typeof args[1] === "function", (i
 		f,
 		out
 	}, items, { concurrency });
-	return eff ? as(eff, out) : succeed$2(out);
+	return eff ? as$1(eff, out) : succeed$2(out);
 }));
 const forEachSequential = (iterable, f, options) => suspend(() => {
 	const out = options?.discard ? void 0 : [];
 	const iterator = iterable[Symbol.iterator]();
 	let state = iterator.next();
 	let index = 0;
-	return as(whileLoop({
+	return as$1(whileLoop({
 		while: () => !state.done,
 		body: () => f(state.value, index++),
 		step: (b) => {
@@ -8879,6 +8879,38 @@ const exit = exit$1;
 */
 const map = map$1;
 /**
+* Replaces the value inside an effect with a constant value.
+*
+* **When to use**
+*
+* Use to replace a successful value with a constant while preserving failures
+* and requirements.
+*
+* **Details**
+*
+* `as` allows you to ignore the original value inside an effect and
+* replace it with a new constant value.
+*
+* **Example** (Replacing a success value)
+*
+* ```ts import.meta.vitest
+* import { Effect, pipe } from "effect"
+*
+* // Replaces the value 5 with the constant "new value"
+* const program = pipe(Effect.succeed(5), Effect.as("new value"))
+*
+* Effect.runSync(program) // => "new value"
+* ```
+*
+* @see {@link map} for deriving the replacement value from the success value
+* @see {@link asVoid} for replacing the success value with `void`
+*
+* @stability stable
+* @category mapping
+* @since 2.0.0
+*/
+const as = as$1;
+/**
 * Maps the success value of an `Effect` to `Some`, preserving failures.
 *
 * **Example** (Wrapping success in Option.some)
@@ -9025,6 +9057,58 @@ const catchTag = catchTag$1;
 * @since 2.0.0
 */
 const catchTags = catchTags$1;
+/**
+* Recovers from specific errors using a `Predicate` or `Refinement`.
+*
+* **When to use**
+*
+* Use when you need to recover from errors that match a condition.
+*
+* **Details**
+*
+* Use a `Refinement` for type narrowing or a `Predicate` for simple boolean
+* matching. Non-matching errors re-fail with the original cause. Defects and
+* interrupts are not caught.
+*
+* **Gotchas**
+*
+* If the cause contains a defect, the handler is skipped and every typed error
+* is converted to a defect, preserving reason order and interrupts. An
+* interruption alongside a typed error does not prevent recovery.
+*
+* **Example** (Recovering when a predicate matches)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, Filter } from "effect"
+*
+* class NotFound extends Data.TaggedError("NotFound")<{ id: string }> {}
+*
+* const program = Effect.fail(new NotFound({ id: "user-1" }))
+*
+* // With a refinement
+* const recovered = program.pipe(
+*   Effect.catchIf(
+*     (error): error is NotFound => error._tag === "NotFound",
+*     (error) => Effect.succeed(`missing:${error.id}`)
+*   )
+* )
+*
+* // With a Filter
+* const recovered2 = program.pipe(
+*   Effect.catchFilter(
+*     Filter.tagged("NotFound"),
+*     (error) => Effect.succeed(`missing:${error.id}`)
+*   )
+* )
+*
+* Effect.runSync(Effect.all([recovered, recovered2])) // => ['missing:user-1', 'missing:user-1']
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const catchIf = catchIf$1;
 /**
 * Transforms the failure value of an effect without changing its success value.
 *
@@ -9858,15 +9942,21 @@ const unhide = (settings, repo) => ({
 * added as the last group, named after its last segment and written with `~` under
 * `home`. A folder already listed on this machine changes nothing.
 */
-const addFolder = (settings, picked, home) => {
-	const path = tildePath(trimSlashes(picked), home);
+const addFolder = (settings, picked, home) => withFolder(settings, null, picked, home);
+/**
+* The settings with `typed` on `machine` (whose home is `home`) added as the last group,
+* named after its last segment and written with `~` under `home`. A blank folder, or one
+* already listed on that machine, changes nothing.
+*/
+const withFolder = (settings, machine, typed, home) => {
+	const path = tildePath(trimSlashes(typed), home);
 	if (path === "") return settings;
-	return settings.folders.some((folder) => folder.machine === null && expandHome(folder.path, home) === expandHome(path, home)) ? settings : {
+	return settings.folders.some((folder) => folder.machine === machine && expandHome(folder.path, home) === expandHome(path, home)) ? settings : {
 		...settings,
 		folders: [...settings.folders, {
 			name: lastSegment(path),
 			path,
-			machine: null
+			machine
 		}]
 	};
 };
@@ -9910,6 +10000,13 @@ const withFields = (settings, fields) => ({
 	skip: fields.skip.split(",").map((name) => name.trim()).filter((name) => name !== ""),
 	depth: clampDepth(fields.depth)
 });
+/** The machines a group folder can be added on by path: Herdr's machines other than this one. */
+const otherMachines = (list) => list.flatMap(({ name }) => name === null ? [] : [name]);
+/**
+* The settings with the folder typed as `typed` on `machine` (whose home there is `home`)
+* added as the last group, as `addFolder` adds one on this machine.
+*/
+const addFolderOn = (settings, machine, typed, home) => withFolder(settings, machine, typed, home);
 
 // src/repos.ts
 /** True when `path` is `root` or inside it. */
@@ -11053,6 +11150,18 @@ const waitForJob = (addr) => gen(function* () {
 		case "Running": return yield* waitForJob(addr);
 	}
 });
+/**
+* Whether `folder` is a folder on `machine`, checked there. The test exits 1 for "no";
+* any other failure (the machine can't be reached) is the check's own error.
+*/
+const isFolder = fn("isFolder")(function* (folder, machine) {
+	return yield* (yield* Shell).exec("sh", [
+		"-c",
+		"[ -d \"$1\" ]",
+		"sh",
+		folder
+	], onMachine(machine, {})).pipe(as(true), catchIf((failed) => failed._tag === "CommandFailed" && failed.code === 1, () => succeed(false)));
+});
 /** Which of `folders` on `machine` no longer exist, checked there. */
 const goneFolders = fn("goneFolders")(function* (folders, machine = null) {
 	if (folders.length === 0) return [];
@@ -11441,6 +11550,23 @@ const pickGroupFolder = fn("pickGroupFolder")(function* () {
 	const picked = yield* (yield* Files).pickFolder("Add group folder");
 	return succeed$3(picked);
 }, catchTag("PickerFailed", (failed) => succeed(fail$2(`couldn't open the folder picker (${causeText(failed.cause)})`))));
+/**
+* The settings with the folder typed as `typed` on `machine` added as a group, once a
+* check run there finds it (`~` is that machine's home, read there). A folder that isn't
+* there, or a check that can't run, is the answer's reason instead: nothing is added.
+*/
+const addGroupFolderOn = fn("addGroupFolderOn")(function* (settings, machine, typed) {
+	const path = typed.trim();
+	if (path === "") return fail$2(`Type the folder's path on ${machine}`);
+	const home = yield* machineHome(machine);
+	return (yield* isFolder(expandHome(path, home), machine)) ? succeed$3(addFolderOn(settings, machine, path, home)) : fail$2(`${path} isn't a folder on ${machine}`);
+}, (effect, _settings, machine, typed) => {
+	const cantCheck = (failed) => succeed(fail$2(`couldn't check ${typed.trim()} on ${machine}: ${failureText(failed)}`));
+	return effect.pipe(catchTags({
+		CommandFailed: cantCheck,
+		ShellError: cantCheck
+	}));
+});
 /** The settings file's text for the Settings dialog to open on (null: no file), or why it can't be read. */
 const settingsText = fn("settingsText")(function* (files) {
 	return succeed$3(yield* currentSettings(files.path));
@@ -12871,6 +12997,9 @@ var Worktrunk = class extends View {
 			broken: parsed.error,
 			names: [],
 			skip,
+			machine: none(),
+			typed: InputState.new({ placeholder: "~/code" }),
+			checking: false,
 			note: ""
 		};
 		this.nameFields(draft);
@@ -12912,10 +13041,35 @@ var Worktrunk = class extends View {
 		});
 	}
 	/**
+	* Adds the typed folder on the picked machine once a check there finds it. A folder
+	* that isn't there, or a check that can't run, is the dialog's note; nothing is added.
+	*/
+	addTypedFolder(cx, draft, machine) {
+		if (draft.checking) return;
+		draft.checking = true;
+		draft.note = "";
+		const settings = this.drafted(draft);
+		cx.spawn(async (cx) => {
+			const added = await runEdge(addGroupFolderOn(settings, machine, draft.typed.value()), fail$2);
+			draft.checking = false;
+			match$4(added, {
+				onSuccess: (next) => {
+					this.editDraft(draft, () => next);
+					draft.typed.set_value("");
+				},
+				onFailure: (reason) => {
+					draft.note = reason;
+				}
+			});
+			cx.notify();
+		});
+	}
+	/**
 	* Saves the draft, never over a hand edit made since the dialog opened; then the panel
 	* reads everything again and the dialog closes. A save that didn't happen says why.
 	*/
 	saveSettings(cx, draft) {
+		if (draft.checking) return;
 		const settings = this.drafted(draft);
 		cx.spawn(async (cx) => {
 			const saved = await runEdge(saveSettings(settingsFile(), draft.opened, settings), fail$2);
@@ -13457,10 +13611,21 @@ var Worktrunk = class extends View {
 		};
 		const heading = (text, hint) => v_flex().pt(6).gap(2).child(div().font_semibold().child(text)).child(div().text_size(sizes.label).text_color(t.muted).child(hint));
 		const hint = (text) => div().text_size(sizes.small).text_color(t.muted).child(text);
-		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.path)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
+		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
 		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repo.machine === null ? tildePath(repo.root, home()) : `${repo.machine}: ${repo.root}`)).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
+		const others = otherMachines(machines());
+		const machineChips = others.map((machine) => {
+			const on = contains(draft.machine, machine);
+			return h_flex().id(`machine-${machine}`).h(24).px(9).flex_none().items_center().rounded(12).cursor_pointer().border_1().border_color(on ? t.accent : t.border).bg(on ? t.selected : t.input).text_size(sizes.label).text_color(on ? t.foreground : t.muted).hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
+				draft.machine = some(machine);
+				cx.notify();
+			}).child(machine);
+		});
 		const check = div().size(16).flex_none().rounded(4).border_1().border_color(settings.noWrapper ? t.accent : t.border).bg(settings.noWrapper ? t.accent : t.input);
-		const body = v_flex().gap(8).pr(6).child(heading("Groups", "Each folder is scanned for repos and names a group, in this order.")).children(folders).when(folders.length === 0, (el) => el.child(hint("No group folders yet."))).child(h_flex().child(button(t, "add-folder", "Add folder…", "plain", (_e, cx) => this.pickGroupFolder(cx, draft)))).child(heading("Scan", "How deep to look for repos, and folder names never to enter.")).child(h_flex().gap(6).items_center().child(div().w(150).flex_none().child("Depth")).child(small("depth-less", "−", edit((s) => ({
+		const body = v_flex().gap(8).pr(6).child(heading("Groups", "Each folder is scanned for repos and names a group, in this order.")).children(folders).when(folders.length === 0, (el) => el.child(hint("No group folders yet."))).child(h_flex().child(button(t, "add-folder", "Add folder on this machine…", "plain", (_e, cx) => this.pickGroupFolder(cx, draft)))).when(others.length > 0, (el) => el.child(hint("Or pick another machine, type the folder's path there (~ is its home) and add it.")).child(h_flex().gap(6).flex_wrap().children(machineChips)).child(h_flex().gap(6).items_center().child(field(draft.typed, none())).child(match$5(draft.machine, {
+			onNone: () => hint("Pick a machine first"),
+			onSome: (machine) => button(t, "add-typed", draft.checking ? `Checking on ${machine}…` : `Add on ${machine}`, "plain", (_e, cx) => this.addTypedFolder(cx, draft, machine))
+		})))).child(heading("Scan", "How deep to look for repos, and folder names never to enter.")).child(h_flex().gap(6).items_center().child(div().w(150).flex_none().child("Depth")).child(small("depth-less", "−", edit((s) => ({
 			...s,
 			depth: Math.max(1, s.depth - 1)
 		})))).child(div().w(20).flex_none().text_center().child(String(settings.depth))).child(small("depth-more", "+", edit((s) => ({
