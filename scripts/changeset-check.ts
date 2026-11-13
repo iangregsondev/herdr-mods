@@ -1,11 +1,12 @@
 // Checks that a PR carries the changesets its changes need. Every mod with a changed file
-// under apps/<name>/ must be named in a changeset the PR adds; a change under packages/
-// needs at least one changeset the PR adds, an empty one included; other files need
-// nothing. The changesets version PR (head branch changeset-release/main) is skipped.
-// Exits 1 naming each mod missing a changeset, and the command to add one.
+// under apps/<name>/ must be named in a changeset the PR adds, unless the PR deletes the
+// mod; a change under packages/ needs at least one changeset the PR adds, an empty one
+// included; other files need nothing. The changesets version PR (head branch
+// changeset-release/main) is skipped. Exits 1 naming each mod missing a changeset, and
+// the command to add one.
 //
 //   vp run check:changesets   (CI, on pull_request; compares with origin/<base branch>)
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Data, Effect, Result } from "effect";
 import { Git } from "./git.ts";
@@ -75,6 +76,14 @@ const changedMods = (files: ReadonlyArray<string>): ReadonlyArray<string> =>
       }),
     ),
   ].sort();
+
+/**
+ * Whether the checkout still holds the mod `name`. A mod the PR deletes has no
+ * package.json, and changesets can't name a package that no longer exists, so it needs
+ * no changeset.
+ */
+const modExists = (repo: string, name: string): boolean =>
+  existsSync(join(repo, "apps", name, "package.json"));
 
 /** A changeset file the PR adds that couldn't be read. */
 export class ChangesetUnreadable extends Data.TaggedError("ChangesetUnreadable")<{
@@ -157,7 +166,7 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
       readChangeset(repo, file),
     );
     const named = new Set(changesets.flatMap((bumps) => Object.keys(bumps)));
-    const missing = changedMods(files).filter((mod) => !named.has(mod));
+    const missing = changedMods(files).filter((mod) => modExists(repo, mod) && !named.has(mod));
     const packagesUncovered =
       files.some((file) => file.startsWith("packages/")) && changesets.length === 0;
     const problems = [

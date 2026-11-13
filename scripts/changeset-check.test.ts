@@ -16,6 +16,8 @@ const prRepo = (): string => {
   git(repo, ["init", "-q", "-b", "main"]);
   writeFile(repo, "apps/hello/src/main.ts", "hello\n");
   writeFile(repo, "apps/menus/src/main.ts", "menus\n");
+  writeFile(repo, "apps/hello/package.json", '{ "name": "hello" }\n');
+  writeFile(repo, "apps/menus/package.json", '{ "name": "menus" }\n');
   writeFile(repo, "packages/lib/src/index.ts", "lib\n");
   writeFile(repo, "docs/develop.md", "docs\n");
   writeFile(repo, "scripts/tool.ts", "tool\n");
@@ -151,6 +153,22 @@ describe("runChangesetCheck, nothing that needs a changeset", () => {
       "package.json": "{}\n",
       "mods/iangregsondev-hello/main.js": "// built\n",
     });
+    return Effect.gen(function* () {
+      const result = yield* runChangesetCheck({ repo, base: "main" });
+      assert.deepStrictEqual(result, {
+        code: 0,
+        stdout: "changeset-check: every changed mod and package has a changeset\n",
+        stderr: "",
+      });
+    });
+  });
+});
+
+describe("runChangesetCheck, a deleted mod", () => {
+  it.effect("needs no changeset for a mod the PR deletes", () => {
+    const repo = prRepo();
+    git(repo, ["rm", "-q", "-r", "apps/hello"]);
+    commitFiles(repo, {});
     return Effect.gen(function* () {
       const result = yield* runChangesetCheck({ repo, base: "main" });
       assert.deepStrictEqual(result, {
