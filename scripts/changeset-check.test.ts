@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Result } from "effect";
 import { parseChangeset, runChangesetCheck } from "./changeset-check.ts";
-import { git, isolatedGitEnv, tempDir, writeFile } from "./test-support.ts";
+import { commitFiles, git, isolatedGitEnv, tempDir, writeFile } from "./test-support.ts";
 
 /**
  * A repo whose `main` holds two mods, a package, docs and the changesets config, with
@@ -26,13 +26,6 @@ const prRepo = (): string => {
   git(repo, ["commit", "-q", "-m", "base"]);
   git(repo, ["switch", "-q", "-c", "feature"]);
   return repo;
-};
-
-/** Writes `files` (path to content) in `repo` and commits them on HEAD's branch. */
-const commitFiles = (repo: string, files: Record<string, string>): void => {
-  Object.entries(files).forEach(([path, content]) => writeFile(repo, path, content));
-  git(repo, ["add", "-A"]);
-  git(repo, ["commit", "-q", "-m", "change"]);
 };
 
 describe("parseChangeset", () => {

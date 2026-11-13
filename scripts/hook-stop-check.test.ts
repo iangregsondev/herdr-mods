@@ -3,6 +3,9 @@ import { dirname, join, relative } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import {
   type ShResult,
+  type VpEnvOptions,
+  type VpPlace,
+  commitFiles,
   fakeLoggingBin,
   git,
   isolatedGitEnv,
@@ -10,6 +13,8 @@ import {
   runSh,
   tempDir,
   toolPath,
+  vpEnv,
+  vpFolder,
   writeFile,
 } from "./test-support.ts";
 
@@ -18,36 +23,14 @@ const hook = join(repoRoot, ".claude", "hooks", "stop-check.sh");
 
 const tools = ["sh", "jq", "git", "wc", "head", "tail"] as const;
 
-/** Where a fake `vp` can sit: on PATH, or in one of the Vite+ bin folders. */
-type VpPlace = "path" | "vpHome" | "home" | "xdg" | "xdgDefault";
-
-interface Env {
-  /** Whether VP_HOME is set (to `<root>/vp-home`); default true. */
-  vpHomeSet?: boolean;
-  /** Whether XDG_DATA_HOME is set (to `<root>/xdg`); default true. */
-  xdgSet?: boolean;
-}
-
-/** The folder for `place` under `root`, given the env `hookEnv` builds. */
-const vpFolder = (root: string, place: VpPlace): string =>
-  ({
-    path: join(root, "bin"),
-    vpHome: join(root, "vp-home", "bin"),
-    home: join(root, "home", ".vite-plus", "bin"),
-    xdg: join(root, "xdg", "vite-plus", "bin"),
-    xdgDefault: join(root, "home", ".local", "share", "vite-plus", "bin"),
-  })[place];
-
 /**
  * The hook's env: git cut off from the host, PATH of only `<root>/bin`, and HOME,
- * VP_HOME and XDG_DATA_HOME all under `root`, so the machine's real vp is never found.
+ * VP_HOME and XDG_DATA_HOME all under `root` (`vpEnv`).
  */
-const hookEnv = (root: string, project: string, env: Env = {}) => ({
+const hookEnv = (root: string, project: string, env: VpEnvOptions = {}) => ({
   ...isolatedGitEnv(),
   PATH: join(root, "bin"),
-  HOME: join(root, "home"),
-  VP_HOME: (env.vpHomeSet ?? true) ? join(root, "vp-home") : undefined,
-  XDG_DATA_HOME: (env.xdgSet ?? true) ? join(root, "xdg") : undefined,
+  ...vpEnv(root, env),
   CLAUDE_PROJECT_DIR: project,
 });
 
@@ -72,7 +55,7 @@ function setup(
     vpExit?: number;
     pathTools?: readonly string[];
     vpIn?: readonly VpPlace[];
-  } & Env = {},
+  } & VpEnvOptions = {},
 ): Setup {
   const root = tempDir();
   const project = join(root, "project");
@@ -111,13 +94,6 @@ const shownOutput = (stderr: string): string[] => {
   return lines.slice(1);
 };
 
-/** Commits `file` with `content` on the current branch. */
-const commitFile = (project: string, file: string, content: string, message: string): void => {
-  writeFile(project, file, content);
-  git(project, ["add", "."]);
-  git(project, ["commit", "-q", "-m", message]);
-};
-
 /** Squash-merges the branch: a new commit on origin/main with the same tree as HEAD. */
 const squashOntoMain = (project: string): void => {
   const squash = git(project, [
@@ -134,7 +110,7 @@ const squashOntoMain = (project: string): void => {
 /** Commits `file` with `content` on origin/main, leaving the branch checked out. */
 const commitOnMain = (project: string, file: string, content: string, message: string): void => {
   git(project, ["checkout", "-q", "--detach", "refs/remotes/origin/main"]);
-  commitFile(project, file, content, message);
+  commitFiles(project, { [file]: content }, message);
   git(project, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   git(project, ["checkout", "-q", "work"]);
 };
@@ -191,7 +167,7 @@ describe("stop-check.sh", () => {
 
   test("lets the stop through without checks on a squash-merged branch", () => {
     const { project, log, run } = setup({ vpExit: 1 });
-    commitFile(project, "b.txt", "two\n", "second");
+    commitFiles(project, { "b.txt": "two\n" }, "second");
     squashOntoMain(project);
     const result = run();
     expect(result.code).toBe(0);
@@ -200,7 +176,7 @@ describe("stop-check.sh", () => {
 
   test("lets the stop through without checks on a squash-merged branch after main moves on", () => {
     const { project, log, run } = setup({ vpExit: 1 });
-    commitFile(project, "b.txt", "two\n", "second");
+    commitFiles(project, { "b.txt": "two\n" }, "second");
     squashOntoMain(project);
     commitOnMain(project, "c.txt", "three\n", "unrelated");
     const result = run();
@@ -210,7 +186,7 @@ describe("stop-check.sh", () => {
 
   test("runs vp run verify on a squash-merged branch with a dirty tree", () => {
     const { project, log, run } = setup();
-    commitFile(project, "b.txt", "two\n", "second");
+    commitFiles(project, { "b.txt": "two\n" }, "second");
     squashOntoMain(project);
     writeFile(project, "b.txt", "changed\n");
     const result = run();
@@ -220,7 +196,7 @@ describe("stop-check.sh", () => {
 
   test("runs vp run verify when the branch conflicts with origin/main", () => {
     const { project, log, run } = setup();
-    commitFile(project, "a.txt", "branch\n", "branch edit");
+    commitFiles(project, { "a.txt": "branch\n" }, "branch edit");
     commitOnMain(project, "a.txt", "main\n", "main edit");
     const result = run();
     expect(result.code).toBe(0);
@@ -233,7 +209,7 @@ describe("stop-check.sh", () => {
     git(project, ["init", "-q", "--bare", remote]);
     git(project, ["remote", "add", "origin", remote]);
     const stale = git(project, ["rev-parse", "refs/remotes/origin/main"]).trim();
-    commitFile(project, "b.txt", "two\n", "second");
+    commitFiles(project, { "b.txt": "two\n" }, "second");
     squashOntoMain(project);
     git(project, ["push", "-q", "origin", "refs/remotes/origin/main:refs/heads/main"]);
     git(project, ["update-ref", "refs/remotes/origin/main", stale]);

@@ -175,6 +175,50 @@ export function git(cwd: string, args: readonly string[]): string {
   });
 }
 
+/** Writes `files` (path to content) in `repo` and commits them on HEAD's branch. */
+export function commitFiles(repo: string, files: Record<string, string>, message = "change"): void {
+  Object.entries(files).forEach(([path, content]) => writeFile(repo, path, content));
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", message]);
+}
+
+/**
+ * Where a hook test's fake `vp` can sit: on PATH, or in one of the Vite+ bin folders
+ * (`xdgDefault` is the one used when XDG_DATA_HOME is unset).
+ */
+export type VpPlace = "path" | "vpHome" | "home" | "xdg" | "xdgDefault";
+
+/** The folder for `place` under `root`, given the PATH `toolPath` builds and `vpEnv`. */
+export const vpFolder = (root: string, place: VpPlace): string =>
+  ({
+    path: join(root, "bin"),
+    vpHome: join(root, "vp-home", "bin"),
+    home: join(root, "home", ".vite-plus", "bin"),
+    xdg: join(root, "xdg", "vite-plus", "bin"),
+    xdgDefault: join(root, "home", ".local", "share", "vite-plus", "bin"),
+  })[place];
+
+/** Which of the Vite+ env vars `vpEnv` sets; each defaults to true. */
+export interface VpEnvOptions {
+  /** Whether VP_HOME is set (to `<root>/vp-home`). */
+  vpHomeSet?: boolean;
+  /** Whether XDG_DATA_HOME is set (to `<root>/xdg`). */
+  xdgSet?: boolean;
+}
+
+/**
+ * HOME, VP_HOME and XDG_DATA_HOME all under `root`, so a hook never finds the machine's
+ * real vp. An unset var is undefined, which `runSh` removes from the env.
+ */
+export const vpEnv = (
+  root: string,
+  options: VpEnvOptions = {},
+): Record<string, string | undefined> => ({
+  HOME: join(root, "home"),
+  VP_HOME: (options.vpHomeSet ?? true) ? join(root, "vp-home") : undefined,
+  XDG_DATA_HOME: (options.xdgSet ?? true) ? join(root, "xdg") : undefined,
+});
+
 /** A fake Herdr host for the Remote layer: see `fakeHerdrHost`. */
 export interface FakeHerdrHost {
   /** The host's file system root; the remote shell's HOME, so `~/…` lands here. */
