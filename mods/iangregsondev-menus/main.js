@@ -8191,8 +8191,8 @@ var WriteConflict = class extends TaggedError("WriteConflict") {};
 var PickerFailed = class extends TaggedError("PickerFailed") {};
 var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 	static layer = (api) => {
-		const read = (path) => tryPromise({
-			try: () => api.readTextFile(path),
+		const read = (path, on = null) => tryPromise({
+			try: () => on === null ? api.readTextFile(path) : api.readTextFile(path, { on }),
 			catch: (cause) => new FileError({
 				path,
 				cause
