@@ -135,6 +135,7 @@ import {
   type RepoList,
 } from "./reads.ts";
 import {
+  locatedLabel,
   repoKey,
   repoOfKey,
   THIS_MACHINE,
@@ -1730,7 +1731,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`),
+            .child(locatedLabel({ machine: folder.machine, folder: folder.path })),
         )
         .child(
           small(
@@ -1766,11 +1767,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(
-              repo.machine === null
-                ? tildePath(repo.root, home())
-                : `${repo.machine}: ${repo.root}`,
-            ),
+            .child(repoHint(repo, home())),
         )
         .child(
           button(

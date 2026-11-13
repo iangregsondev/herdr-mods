@@ -10,7 +10,7 @@
 // `machine`, and a hidden repo written as a bare folder, are on this machine.
 import { Option, Predicate, Result } from "effect";
 import { finite, parseJson } from "worktrunk-mailbox";
-import { repoKey, THIS_MACHINE, type Machine, type RepoId } from "./machines.ts";
+import { repoKey, THIS_MACHINE, tildePath, type Machine, type RepoId } from "./machines.ts";
 
 export interface GroupFolder {
   /** The group's name, such as "Work". */
@@ -119,9 +119,7 @@ export const lastSegment = (path: string): string =>
 export const expandHome = (path: string, home: string): string =>
   path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
 
-/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
-export const tildePath = (path: string, home: string): string =>
-  path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+export { tildePath };
 
 const trimSlashes = (path: string): string => path.trim().replace(/\/+$/, "");
 

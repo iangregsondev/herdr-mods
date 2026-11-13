@@ -1,7 +1,13 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import { machineName, repoKey, type Machine, type MachineStatus } from "./machines.ts";
+import {
+  locatedLabel,
+  machineName,
+  repoKey,
+  type Machine,
+  type MachineStatus,
+} from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
@@ -408,7 +414,8 @@ const machineLabel = (snapshot: Snapshot, repo: Repo): Option.Option<string> =>
 const flatRepoName = (snapshot: Snapshot, repo: Repo): string =>
   Option.match(machineLabel(snapshot, repo), {
     onNone: () => lastSegment(repo.root),
-    onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`,
+    onSome: () =>
+      locatedLabel({ machine: repo.machine, folder: lastSegment(repo.root) }, { nameHere: true }),
   });
 
 const repoView = (

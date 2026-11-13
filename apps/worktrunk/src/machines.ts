@@ -75,3 +75,26 @@ export const statusOf = (states: MachineStates, machine: Machine): Option.Option
       return Option.none();
   }
 };
+
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+export const tildePath = (path: string, home: string): string =>
+  path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+
+/** How a label shows a folder on this machine. */
+export interface LabelOptions {
+  /** This machine's home, shown as `~`. */
+  readonly home?: string;
+  /** Name this machine too, as "this machine". */
+  readonly nameHere?: boolean;
+}
+
+/**
+ * A folder on its machine, for a label: on another machine `<machine>: <folder>`; on
+ * this one the folder alone (`~` for `home`), or after "this machine" with `nameHere`.
+ */
+export const locatedLabel = ({ machine, folder }: Located, options: LabelOptions = {}): string => {
+  if (machine !== THIS_MACHINE || options.nameHere === true) {
+    return `${machineName(machine)}: ${folder}`;
+  }
+  return options.home === undefined ? folder : tildePath(folder, options.home);
+};

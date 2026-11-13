@@ -9834,6 +9834,16 @@ const statusOf$1 = (states, machine) => {
 		default: return none();
 	}
 };
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+/**
+* A folder on its machine, for a label: on another machine `<machine>: <folder>`; on
+* this one the folder alone (`~` for `home`), or after "this machine" with `nameHere`.
+*/
+const locatedLabel = ({ machine, folder }, options = {}) => {
+	if (machine !== null || options.nameHere === true) return `${machineName(machine)}: ${folder}`;
+	return options.home === void 0 ? folder : tildePath(folder, options.home);
+};
 
 // src/settings.ts
 const DEFAULT_SETTINGS = {
@@ -9867,8 +9877,6 @@ const readSettingsFile = (value) => {
 const lastSegment = (path) => path.split("/").filter((part) => part !== "").at(-1) ?? path;
 /** `path` with a leading `~` turned into `home`. */
 const expandHome = (path, home) => path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
-/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
-const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 const trimSlashes = (path) => path.trim().replace(/\/+$/, "");
 const clampDepth = (depth) => Math.min(8, Math.max(1, Math.round(depth)));
 const normalize = (file) => ({
@@ -10550,7 +10558,10 @@ const dialogCopy = (state) => ({
 	worktreeHint: (path) => state.mode === "open" ? lastSegment(path) : "open worktree"
 });
 /** The hint beside a repo the dialog offers: where it is, and on which machine. */
-const repoHint = ({ machine, root }, home) => machine === null ? tildePath(root, home) : `${machine}: ${root}`;
+const repoHint = ({ machine, root }, home) => locatedLabel({
+	machine,
+	folder: root
+}, { home });
 
 // src/keys.ts
 const IGNORE = { _tag: "Ignore" };
@@ -12160,7 +12171,10 @@ const machineLabel = (snapshot, repo) => liftPredicate(machineName(repo.machine)
 /** A flat row's repo: its folder name, after its machine while more than one is listed. */
 const flatRepoName = (snapshot, repo) => match$5(machineLabel(snapshot, repo), {
 	onNone: () => lastSegment(repo.root),
-	onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`
+	onSome: () => locatedLabel({
+		machine: repo.machine,
+		folder: lastSegment(repo.root)
+	}, { nameHere: true })
 });
 const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => {
 	const list = listOf(snapshot, repo);
@@ -13755,8 +13769,11 @@ var Worktrunk = class extends View {
 		};
 		const heading = (text, hint) => v_flex().pt(6).gap(2).child(div().font_semibold().child(text)).child(div().text_size(sizes.label).text_color(t.muted).child(hint));
 		const hint = (text) => div().text_size(sizes.small).text_color(t.muted).child(text);
-		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
-		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repo.machine === null ? tildePath(repo.root, home()) : `${repo.machine}: ${repo.root}`)).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
+		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(locatedLabel({
+			machine: folder.machine,
+			folder: folder.path
+		}))).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
+		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repoHint(repo, home()))).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
 		const others = otherMachines(machines());
 		const machineChips = others.map((machine) => {
 			const on = contains(draft.machine, machine);

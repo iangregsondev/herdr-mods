@@ -4,8 +4,8 @@
 import { Option, Result } from "effect";
 import { isShortcut } from "./commands.ts";
 import type { Action } from "./menus.ts";
-import { THIS_MACHINE, type RepoId } from "./machines.ts";
-import { lastSegment, tildePath } from "./settings.ts";
+import { locatedLabel, THIS_MACHINE, type RepoId } from "./machines.ts";
+import { lastSegment } from "./settings.ts";
 import type { Worktree } from "./worktrees.ts";
 
 /** A branch the dialog can offer: local, or only on origin. */
@@ -337,4 +337,4 @@ export const dialogCopy = (state: DialogState): DialogCopy => ({
 
 /** The hint beside a repo the dialog offers: where it is, and on which machine. */
 export const repoHint = ({ machine, root }: RepoId, home: string): string =>
-  machine === THIS_MACHINE ? tildePath(root, home) : `${machine}: ${root}`;
+  locatedLabel({ machine, folder: root }, { home });

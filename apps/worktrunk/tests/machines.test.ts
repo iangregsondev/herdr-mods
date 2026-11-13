@@ -1,6 +1,13 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { machineStates, repoKey, repoOfKey, statusOf, THIS_MACHINE } from "../src/machines.ts";
+import {
+  locatedLabel,
+  machineStates,
+  repoKey,
+  repoOfKey,
+  statusOf,
+  THIS_MACHINE,
+} from "../src/machines.ts";
 
 describe("repoKey", () => {
   test("a repo on this machine is keyed by its folder alone", () => {
@@ -50,5 +57,26 @@ describe("statusOf", () => {
   test("this machine is always read, whatever its layout's state", () => {
     const starting = machineStates([{ name: null, layout: "loading" }]);
     expect(statusOf(starting, THIS_MACHINE)).toEqual(Option.none());
+  });
+});
+
+describe("locatedLabel", () => {
+  test("a folder on another machine follows the machine's name", () => {
+    expect(locatedLabel({ machine: "linux", folder: "/srv/app" }, { home: "/srv" })).toBe(
+      "linux: /srv/app",
+    );
+  });
+
+  test("a folder on this machine is the folder alone, its home as ~", () => {
+    expect([
+      locatedLabel({ machine: THIS_MACHINE, folder: "/Users/me/r/app" }, { home: "/Users/me" }),
+      locatedLabel({ machine: THIS_MACHINE, folder: "/opt/r" }),
+    ]).toEqual(["~/r/app", "/opt/r"]);
+  });
+
+  test('with nameHere, a folder on this machine follows "this machine"', () => {
+    expect(locatedLabel({ machine: THIS_MACHINE, folder: "api" }, { nameHere: true })).toBe(
+      "this machine: api",
+    );
   });
 });
