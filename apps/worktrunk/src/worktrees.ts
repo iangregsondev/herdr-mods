@@ -5,7 +5,10 @@ import { at, finite, parseJson, text } from "worktrunk-mailbox";
 /** Where a worktree stands against the default branch. */
 export type WorktreeState =
   | { readonly _tag: "Main" }
-  /** At main's tip with no commits or changes of its own: nothing to clean up yet. */
+  /**
+   * At main's tip or the main checkout's commit, with no commits or changes of its own:
+   * nothing to clean up yet.
+   */
   | { readonly _tag: "New" }
   /** In main already; `reason` is wt's integration reason, such as "patch_id_match". */
   | { readonly _tag: "Merged"; readonly reason: Option.Option<string> }
@@ -61,13 +64,30 @@ const count = (item: unknown, ...path: readonly string[]): number =>
 const dirtyOf = (item: unknown): boolean =>
   CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
 
-const stateOf = (item: unknown): WorktreeState => {
-  if (at(item, "worktree", "main") === true) return { _tag: "Main" };
+const isMain = (item: unknown): boolean => at(item, "worktree", "main") === true;
+
+const headOf = (item: unknown): Option.Option<string> => text(at(item, "head", "sha"));
+
+/**
+ * New: no commits or changes of its own, and at main's tip or at the main checkout's commit.
+ * wt compares with the remote's main, so a worktree made from a main checkout that hasn't
+ * pulled reads as integrated "ancestor" although nothing was done in it.
+ */
+const isNew = (item: unknown, mainHead: Option.Option<string>): boolean => {
+  if (dirtyOf(item) || count(item, "default_branch", "ahead") !== 0) return false;
+  const atTip =
+    at(item, "display", "state") === "empty" &&
+    Option.contains(text(at(item, "default_branch", "integration", "reason")), "same_commit");
+  const head = headOf(item);
+  const atMainCheckout = Option.isSome(head) && Option.contains(mainHead, head.value);
+  return atTip || atMainCheckout;
+};
+
+const stateOf = (item: unknown, mainHead: Option.Option<string>): WorktreeState => {
+  if (isMain(item)) return { _tag: "Main" };
+  if (isNew(item, mainHead)) return { _tag: "New" };
   const state = at(item, "display", "state");
   const reason = text(at(item, "default_branch", "integration", "reason"));
-  if (state === "empty" && Option.contains(reason, "same_commit") && !dirtyOf(item)) {
-    return { _tag: "New" };
-  }
   if (state === "integrated" || state === "empty") return { _tag: "Merged", reason };
   if (state === "would_conflict") return { _tag: "Conflict" };
   return { _tag: "Active" };
@@ -94,13 +114,17 @@ const ciOf = (item: unknown, asked: boolean): Ci => {
   return { _tag: "Unknown" };
 };
 
-const toWorktree = (item: unknown, asked: boolean): Option.Option<Worktree> =>
+const toWorktree = (
+  item: unknown,
+  asked: boolean,
+  mainHead: Option.Option<string>,
+): Option.Option<Worktree> =>
   Option.map(text(at(item, "worktree", "path")), (path) => {
     const upstream = at(item, "upstream");
     return {
       branch: text(at(item, "branch")),
       path,
-      state: stateOf(item),
+      state: stateOf(item, mainHead),
       ahead: count(item, "default_branch", "ahead"),
       behind: count(item, "default_branch", "behind"),
       added: count(item, "default_branch", "diff", "added"),
@@ -129,7 +153,8 @@ export const parseList = (output: string): Result.Result<readonly Worktree[], st
       Result.map(itemsOf(list), (items) => {
         // Only `--full` collects CI; the bare-array shape never says, so it counts as not asked.
         const asked = at(list, "collected", "ci") === true;
-        return items.flatMap((item) => Option.toArray(toWorktree(item, asked)));
+        const mainHead = Option.flatMap(Option.fromNullishOr(items.find(isMain)), headOf);
+        return items.flatMap((item) => Option.toArray(toWorktree(item, asked, mainHead)));
       }),
     ),
   );

@@ -11008,11 +11008,25 @@ const CHANGE_KINDS = [
 ];
 const count = (item, ...path) => getOrElse$1(finite(at(item, ...path)), () => 0);
 const dirtyOf = (item) => CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
-const stateOf = (item) => {
-	if (at(item, "worktree", "main") === true) return { _tag: "Main" };
+const isMain = (item) => at(item, "worktree", "main") === true;
+const headOf = (item) => text(at(item, "head", "sha"));
+/**
+* New: no commits or changes of its own, and at main's tip or at the main checkout's commit.
+* wt compares with the remote's main, so a worktree made from a main checkout that hasn't
+* pulled reads as integrated "ancestor" although nothing was done in it.
+*/
+const isNew = (item, mainHead) => {
+	if (dirtyOf(item) || count(item, "default_branch", "ahead") !== 0) return false;
+	const atTip = at(item, "display", "state") === "empty" && contains(text(at(item, "default_branch", "integration", "reason")), "same_commit");
+	const head = headOf(item);
+	const atMainCheckout = isSome(head) && contains(mainHead, head.value);
+	return atTip || atMainCheckout;
+};
+const stateOf = (item, mainHead) => {
+	if (isMain(item)) return { _tag: "Main" };
+	if (isNew(item, mainHead)) return { _tag: "New" };
 	const state = at(item, "display", "state");
 	const reason = text(at(item, "default_branch", "integration", "reason"));
-	if (state === "empty" && contains(reason, "same_commit") && !dirtyOf(item)) return { _tag: "New" };
 	if (state === "integrated" || state === "empty") return {
 		_tag: "Merged",
 		reason
@@ -11040,12 +11054,12 @@ const ciOf$1 = (item, asked) => {
 	if (checks === void 0 && at(item, "pr") !== null) return { _tag: "None" };
 	return { _tag: "Unknown" };
 };
-const toWorktree = (item, asked) => map$3(text(at(item, "worktree", "path")), (path) => {
+const toWorktree = (item, asked, mainHead) => map$3(text(at(item, "worktree", "path")), (path) => {
 	const upstream = at(item, "upstream");
 	return {
 		branch: text(at(item, "branch")),
 		path,
-		state: stateOf(item),
+		state: stateOf(item, mainHead),
 		ahead: count(item, "default_branch", "ahead"),
 		behind: count(item, "default_branch", "behind"),
 		added: count(item, "default_branch", "diff", "added"),
@@ -11066,7 +11080,8 @@ const itemsOf = (list) => {
 /** The worktrees in `wt list --format=json` output, in wt's order, or why it didn't parse. */
 const parseList = (output) => parseJson(output).pipe(flatMap$2((list) => map$2(itemsOf(list), (items) => {
 	const asked = at(list, "collected", "ci") === true;
-	return items.flatMap((item) => toArray(toWorktree(item, asked)));
+	const mainHead = flatMap$3(fromNullishOr(items.find(isMain)), headOf);
+	return items.flatMap((item) => toArray(toWorktree(item, asked, mainHead)));
 })));
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
