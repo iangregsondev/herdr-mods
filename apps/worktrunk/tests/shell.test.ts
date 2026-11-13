@@ -246,7 +246,10 @@ describe("wtCi", () => {
 });
 
 describe("scanRepos", () => {
-  const settings = { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "~/work" }] };
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    folders: [{ name: "Work", path: "~/work", machine: THIS_MACHINE }],
+  };
 
   it.effect("runs the folder scan for the settings and reads the repos it found", () =>
     Effect.gen(function* () {

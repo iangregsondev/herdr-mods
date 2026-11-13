@@ -1,3 +1,4 @@
+import { THIS_MACHINE } from "../src/machines.ts";
 import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import { Option } from "effect";
@@ -17,8 +18,8 @@ describe("scanArgs", () => {
     const settings = {
       ...DEFAULT_SETTINGS,
       folders: [
-        { name: "Work", path: "~/work" },
-        { name: "Abs", path: "/srv" },
+        { name: "Work", path: "~/work", machine: THIS_MACHINE },
+        { name: "Abs", path: "/srv", machine: THIS_MACHINE },
       ],
       depth: 3,
       skip: ["node_modules", ".cache"],

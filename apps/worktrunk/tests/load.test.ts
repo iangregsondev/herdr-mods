@@ -83,7 +83,7 @@ describe("loadSettings", () => {
       assert.deepStrictEqual(loaded, {
         parsed: {
           settings: {
-            folders: [{ name: "Work", path: "~/w" }],
+            folders: [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
             depth: 2,
             skip: [],
             hidden: [],
@@ -102,7 +102,9 @@ describe("loadSettings", () => {
       const { api, writes } = disk({ [FILES.legacyPath]: WORK });
       const loaded = yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(loaded.settled, true);
-      assert.deepStrictEqual(loaded.parsed.settings.folders, [{ name: "Work", path: "~/w" }]);
+      assert.deepStrictEqual(loaded.parsed.settings.folders, [
+        { name: "Work", path: "~/w", machine: THIS_MACHINE },
+      ]);
       assert.deepStrictEqual(writes, [
         [FILES.path, serializeSettings(loaded.parsed.settings), null],
       ]);
@@ -132,7 +134,7 @@ describe("loadSettings", () => {
       assert.deepStrictEqual(
         [loaded.parsed.settings.folders, loaded.parsed.error, loaded.leftover, loaded.settled],
         [
-          [{ name: "Work", path: "~/w" }],
+          [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
           Option.none(),
           Option.some("worktrunk.json: imported, but couldn't delete it (Permission denied)"),
           true,
@@ -295,7 +297,10 @@ const scripts = (answers: { readonly scan?: string; readonly owners?: string }) 
 };
 
 describe("findRepos", () => {
-  const settings = { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w" }] };
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    folders: [{ name: "Work", path: "/w", machine: THIS_MACHINE }],
+  };
 
   it.effect("scans the group folders and adds the open spaces' repos", () =>
     Effect.gen(function* () {
@@ -760,7 +765,7 @@ describe("hideInSettings", () => {
       );
       const hidden = serializeSettings({
         ...DEFAULT_SETTINGS,
-        folders: [{ name: "Work", path: "~/w" }],
+        folders: [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
         depth: 2,
         skip: [],
         hidden: [here("/w/api")],
@@ -1244,7 +1249,11 @@ describe("settingsText", () => {
 });
 
 describe("saveSettings", () => {
-  const edited = { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "~/w" }], depth: 5 };
+  const edited = {
+    ...DEFAULT_SETTINGS,
+    folders: [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
+    depth: 5,
+  };
   const CHANGED =
     "The settings file changed since this dialog opened, so nothing was saved. Close and open Settings again to edit the new file.";
 

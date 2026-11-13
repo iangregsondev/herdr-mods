@@ -58,7 +58,7 @@ describe("parseSettings", () => {
     });
     expect(parseSettings(text, FILE)).toEqual({
       settings: {
-        folders: [{ name: "Work", path: "~/code/work" }],
+        folders: [{ name: "Work", path: "~/code/work", machine: THIS_MACHINE }],
         depth: 3,
         skip: ["vendor"],
         hidden: [],
@@ -108,7 +108,7 @@ describe("parseSettings", () => {
   test("a folder without a name is named after its last segment", () => {
     const text = JSON.stringify({ folders: [{ path: "~/code/Personal/" }] });
     expect(parseSettings(text, FILE).settings.folders).toEqual([
-      { name: "Personal", path: "~/code/Personal" },
+      { name: "Personal", path: "~/code/Personal", machine: THIS_MACHINE },
     ]);
   });
 
@@ -118,7 +118,7 @@ describe("parseSettings", () => {
       skip: [" dist ", ""],
     });
     expect(parseSettings(text, FILE).settings).toMatchObject({
-      folders: [{ name: "Work", path: "~/w" }],
+      folders: [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
       skip: ["dist"],
     });
   });
@@ -180,7 +180,7 @@ describe("serializeSettings", () => {
       hidden: [here("/r/old")],
       skip: ["a"],
       depth: 2,
-      folders: [{ name: "W", path: "~/w" }],
+      folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
     });
     expect(text).toBe(
       '{\n  "folders": [\n    {\n      "name": "W",\n      "path": "~/w"\n    }\n  ],\n  "depth": 2,\n  "skip": [\n    "a"\n  ],\n  "hidden": [\n    "/r/old"\n  ],\n  "noWrapper": true\n}\n',
@@ -189,7 +189,7 @@ describe("serializeSettings", () => {
 
   test("round-trips through parseSettings", () => {
     const settings = {
-      folders: [{ name: "W", path: "~/w" }],
+      folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
       depth: 5,
       skip: [],
       hidden: [here("/r/old")],
@@ -219,7 +219,7 @@ describe("planImport", () => {
     expect(plan.settled).toBe(true);
     expect(Option.map(plan.write, (text) => parseSettings(text, FILE).settings)).toEqual(
       Option.some({
-        folders: [{ name: "Personal", path: "~/code/personal" }],
+        folders: [{ name: "Personal", path: "~/code/personal", machine: THIS_MACHINE }],
         depth: 4,
         skip: ["node_modules"],
         hidden: [],
@@ -248,7 +248,7 @@ describe("planImport", () => {
 describe("hideRepo", () => {
   const file = serializeSettings({
     ...DEFAULT_SETTINGS,
-    folders: [{ name: "W", path: "~/w" }],
+    folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
     hidden: [here("/w/old")],
   });
   const settingsOf = (result: Result.Result<string, string>) =>
@@ -258,7 +258,7 @@ describe("hideRepo", () => {
     expect(settingsOf(hideRepo(file, here("/w/api"), FILE))).toEqual(
       Result.succeed({
         ...DEFAULT_SETTINGS,
-        folders: [{ name: "W", path: "~/w" }],
+        folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
         hidden: [here("/w/old"), here("/w/api")],
       }),
     );
@@ -268,7 +268,7 @@ describe("hideRepo", () => {
     expect(settingsOf(hideRepo(file, { machine: "linux", root: "/w/old" }, FILE))).toEqual(
       Result.succeed({
         ...DEFAULT_SETTINGS,
-        folders: [{ name: "W", path: "~/w" }],
+        folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
         hidden: [here("/w/old"), { machine: "linux", root: "/w/old" }],
       }),
     );
@@ -342,8 +342,8 @@ describe("editing in the Settings dialog", () => {
   const two = {
     ...DEFAULT_SETTINGS,
     folders: [
-      { name: "Work", path: "~/code/work" },
-      { name: "Personal", path: "~/code/personal" },
+      { name: "Work", path: "~/code/work", machine: THIS_MACHINE },
+      { name: "Personal", path: "~/code/personal", machine: THIS_MACHINE },
     ],
   };
   const names = (settings: Settings) => settings.folders.map((folder) => folder.name);
@@ -362,13 +362,13 @@ describe("editing in the Settings dialog", () => {
   test("a picked folder joins the end, under home written with ~, named after its last segment", () => {
     expect(addFolder(two, "/Users/me/src/oss/", HOME).folders).toEqual([
       ...two.folders,
-      { name: "oss", path: "~/src/oss" },
+      { name: "oss", path: "~/src/oss", machine: THIS_MACHINE },
     ]);
   });
 
   test("a folder outside home keeps its full path", () => {
     expect(addFolder(DEFAULT_SETTINGS, "/Volumes/x", HOME).folders).toEqual([
-      { name: "x", path: "/Volumes/x" },
+      { name: "x", path: "/Volumes/x", machine: THIS_MACHINE },
     ]);
   });
 
@@ -398,7 +398,10 @@ describe("editing in the Settings dialog", () => {
   });
 
   test("removing a folder keeps the others in order", () => {
-    const three = { ...two, folders: [...two.folders, { name: "Oss", path: "~/oss" }] };
+    const three = {
+      ...two,
+      folders: [...two.folders, { name: "Oss", path: "~/oss", machine: THIS_MACHINE }],
+    };
     expect(names(removeFolder(three, 1))).toEqual(["Work", "Oss"]);
   });
 
@@ -409,8 +412,8 @@ describe("editing in the Settings dialog", () => {
   test("the name fields name the folders, trimmed", () => {
     const next = withFields(two, { names: [" Jobs ", "Home"], skip: "", depth: 4 });
     expect(next.folders).toEqual([
-      { name: "Jobs", path: "~/code/work" },
-      { name: "Home", path: "~/code/personal" },
+      { name: "Jobs", path: "~/code/work", machine: THIS_MACHINE },
+      { name: "Home", path: "~/code/personal", machine: THIS_MACHINE },
     ]);
   });
 
@@ -452,14 +455,71 @@ describe("editing in the Settings dialog", () => {
     const text = plan._tag === "Write" ? plan.text : "";
     expect(parseSettings(text, FILE).settings).toEqual({
       folders: [
-        { name: "W", path: "~/code/work" },
-        { name: "O", path: "~/oss" },
-        { name: "P", path: "~/code/personal" },
+        { name: "W", path: "~/code/work", machine: THIS_MACHINE },
+        { name: "O", path: "~/oss", machine: THIS_MACHINE },
+        { name: "P", path: "~/code/personal", machine: THIS_MACHINE },
       ],
       depth: 2,
       skip: ["vendor"],
       hidden: [],
       noWrapper: true,
     });
+  });
+});
+
+describe("group folders on machines", () => {
+  test("a folder that names its machine is on that machine", () => {
+    const text = JSON.stringify({ folders: [{ name: "Box", path: "~/code", machine: "linux" }] });
+    expect(parseSettings(text, FILE).settings.folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+    ]);
+  });
+
+  test("a folder that names no machine is on this machine", () => {
+    const text = JSON.stringify({ folders: [{ name: "Work", path: "~/code/work" }] });
+    expect(parseSettings(text, FILE).settings.folders).toEqual([
+      { name: "Work", path: "~/code/work", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("the file keeps a folder's machine, and names none for this machine", () => {
+    const text = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      folders: [
+        { name: "Box", path: "~/code", machine: "linux" },
+        { name: "Work", path: "~/work", machine: THIS_MACHINE },
+      ],
+    });
+    expect(JSON.parse(text).folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+      { name: "Work", path: "~/work" },
+    ]);
+  });
+
+  test("a folder picked in the folder picker is on this machine", () => {
+    expect(addFolder(DEFAULT_SETTINGS, "/Volumes/x", "/Users/me").folders).toEqual([
+      { name: "x", path: "/Volumes/x", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("picking a folder listed only on another machine adds it for this machine", () => {
+    const remote = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "x", path: "/srv/x", machine: "linux" }],
+    };
+    expect(addFolder(remote, "/srv/x", "/Users/me").folders).toEqual([
+      { name: "x", path: "/srv/x", machine: "linux" },
+      { name: "x", path: "/srv/x", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("naming a folder in the Settings dialog keeps its machine", () => {
+    const remote = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "x", path: "/srv/x", machine: "linux" }],
+    };
+    expect(withFields(remote, { names: ["Box"], skip: "", depth: 4 }).folders).toEqual([
+      { name: "Box", path: "/srv/x", machine: "linux" },
+    ]);
   });
 });

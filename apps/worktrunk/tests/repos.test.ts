@@ -13,9 +13,9 @@ import { THIS_MACHINE } from "../src/machines.ts";
 
 const HOME = "/home/me";
 const folders = [
-  { name: "Work", path: "~/dev/work" },
-  { name: "Clients", path: "~/dev/work/clients" },
-  { name: "Abs", path: "/srv/code" },
+  { name: "Work", path: "~/dev/work", machine: THIS_MACHINE },
+  { name: "Clients", path: "~/dev/work/clients", machine: THIS_MACHINE },
+  { name: "Abs", path: "/srv/code", machine: THIS_MACHINE },
 ];
 
 describe("expandHome", () => {

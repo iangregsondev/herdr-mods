@@ -8,13 +8,15 @@
 // folder is on this machine.
 import { Option, Predicate, Result } from "effect";
 import { finite, parseJson } from "worktrunk-mailbox";
-import { repoKey, THIS_MACHINE, type RepoId } from "./machines.ts";
+import { repoKey, THIS_MACHINE, type Machine, type RepoId } from "./machines.ts";
 
 export interface GroupFolder {
   /** The group's name, such as "Work". */
   readonly name: string;
-  /** The folder; may start with `~`. No trailing slash. */
+  /** The folder; may start with `~`, that machine's home. No trailing slash. */
   readonly path: string;
+  /** The machine the folder is on. */
+  readonly machine: Machine;
 }
 
 export interface Settings {
@@ -46,6 +48,7 @@ export interface ParsedSettings {
 interface FolderEntry {
   readonly name?: string;
   readonly path: string;
+  readonly machine?: string;
 }
 
 /** A hidden repo as written: a folder on this machine, or a folder on a named machine. */
@@ -63,7 +66,8 @@ interface SettingsFile {
 const isFolderEntry = (value: unknown): value is FolderEntry =>
   Predicate.isObject(value) &&
   Predicate.isString(value.path) &&
-  (value.name === undefined || Predicate.isString(value.name));
+  (value.name === undefined || Predicate.isString(value.name)) &&
+  (value.machine === undefined || Predicate.isString(value.machine));
 
 const isHiddenEntry = (value: unknown): value is HiddenEntry =>
   Predicate.isString(value) ||
@@ -126,7 +130,13 @@ const normalize = (file: SettingsFile): Settings => ({
     const path = trimSlashes(folder.path);
     if (path === "") return [];
     const name = folder.name?.trim() ?? "";
-    return [{ name: name === "" ? lastSegment(path) : name, path }];
+    return [
+      {
+        name: name === "" ? lastSegment(path) : name,
+        path,
+        machine: folder.machine ?? THIS_MACHINE,
+      },
+    ];
   }),
   depth: file.depth === undefined ? DEFAULT_SETTINGS.depth : clampDepth(file.depth),
   skip:
@@ -170,7 +180,9 @@ export const serializeSettings = ({
   noWrapper,
 }: Settings): string => {
   const ordered = {
-    folders: folders.map(({ name, path }) => ({ name, path })),
+    folders: folders.map(({ name, path, machine }): FolderEntry =>
+      machine === null ? { name, path } : { name, path, machine },
+    ),
     depth,
     skip,
     hidden: hidden.map(({ machine, root }): HiddenEntry =>
@@ -267,19 +279,23 @@ export const unhide = (settings: Settings, repo: RepoId): Settings => ({
 });
 
 /**
- * The settings with the folder picked at `picked` added as the last group, named after
- * its last segment and written with `~` under `home`. A folder already listed changes
- * nothing.
+ * The settings with the folder picked at `picked` (on this machine, whose home is `home`)
+ * added as the last group, named after its last segment and written with `~` under
+ * `home`. A folder already listed on this machine changes nothing.
  */
 export const addFolder = (settings: Settings, picked: string, home: string): Settings => {
   const path = tildePath(trimSlashes(picked), home);
   if (path === "") return settings;
   const listed = settings.folders.some(
-    (folder) => expandHome(folder.path, home) === expandHome(path, home),
+    (folder) =>
+      folder.machine === THIS_MACHINE && expandHome(folder.path, home) === expandHome(path, home),
   );
   return listed
     ? settings
-    : { ...settings, folders: [...settings.folders, { name: lastSegment(path), path }] };
+    : {
+        ...settings,
+        folders: [...settings.folders, { name: lastSegment(path), path, machine: THIS_MACHINE }],
+      };
 };
 
 /** The settings with the folder at `index` moved `by` places; past either end, unchanged. */
@@ -317,7 +333,7 @@ export const withFields = (settings: Settings, fields: Fields): Settings => ({
   ...settings,
   folders: settings.folders.map((folder, i) => {
     const name = (fields.names[i] ?? folder.name).trim();
-    return { name: name === "" ? lastSegment(folder.path) : name, path: folder.path };
+    return { ...folder, name: name === "" ? lastSegment(folder.path) : name };
   }),
   skip: fields.skip
     .split(",")

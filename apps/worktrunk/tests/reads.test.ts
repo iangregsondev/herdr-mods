@@ -213,7 +213,7 @@ describe("onRender", () => {
 
 describe("currentRepoOf", () => {
   const LISTED: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 3, group: "Work" };
-  const folders = [{ name: "Work", path: "~/w" }];
+  const folders = [{ name: "Work", path: "~/w", machine: THIS_MACHINE }];
   const answer = (found: Option.Option<FoundRepo>) => Option.some(Result.succeed(found));
 
   test("NotInRepo when the focused folder is in none", () => {
