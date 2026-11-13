@@ -2,7 +2,7 @@
 // A mod builds from apps/<name>/src/main.ts into the repo-root mods/<mod id>/,
 // the folder Herdr users install. That output is committed.
 // The mod id is the namespace, a hyphen and the short name (docs/adr/0002):
-// apps/hello/ installs as iangregsondev-hello. The source, package names and dev
+// apps/worktrunk/ installs as iangregsondev-worktrunk. The source, package names and dev
 // commands keep the short name; only the installed folders carry the id.
 //
 // Watch mode (`vp run <name>#dev`) builds into the Herdr app instead, on the dev
