@@ -11,6 +11,7 @@ import {
   CI_SCRIPT,
   GONE_SCRIPT,
   JOB_SCRIPT,
+  LISTS_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -225,6 +226,45 @@ describe("LIST_SCRIPT", () => {
       env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
     });
     expect(run.stdout).toBe(`${join(root, "api")} list --format=json`);
+  });
+});
+
+describe("LISTS_SCRIPT", () => {
+  /** A temp root with the given repo folders and a `wt` that runs `wt` (a shell body). */
+  const setup = (repos: readonly string[], wt: string) => {
+    const root = realpathSync(tempDir());
+    for (const repo of repos) mkdirSync(join(root, repo));
+    fakeBin(join(root, "bin"), "wt", wt);
+    return { root, env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` } };
+  };
+
+  test("runs wt list --format=json in each repo, each answer in a record of its exit code and folder", () => {
+    const { root, env } = setup(["api", "web"], 'printf "%s %s" "${PWD##*/}" "$*"');
+    const run = runSh(scriptFile(LISTS_SCRIPT), {
+      args: [join(root, "api"), join(root, "web")],
+      env,
+    });
+    expect(run.stdout).toBe(
+      `\u001e0\t${join(root, "api")}\napi list --format=json` +
+        `\u001e0\t${join(root, "web")}\nweb list --format=json`,
+    );
+  });
+
+  test("a repo whose wt list fails gets its exit code and errors; the others still list", () => {
+    const { root, env } = setup(
+      ["bad", "ok"],
+      '[ "${PWD##*/}" = bad ] && { echo noise; echo "wt: broken" >&2; exit 3; }; printf ok',
+    );
+    const run = runSh(scriptFile(LISTS_SCRIPT), {
+      args: [join(root, "bad"), join(root, "missing"), join(root, "ok")],
+      env,
+    });
+    expect(run.stdout.split("\u001e")).toEqual([
+      "",
+      `3\t${join(root, "bad")}\nwt: broken\n`,
+      expect.stringMatching(new RegExp(`^[1-9][0-9]*\\t${join(root, "missing")}\\n.+`)),
+      `0\t${join(root, "ok")}\nok`,
+    ]);
   });
 });
 

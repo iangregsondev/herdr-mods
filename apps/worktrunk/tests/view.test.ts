@@ -86,6 +86,7 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   settingsError: Option.none(),
   discoverError: Option.none(),
   missingFolders: [],
+  machines: new Map(),
   settingsFile: "iangregsondev-worktrunk.json",
   spaces: [],
   panes: [],
@@ -404,6 +405,40 @@ describe("buildView: header, banners and empty states", () => {
       "Group folder /h/gone doesn't exist, so it lists no repos.",
       "Group folder /h/also doesn't exist, so it lists no repos.",
     ]);
+  });
+
+  test("a machine still connecting shows one connecting line, after the missing folders", () => {
+    const s = snapshot({
+      missingFolders: ["/h/gone"],
+      machines: new Map([["linux", { _tag: "Connecting" }]]),
+    });
+    expect(buildView(s).banners).toEqual([
+      "Group folder /h/gone doesn't exist, so it lists no repos.",
+      "linux: connecting…",
+    ]);
+  });
+
+  test("a machine that can't be read shows one line naming it and the error", () => {
+    const s = snapshot({
+      machines: new Map([
+        ["linux", { _tag: "Down", reason: "ssh: connect to host linux: timed out" }],
+      ]),
+    });
+    expect(buildView(s).banners).toEqual([
+      "Can't reach linux: ssh: connect to host linux: timed out",
+    ]);
+  });
+
+  test("a machine that can't be read lists none of its repos, not even from an older read", () => {
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists: new Map([
+        [API.root, read(API_WORKTREES)],
+        [repoKey(API_LINUX), read(API_WORKTREES)],
+      ]),
+      machines: new Map([["linux", { _tag: "Down", reason: "timed out" }]]),
+    });
+    expect(tree(s).map((r) => [r.name, r.machine])).toEqual([["api", Option.none()]]);
   });
 
   test("before the first scan: looking for repos", () => {
@@ -901,6 +936,13 @@ describe("reposToRead", () => {
   test("every other view reads the selected chip's repos", () => {
     const s = scope({ show: "repos", group: Option.some("Work") }, { _tag: "InRepo", repo: WEB });
     expect(reposToRead(s)).toEqual([API]);
+  });
+  test("no repo on a machine that can't be read is read, in any view", () => {
+    const down = new Map([["linux", { _tag: "Connecting" } as const]]);
+    const s = snapshot({ repos: [API, API_LINUX, WEB], machines: down });
+    expect(reposToRead(s)).toEqual([API, WEB]);
+    const current = { ...s, view: { ...s.view, show: "current" as const } };
+    expect(reposToRead(current)).toEqual([API, WEB]);
   });
 });
 

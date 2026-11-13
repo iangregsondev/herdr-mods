@@ -7,6 +7,7 @@ import {
   CI_SCRIPT,
   GONE_SCRIPT,
   jobArgs,
+  LISTS_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -38,9 +39,10 @@ import {
   ShellError,
   wtCi,
   wtList,
+  wtLists,
   type ExecApi,
 } from "../src/shell.ts";
-import { parseList } from "../src/worktrees.ts";
+import { parseList, parseLists } from "../src/worktrees.ts";
 import ci from "./fixtures/ci.json?raw";
 import states from "./fixtures/states.json?raw";
 
@@ -223,6 +225,22 @@ describe("wtList", () => {
         Result.fail(["ListUnreadable", "wt list printed no list of worktrees"]),
       );
     }).pipe(Effect.provide(Shell.layer(answering({ code: 0, stdout: "{}", stderr: "" })))),
+  );
+});
+
+describe("wtLists", () => {
+  it.effect("every repo's worktrees from one batched run on their machine, by folder", () =>
+    Effect.gen(function* () {
+      const stdout = `\u001e0\t/srv/a\n${states}\u001e1\t/srv/b\nfatal: gone\n`;
+      const { api, calls } = recording({ code: 0, stdout, stderr: "" });
+      const lists = yield* wtLists("linux", ["/srv/a", "/srv/b"]).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(lists, parseLists(stdout, ["/srv/a", "/srv/b"]));
+      assert.deepStrictEqual(calls, [
+        ["sh", shArgs(LISTS_SCRIPT, ["/srv/a", "/srv/b"]), { timeout: 180_000, on: "linux" }],
+      ]);
+    }),
   );
 });
 
