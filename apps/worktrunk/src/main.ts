@@ -96,12 +96,11 @@ import {
   type Scanned,
 } from "./load.ts";
 import {
-  askToasts,
   checked,
   jobRemoved,
   listsRead,
   NO_ORPHANS,
-  orphanSpaces,
+  orphanSteps,
   waitingOn,
   type Orphans,
 } from "./orphans.ts";
@@ -1010,13 +1009,10 @@ export default class Worktrunk extends View {
       const answer = await runEdge(checkGone(asked, machine), Result.fail);
       this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
       const after = checked(this.orphans, machine, asked, answer);
-      const [all, open] = [spaces(), panes()];
-      orphanSpaces(all, open, machine, after.gone).forEach((orphan) => {
-        if (orphan.step === "Close") run("space.close", { id: orphan.space, confirmed: true });
-      });
-      const ask = askToasts(after.orphans, all, open, machine, after.gone);
-      this.orphans = ask.orphans;
-      ask.toasts.forEach((toast) => notify(toast));
+      const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
+      this.orphans = steps.orphans;
+      steps.closes.forEach((id) => run("space.close", { id, confirmed: true }));
+      steps.toasts.forEach((toast) => notify(toast));
     });
   }
 
