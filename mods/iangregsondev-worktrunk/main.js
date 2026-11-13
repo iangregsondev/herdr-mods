@@ -1784,18 +1784,6 @@ function isJsonPrimitiveWrapper(object) {
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Inspectable.js
 /**
-* Controls how values appear in logs and debugging output.
-*
-* Effect data types use `Inspectable` to provide stable string, JSON, and
-* Node.js inspection output. This keeps custom values readable in logs, REPLs,
-* test failures, and diagnostics. This module defines the Node inspect symbol,
-* the `Inspectable` interface, safe conversion helpers, and shared prototype or
-* class implementations for custom values.
-*
-* @stability stable
-* @since 2.0.0
-*/
-/**
 * Defines the symbol used by Node.js for custom object inspection.
 *
 * **When to use**
@@ -1860,31 +1848,6 @@ const toJson = (input) => {
 		return input;
 	} catch {
 		return "[toJSON threw]";
-	}
-};
-/**
-* Converts an unknown value to a string for diagnostics.
-*
-* **When to use**
-*
-* Use to produce a diagnostic string from a value whose runtime type is unknown.
-*
-* **Details**
-*
-* Strings are returned unchanged. Objects are formatted as JSON using the
-* provided whitespace setting when possible, and values that cannot be
-* formatted are converted with `String`.
-*
-* @stability stable
-* @category converting
-* @since 2.0.0
-*/
-const toStringUnknown = (u, whitespace = 2) => {
-	if (typeof u === "string") return u;
-	try {
-		return typeof u === "object" ? formatJson(u, { space: whitespace }) : format(u, { space: whitespace });
-	} catch {
-		return String(u);
 	}
 };
 
@@ -2227,8 +2190,6 @@ const causeAddInterrupts = (self, interrupts) => {
 	for (const reason of interrupts.reasons) if (isInterruptReason(reason) && !reasons.some((r) => isInterruptReason(r) && r.fiberId === reason.fiberId && r.annotations === reason.annotations)) reasons.push(reason);
 	return reasons.length === self.reasons.length ? self : new CauseImpl(reasons);
 };
-/** @internal */
-const causeEmpty = /*#__PURE__*/ new CauseImpl([]);
 /** @internal */
 const causeFail = (error) => new CauseImpl([new Fail(error)]);
 /** @internal */
@@ -2604,6 +2565,8 @@ const succeed$4 = (success) => new SuccessImpl(success);
 const getFailure$1 = (self) => isSuccess$1(self) ? none$1 : some$1(self.failure);
 /** @internal */
 const getSuccess$1 = (self) => isFailure$1(self) ? none$1 : some$1(self.success);
+/** @internal */
+const fromOption$3 = /*#__PURE__*/ dual(2, (self, onNone) => isNone$1(self) ? fail$3(onNone()) : succeed$4(self.value));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Order.js
 /**
@@ -4138,6 +4101,39 @@ const succeed$3 = succeed$4;
 * @since 4.0.0
 */
 const fail$2 = fail$3;
+/**
+* Converts an `Option<A>` into a `Result<A, E>`.
+*
+* **When to use**
+*
+* Use when an existing `Option` should become a `Result`, preserving `Some` as
+* success and turning `None` into a caller-provided failure.
+*
+* **Details**
+*
+* - `Some<A>` becomes `Success<A>`
+* - `None` becomes `Failure<E>` using the provided function
+* - Supports both data-first and data-last (piped) usage
+*
+* **Example** (Converting an Option to a Result)
+*
+* ```ts import.meta.vitest
+* import { Option, Result } from "effect"
+*
+* Result.fromOption(Option.some(1), () => "missing") // => Result.succeed(1)
+*
+* Result.fromOption(Option.none(), () => "missing") // => Result.fail("missing")
+* ```
+*
+* @see {@link getSuccess} to extract the success value as an Option
+* @see {@link getFailure} to extract the failure value as an Option
+* @see {@link fromNullishOr} to build a Result from nullable values
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+const fromOption$2 = fromOption$3;
 const try_ = (evaluate) => {
 	if (isFunction(evaluate)) try {
 		return succeed$3(evaluate());
@@ -5694,8 +5690,6 @@ const TracerSpanAnnotations = /*#__PURE__*/ Reference("effect/References/TracerS
 /** @internal */
 const TracerSpanLinks = /*#__PURE__*/ Reference("effect/References/TracerSpanLinks", { defaultValue: () => [] });
 /** @internal */
-const CurrentLogAnnotations = /*#__PURE__*/ Reference("effect/References/CurrentLogAnnotations", { defaultValue: () => ({}) });
-/** @internal */
 const CurrentLogLevel = /*#__PURE__*/ Reference("effect/References/CurrentLogLevel", {
 	fiberCached: true,
 	defaultValue: () => "Info"
@@ -5705,10 +5699,6 @@ const MinimumLogLevel = /*#__PURE__*/ Reference("effect/References/MinimumLogLev
 	fiberCached: true,
 	defaultValue: () => "Info"
 });
-/** @internal */
-const UnhandledLogLevel = /*#__PURE__*/ Reference("effect/References/UnhandledLogLevel", { defaultValue: () => "Error" });
-/** @internal */
-const CurrentLogSpans = /*#__PURE__*/ Reference("effect/References/CurrentLogSpans", { defaultValue: () => [] });
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/internal/tracer.js
 /** @internal */
@@ -6455,6 +6445,8 @@ const tapEffectCont = function(value) {
 	return new ContImpl(this.payload, succeedPayload, value);
 };
 /** @internal */
+const asSome$1 = (self) => map$1(self, some);
+/** @internal */
 const tap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? tapEffectCont : tapCont, f));
 /** @internal */
 const asVoid$1 = (self) => new ContImpl(self, returnPayload, exitVoid);
@@ -6519,13 +6511,6 @@ const OnFailureImpl = function(self, f) {
 };
 OnFailureImpl.prototype = OnFailureProto;
 /** @internal */
-const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(self, (cause) => {
-	const eb = filter(cause);
-	return isFailure(eb) ? failCause(eb.failure) : f(eb.success, cause);
-}));
-/** @internal */
-const catch_ = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
-/** @internal */
 const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
@@ -6555,28 +6540,6 @@ const catchTags$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, cases
 });
 /** @internal */
 const mapError$1 = /*#__PURE__*/ dual(2, (self, f) => catchCause(self, (cause) => failCause(causeMap(cause, f))));
-/** @internal */
-const orElseSucceed$1 = /*#__PURE__*/ dual(2, (self, f) => catch_(self, (error) => sync$1(() => f(error))));
-/** @internal */
-const ignoreCauseLogger = (log) => log === "Unhandled" ? (...message) => withFiber((fiber) => {
-	const level = fiber.getRef(UnhandledLogLevel);
-	return level === void 0 ? void_ : logWithLevel(level)(...message);
-}) : logWithLevel(log === true ? void 0 : log);
-/** @internal */
-const ignore$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, options) => {
-	if (!options?.log) return matchEffect$1(self, {
-		onFailure: (_) => void_,
-		onSuccess: (_) => void_
-	});
-	const logEffect = ignoreCauseLogger(options.log);
-	return matchCauseEffect(self, {
-		onFailure(cause) {
-			const error = findRecoverableError(cause);
-			return isFailure(error) ? failCause(error.failure) : options.message === void 0 ? logEffect(cause) : logEffect(options.message, cause);
-		},
-		onSuccess: (_) => void_
-	});
-});
 /** @internal */
 const option$1 = (self) => match$2(self, {
 	onFailure: none,
@@ -7193,8 +7156,6 @@ var UnknownError = class extends (/*#__PURE__*/ TaggedError$1("UnknownError")) {
 	}
 };
 /** @internal */
-const ConsoleRef = /*#__PURE__*/ Reference("effect/Console", { defaultValue: () => globalThis.console });
-/** @internal */
 const logLevelToOrder = (level) => {
 	switch (level) {
 		case "All": return Number.MIN_SAFE_INTEGER;
@@ -7211,73 +7172,6 @@ const logLevelToOrder = (level) => {
 const LogLevelOrder = /*#__PURE__*/ mapInput(Number$1, logLevelToOrder);
 /** @internal */
 const isLogLevelGreaterThan = /*#__PURE__*/ isGreaterThan(LogLevelOrder);
-/** @internal */
-const CurrentLoggers = /*#__PURE__*/ Reference("effect/Logger/CurrentLoggers", { defaultValue: () => /* @__PURE__ */ new Set([defaultLogger, tracerLogger]) });
-/** @internal */
-const LogToStderr = /*#__PURE__*/ Reference("effect/Logger/LogToStderr", { defaultValue: constFalse });
-/** @internal */
-const LoggerTypeId = "~effect/Logger";
-const LoggerProto = {
-	[LoggerTypeId]: {
-		_Message: identity,
-		_Output: identity
-	},
-	pipe() {
-		return pipeArguments(this, arguments);
-	}
-};
-/** @internal */
-const loggerMake = (log) => {
-	const self = Object.create(LoggerProto);
-	self.log = log;
-	return self;
-};
-/**
-* Sanitize a given string by replacing spaces, equal signs, and double quotes
-* with underscores.
-*
-* @internal
-*/
-const formatLabel = (key) => key.replace(/[\s="]/g, "_");
-/**
-* Formats a log span into a `<label>=<value>ms` string.
-*
-* @internal
-*/
-const formatLogSpan = (self, now) => {
-	return `${formatLabel(self[0])}=${now - self[1]}ms`;
-};
-/** @internal */
-const logWithLevel = (level) => (...message) => {
-	let cause = void 0;
-	for (let i = 0, len = message.length; i < len; i++) {
-		const msg = message[i];
-		if (isCause(msg)) {
-			if (cause) message.splice(i, 1);
-			else message = message.slice(0, i).concat(message.slice(i + 1));
-			cause = cause ? causeFromReasons(cause.reasons.concat(msg.reasons)) : msg;
-			i--;
-		}
-	}
-	if (cause === void 0) cause = causeEmpty;
-	return withFiber((fiber) => {
-		const logLevel = level ?? fiber.cache.logLevel;
-		if (isLogLevelGreaterThan(fiber.cache.minimumLogLevel, logLevel)) return void_;
-		const clock = fiber.getRef(ClockRef);
-		const loggers = fiber.getRef(CurrentLoggers);
-		if (loggers.size > 0) {
-			const date = new Date(clock.currentTimeMillisUnsafe());
-			for (const logger of loggers) logger.log({
-				cause,
-				fiber,
-				date,
-				logLevel,
-				message
-			});
-		}
-		return void_;
-	});
-};
 const colors = {
 	bold: "1",
 	red: "31",
@@ -7300,33 +7194,6 @@ const logLevelColors = {
 	Error: [colors.red],
 	Fatal: [colors.bgBrightRed, colors.black]
 };
-const defaultDateFormat = (date) => `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}:${date.getSeconds().toString().padStart(2, "0")}.${date.getMilliseconds().toString().padStart(3, "0")}`;
-/** @internal */
-const defaultLogger = /*#__PURE__*/ loggerMake(({ cause, date, fiber, logLevel, message }) => {
-	const message_ = Array.isArray(message) ? message.slice() : [message];
-	if (cause.reasons.length > 0) message_.push(causePretty(cause));
-	const now = date.getTime();
-	const spans = fiber.getRef(CurrentLogSpans);
-	let spanString = "";
-	for (const span of spans) spanString += ` ${formatLogSpan(span, now)}`;
-	const annotations = fiber.getRef(CurrentLogAnnotations);
-	if (Object.keys(annotations).length > 0) message_.push(annotations);
-	const console = fiber.getRef(ConsoleRef);
-	(fiber.getRef(LogToStderr) ? console.error : console.log)(`[${defaultDateFormat(date)}] ${logLevel.toUpperCase()} (#${fiber.id})${spanString}:`, ...message_);
-});
-/** @internal */
-const tracerLogger = /*#__PURE__*/ loggerMake(({ cause, fiber, logLevel, message }) => {
-	const clock = fiber.getRef(ClockRef);
-	const annotations = fiber.getRef(CurrentLogAnnotations);
-	const span = fiber.cache.span;
-	if (span === void 0 || span._tag === "ExternalSpan" || span.status._tag === "Ended") return;
-	const attributes = {};
-	for (const [key, value] of Object.entries(annotations)) assignProperty(attributes, key, value);
-	attributes["effect.fiberId"] = fiber.id;
-	attributes["effect.logLevel"] = logLevel.toUpperCase();
-	if (cause.reasons.length > 0) attributes["effect.cause"] = causePretty(cause);
-	span.event(toStringUnknown(Array.isArray(message) && message.length === 1 ? message[0] : message), clock.currentTimeNanosUnsafe(), attributes);
-});
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Cause.js
 /**
@@ -8920,6 +8787,24 @@ const exit = exit$1;
 */
 const map = map$1;
 /**
+* Maps the success value of an `Effect` to `Some`, preserving failures.
+*
+* **Example** (Wrapping success in Option.some)
+*
+* ```ts import.meta.vitest
+* import { Effect, Option } from "effect"
+*
+* const program = Effect.asSome(Effect.succeed(42))
+*
+* Effect.runSync(program) // => Option.some(42)
+* ```
+*
+* @stability stable
+* @category mapping
+* @since 2.0.0
+*/
+const asSome = asSome$1;
+/**
 * Maps the success value of an `Effect` to `void`, preserving failures.
 *
 * **Example** (Discarding success values)
@@ -9091,103 +8976,6 @@ const catchTags = catchTags$1;
 * @since 2.0.0
 */
 const mapError = mapError$1;
-/**
-* Discards both the success and failure values of an effect.
-*
-* **When to use**
-*
-* Use when an effect should run for its side effects while both success and
-* failure values are discarded.
-*
-* **Details**
-*
-* Use the `log` option to emit the full {@link Cause} when the effect fails,
-* and `message` to prepend a custom log message.
-* Set `log: "Unhandled"` to read `References.UnhandledLogLevel` when the
-* failure occurs; `undefined` disables logging. Minimum log level filtering
-* still applies.
-*
-* **Gotchas**
-*
-* Defects take precedence over typed errors. If the cause also contains a
-* defect, the failure is not ignored and is propagated with every typed error
-* converted to a defect. An interruption alongside a typed error does not
-* prevent the error from being ignored.
-*
-* **Example** (Discarding success and failure values)
-*
-* ```ts import.meta.vitest
-* import { Effect } from "effect"
-*
-* //      ┌─── Effect<number, string, never>
-* //      ▼
-* const task = Effect.fail("Uh oh!").pipe(Effect.as(5))
-*
-* //      ┌─── Effect<void, never, never>
-* //      ▼
-* const program = task.pipe(Effect.ignore)
-* Effect.runSync(program) // => undefined
-* ```
-*
-* **Example** (Logging failures while ignoring results)
-*
-* ```ts import.meta.vitest
-* import { Effect } from "effect"
-*
-* const task = Effect.fail("Uh oh!")
-*
-* const program = task.pipe(Effect.ignore)
-* Effect.runSync(program) // => undefined
-* ```
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const ignore = ignore$1;
-/**
-* Recovers from a typed failure by producing a fallback success value.
-*
-* **Details**
-*
-* If the source effect succeeds, its value is preserved. If it fails in the
-* error channel, `orElseSucceed` evaluates the fallback with that error and
-* succeeds with the returned value, removing the typed error from the returned
-* effect.
-*
-* Defects and interruptions are not recovered by this operator.
-*
-* **Gotchas**
-*
-* If the cause contains a defect, the handler is skipped and every typed error
-* is converted to a defect, preserving reason order and interrupts. An
-* interruption alongside a typed error does not prevent recovery.
-*
-* **Example** (Replacing failures with a value)
-*
-* ```ts import.meta.vitest
-* import { Effect, Exit } from "effect"
-*
-* const validate = (age: number): Effect.Effect<number, string> => {
-*   if (age < 0) {
-*     return Effect.fail("NegativeAgeError")
-*   } else if (age < 18) {
-*     return Effect.fail("IllegalAgeError")
-*   } else {
-*     return Effect.succeed(age)
-*   }
-* }
-*
-* const program = Effect.orElseSucceed(validate(-1), (error) => error === "IllegalAgeError" ? 18 : 0)
-*
-* Effect.runSyncExit(program) // => Exit.succeed(0)
-* ```
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const orElseSucceed = orElseSucceed$1;
 /**
 * Filters an effect, failing with a custom error if the predicate fails.
 *
@@ -10029,6 +9817,8 @@ const parseScan = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 		count: count$1(n)
 	}] : [];
 });
+/** The group folders the scan found missing: each printed alone on its line. */
+const missingFolders = (stdout) => stdout.split("\n").filter((line) => line !== "" && !line.includes("	"));
 /** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
 const parseOwners = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	const [root, n] = line.split("	");
@@ -10081,7 +9871,8 @@ const shArgs = (body, args) => [
 * wrapped in slashes ("/node_modules//.cache/"); then the group folders. A folder with a
 * `.git` folder is a repo (a linked worktree's `.git` is a file, so it never counts). It
 * never enters a repo, a symlink, a hidden folder or a skipped name. Prints
-* `group folder<TAB>repo<TAB>worktree count` per repo.
+* `group folder<TAB>repo<TAB>worktree count` per repo, and a group folder that doesn't
+* exist alone on its line.
 */
 const SCAN_SCRIPT = `depth=$1; skip=$2; shift 2
 walk() {
@@ -10101,7 +9892,10 @@ walk() {
     walk "$child" $((level + 1))
   done
 }
-for top in "$@"; do top=\${top%/}; walk "$top" 0; done
+for top in "$@"; do
+  top=\${top%/}
+  if [ -d "$top" ]; then walk "$top" 0; else printf '%s\\n' "$top"; fi
+done
 exit 0`;
 /**
 * The repos the given folders are in, through each folder's shared git folder, so a
@@ -10847,11 +10641,17 @@ const CI_TIMEOUT = 24e4;
 const wtCi = fn("wtCi")(function* (root) {
 	return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
 });
-/** The repos the folder scan finds in the settings' group folders. */
+/** The repos the folder scan finds in the settings' group folders, and those that don't exist. */
 const scanRepos = fn("scanRepos")(function* (settings, home) {
-	if (settings.folders.length === 0) return [];
+	if (settings.folders.length === 0) return {
+		repos: [],
+		missing: []
+	};
 	const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-	return parseScan(run.stdout, null);
+	return {
+		repos: parseScan(run.stdout, null),
+		missing: missingFolders(run.stdout)
+	};
 });
 /** The repos the given folders are in (each once); none for no folders. */
 const reposOf = fn("reposOf")(function* (folders) {
@@ -10890,9 +10690,19 @@ const failureText = (error) => {
 const causeText = (cause) => cause instanceof Error ? cause.message : String(cause);
 /** The last line of `text` that has anything on it; empty when none does. */
 const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
-/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
+/**
+* The person's login shell couldn't be found, so a job would run with the wrong PATH.
+* `reason` says why.
+*/
+var LoginShellUnknown = class extends TaggedError("LoginShellUnknown") {};
+/**
+* The person's login shell, from `$SHELL`. A read that fails is `LoginShellUnknown`:
+* another shell would run the job with another PATH.
+*/
 const loginShell = fn("loginShell")(function* () {
-	return (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""]).pipe(map((run) => run.stdout), orElseSucceed(() => ""))).trim() || "/bin/sh";
+	const found = (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""]).pipe(mapError((failed) => new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` })))).stdout.trim();
+	if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
+	return found;
 });
 /** `hc run` printed no terminal address: the job never started. `reason` says why. */
 var JobNotStarted = class extends TaggedError("JobNotStarted") {};
@@ -11006,7 +10816,7 @@ const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none()) {
 	const scanned = isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
 	const owners = yield* reposOf(places);
-	const repos = reposFrom(scanned, [...owners, ...toArray(current)], settings.folders, home);
+	const repos = reposFrom(scanned.repos, [...owners, ...toArray(current)], settings.folders, home);
 	return {
 		scanned,
 		repos: withoutHidden(repos, settings.hidden)
@@ -11085,13 +10895,13 @@ const readEach = (repos, limit, read, keep) => forEach(repos, (repo) => read(rep
 });
 /**
 * The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr
-* version and the version the toast was last shown for (see `syncNotice`).
+* version and the version the toast was last shown for (see `syncNotice`). A record that
+* can't be read is its one-line reason.
 */
 const syncToast = fn("syncToast")(function* (path, installed, told) {
-	const disk = yield* Files;
-	const record = yield* option(disk.read(path));
-	return syncNotice(record, installed, told);
-});
+	const record = yield* (yield* Files).read(path).pipe(asSome, catchTag("FileMissing", () => succeed(none())));
+	return succeed$3(syncNotice(record, installed, told));
+}, (effect, path) => effect.pipe(catchTag("FileError", (failed) => succeed(fail$2(`${lastSegment(path)}: couldn't read it (${causeText(failed.cause)})`)))));
 /** The settings file doesn't parse, so it is never written over; `reason` says why. */
 var SettingsBroken = class extends TaggedError("SettingsBroken") {};
 /** The settings file couldn't be read, so nothing can be written over it safely. */
@@ -11121,6 +10931,10 @@ const hideInSettings = fn("hideInSettings")(function* (files, repo) {
 	WriteConflict: () => succeed(fail$2(`${files.name} changed while hiding the repo: try again.`)),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
+/** What the panel says about a file it couldn't read: one line. */
+const fileFailureText = (failed) => failed._tag === "FileMissing" ? `${failed.path} is missing` : causeText(failed.cause);
+/** A step that failed as its one line, `what` went wrong and why; nothing when it worked. */
+const problemOf = (step, what) => isFailure(step) ? [`${what}: ${failureText(step.failure)}`] : [];
 /**
 * Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
 * gets its address as soon as it starts (to open its window), then this waits for it to
@@ -11134,12 +10948,18 @@ const runJob = fn("runJob")(function* (spec, shown) {
 		body: spec.body
 	});
 	yield* sync(() => shown(addr));
-	const code = yield* waitForJob(addr).pipe(orElseSucceed(() => none()));
-	yield* ignore(removeTerminal(addr));
+	const waited = yield* result(waitForJob(addr));
+	const removed = yield* result(removeTerminal(addr));
+	const checked = yield* result(goneFolders(spec.gone));
 	return {
 		_tag: "Ended",
-		code,
-		gone: yield* goneFolders(spec.gone).pipe(orElseSucceed(() => []))
+		code: getOrElse(waited, () => none()),
+		gone: getOrElse(checked, () => []),
+		problems: [
+			...problemOf(waited, "Lost track of the job"),
+			...problemOf(removed, "Couldn't remove the job's terminal"),
+			...problemOf(checked, "Couldn't check which folders went, so no space was closed")
+		]
 	};
 }, catchTags({
 	JobNotStarted: (failed) => succeed({
@@ -11149,8 +10969,17 @@ const runJob = fn("runJob")(function* (spec, shown) {
 	ShellError: (failed) => succeed({
 		_tag: "NotStarted",
 		reason: failureText(failed)
+	}),
+	LoginShellUnknown: (failed) => succeed({
+		_tag: "NotStarted",
+		reason: `couldn't find your login shell: ${failed.reason}`
 	})
 }));
+/** The worktree wt's answer file names, from its `read`, or the one line saying why not. */
+const switchedFrom = (read) => match$4(read, {
+	onFailure: (failed) => fail$2(`Couldn't read wt's answer, so no space was opened: ${fileFailureText(failed)}`),
+	onSuccess: (text) => fromOption$2(switchedTo(text), () => `wt's answer names no branch and folder, so no space was opened: ${text.trim()}`)
+});
 /**
 * Switches to or creates the worktree for `name` in the repo at `main` as a job (see
 * `runJob`), its JSON answer written to a private temp folder that is removed after.
@@ -11170,18 +10999,21 @@ const newWorktree = fn("newWorktree")(function* (target, shown) {
 		gone: []
 	};
 	const outcome = yield* runJob(spec, shown);
-	const text = outcome._tag === "Ended" && contains(outcome.code, 0) ? yield* option(disk.read(out)) : none();
-	yield* ignore(removeDir(dir));
+	const read = outcome._tag === "Ended" && contains(outcome.code, 0) ? some(yield* result(disk.read(out))) : none();
+	const removed = yield* result(removeDir(dir));
+	const switched = map$3(read, switchedFrom);
 	return {
 		outcome,
-		switched: flatMap$3(text, switchedTo)
+		switched: flatMap$3(switched, getSuccess),
+		problems: [...toArray(flatMap$3(switched, getFailure)), ...problemOf(removed, `Couldn't remove the temp folder ${dir}`)]
 	};
 }, catchTag("JobNotStarted", (failed) => succeed({
 	outcome: {
 		_tag: "NotStarted",
 		reason: failed.reason
 	},
-	switched: none()
+	switched: none(),
+	problems: []
 })));
 /** The group folder picked in the system's folder picker (none if cancelled), or why it couldn't open. */
 const pickGroupFolder = fn("pickGroupFolder")(function* () {
@@ -11803,7 +11635,11 @@ const buildView = (snapshot) => {
 			selected: show === snapshot.view.show
 		})),
 		toggle: snapshot.view.show === "repos" ? some(snapshot.view.only) : none(),
-		banners: [...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)), ...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`))],
+		banners: [
+			...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)),
+			...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`)),
+			...snapshot.missingFolders.map((folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`)
+		],
 		body: bodyOf(snapshot, places)
 	};
 };
@@ -12126,21 +11962,37 @@ const ciIcon = (t, badge) => {
 		case "unknown": return ["help", t.muted];
 	}
 };
+/** One warning toast for each thing that went wrong around the job `title`. */
+const jobProblems = (title, problems) => problems.forEach((body) => notify({
+	title,
+	body,
+	level: "warning"
+}));
 /** Defers work out of `render`, which may not notify. */
 const later = (cx, fn) => cx.spawn(async (cx) => {
 	await cx.sleep(0);
 	fn(cx);
 });
-/** Shows one toast when Herdr has moved past the version the sync record names. */
+/**
+* Shows one toast when Herdr has moved past the version the sync record names, or says
+* the record couldn't be read (not marked as told, so a readable record still toasts).
+*/
 const checkSync = async () => {
 	const installed = updates().app.version;
-	const toast = await runEdge(syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)), () => none());
-	map$3(toast, (notice) => {
-		setShared(SYNC_TOLD_KEY, installed);
-		notify({
-			...notice,
+	const toast = await runEdge(syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)), fail$2);
+	match$4(toast, {
+		onFailure: (body) => notify({
+			title: "Couldn't check for herdr:sync",
+			body,
 			level: "warning"
-		});
+		}),
+		onSuccess: map$3((notice) => {
+			setShared(SYNC_TOLD_KEY, installed);
+			notify({
+				...notice,
+				level: "warning"
+			});
+		})
 	});
 };
 /** This copy's props: the layout block's or the overlay's, `overlay` added for an overlay. */
@@ -12213,7 +12065,7 @@ var Worktrunk = class extends View {
 	copy = { _tag: "Panel" };
 	settings = DEFAULT_SETTINGS;
 	settingsError = none();
-	/** The last folder scan's repos, and what and when it scanned. */
+	/** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
 	scanned = none();
 	lastScan = none();
 	repos = [];
@@ -12584,17 +12436,23 @@ var Worktrunk = class extends View {
 			}
 		});
 	}
-	/** What every job does once it has ended: say why it never started, or close spaces. */
+	/**
+	* What every job does once it has ended: say why it never started, or close spaces and
+	* say what went wrong around it.
+	*/
 	jobEnded(cx, title, outcome) {
 		if (outcome._tag === "NotStarted") notify({
 			title: `Couldn't start: ${title}`,
 			body: outcome.reason,
 			level: "error"
 		});
-		else spacesInGone(spaces(), panes(), outcome.gone).forEach((id) => run("space.close", {
-			id,
-			confirmed: true
-		}));
+		else {
+			spacesInGone(spaces(), panes(), outcome.gone).forEach((id) => run("space.close", {
+				id,
+				confirmed: true
+			}));
+			jobProblems(title, outcome.problems);
+		}
 		this.job = none();
 		cx.notify();
 		this.refresh(cx, { scan: false });
@@ -12635,8 +12493,10 @@ var Worktrunk = class extends View {
 					_tag: "NotStarted",
 					reason: defect
 				},
-				switched: none()
+				switched: none(),
+				problems: []
 			}));
+			jobProblems(title, made.problems);
 			map$3(made.switched, ({ branch, path }) => match$5(fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)), {
 				onSome: (on) => run("space.select", { id: on.id }),
 				onNone: () => run("space.new", {
@@ -12805,6 +12665,10 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			settingsError: this.settingsError,
 			discoverError: this.discoverError,
+			missingFolders: match$5(this.scanned, {
+				onNone: () => [],
+				onSome: (scan) => scan.missing
+			}),
 			settingsFile: SETTINGS_FILE,
 			spaces: spaces(),
 			panes: panes(),
