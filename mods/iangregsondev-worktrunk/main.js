@@ -12059,6 +12059,14 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 	SettingsUnreadable: (failed) => succeed(fail$2(unreadableText(files.name, failed))),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
+/**
+* Which of the dropped `paths` on `machine` are gone, from one folder check there; a
+* failed check is its one-line reason, so no space closes on a guess.
+*/
+const checkGone = fn("checkGone")(function* (paths, machine) {
+	const checked = yield* result(goneFolders(paths, machine));
+	return mapError$2(checked, failureText);
+});
 
 // src/spaces.ts
 /**
@@ -12183,6 +12191,75 @@ const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(
 const groupsChanged = (groups, published) => {
 	const entries = Object.entries(groups);
 	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, group]) => Reflect.get(published, space) !== group);
+};
+
+// src/orphans.ts
+const NO_ORPHANS = {
+	waiting: /* @__PURE__ */ new Map(),
+	removed: /* @__PURE__ */ new Map()
+};
+/** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
+const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
+/** The panel's own job removed the folders `gone` on `machine`: never dropped paths. */
+const jobRemoved = (orphans, machine, gone) => ({
+	...orphans,
+	removed: new Map([...orphans.removed, [machine, [...orphans.removed.get(machine) ?? [], ...gone]]])
+});
+/**
+* What the panel remembers after `machine`'s batched list read answers, given each repo's
+* list from before (`old`).
+*/
+const listsRead = (orphans, old, machine, answer) => {
+	const dropped = match$4(answer, {
+		onFailure: () => [],
+		onSuccess: (lists) => Array.from(lists).flatMap(([key, list]) => match$4(list, {
+			onFailure: () => [],
+			onSuccess: (worktrees) => {
+				const now = new Set(worktrees.map((w) => w.path));
+				return (old.get(key)?.worktrees ?? []).map((w) => w.path).filter((path) => !now.has(path));
+			}
+		}))
+	});
+	const removed = orphans.removed.get(machine) ?? [];
+	return {
+		...orphans,
+		waiting: new Map([...orphans.waiting, [machine, [...waitingOn(orphans, machine), ...dropped.filter((path) => !removed.includes(path))]]]),
+		removed: new Map([...orphans.removed, [machine, removed.filter((path) => !dropped.includes(path))]])
+	};
+};
+/**
+* The folder check of the paths `asked` on `machine` answered: the folders it found gone,
+* or why it failed. Gone paths come back for their spaces to close or be asked about; a
+* path whose folder exists is forgotten; a failed check leaves every path waiting for the
+* machine's next refresh. Paths dropped while the check ran wait on.
+*/
+const checked = (orphans, machine, asked, answer) => match$4(answer, {
+	onFailure: () => ({
+		orphans,
+		gone: []
+	}),
+	onSuccess: (gone) => ({
+		orphans: {
+			...orphans,
+			waiting: new Map([...orphans.waiting, [machine, waitingOn(orphans, machine).filter((path) => !asked.includes(path))]])
+		},
+		gone: gone.filter((path) => asked.includes(path))
+	})
+});
+const closeOrAsk = (space, panes) => {
+	const tabs = new Set(space.tabs.map((tab) => tab.id));
+	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Ask";
+};
+/**
+* The orphan spaces on `machine`: every space there on one of the `gone` folders (by
+* folder or place, as `spacesInGone` matches them), each closed or asked about.
+*/
+const orphanSpaces = (spaces, panes, machine, gone) => {
+	const ids = new Set(spacesInGone(spaces, panes, machine, gone));
+	return spaces.filter((space) => ids.has(space.id)).map((space) => ({
+		space: space.id,
+		step: closeOrAsk(space, panes)
+	}));
 };
 
 // src/view.ts
@@ -13134,6 +13211,10 @@ var Worktrunk = class extends View {
 	discovered = false;
 	discoverError = none();
 	lists = /* @__PURE__ */ new Map();
+	/** Worktree paths dropped from their lists, waiting for a folder check on their machine. */
+	orphans = NO_ORPHANS;
+	/** The machines whose dropped paths' folder check is running. */
+	orphanChecks = /* @__PURE__ */ new Set();
 	/** The machines that can't be read now, and why; their repos aren't listed or read. */
 	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
@@ -13541,7 +13622,8 @@ var Worktrunk = class extends View {
 	}
 	/**
 	* What every job does once it has ended: say why it never started, or close the spaces
-	* on its removed folders (on its machine) and say what went wrong around it.
+	* on its removed folders (on its machine) and say what went wrong around it. Those
+	* folders never count as orphans' worktrees: their spaces are closed here.
 	*/
 	jobEnded(title, machine, outcome) {
 		if (outcome._tag === "NotStarted") notify({
@@ -13550,12 +13632,35 @@ var Worktrunk = class extends View {
 			level: "error"
 		});
 		else {
+			this.orphans = jobRemoved(this.orphans, machine, outcome.gone);
 			spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) => run("space.close", {
 				id,
 				confirmed: true
 			}));
 			jobProblems(title, outcome.problems);
 		}
+	}
+	/**
+	* Checks the worktree paths dropped on `machine` in one run there, unless none wait or
+	* a check there is still running, then closes the orphan spaces on the gone ones where
+	* only shells run. Spaces where something else runs are left open.
+	*/
+	checkOrphans(cx, machine) {
+		const asked = waitingOn(this.orphans, machine);
+		if (asked.length === 0 || this.orphanChecks.has(machine)) return;
+		this.orphanChecks = /* @__PURE__ */ new Set([...this.orphanChecks, machine]);
+		cx.spawn(async () => {
+			const answer = await runEdge(checkGone(asked, machine), fail$2);
+			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
+			const after = checked(this.orphans, machine, asked, answer);
+			this.orphans = after.orphans;
+			orphanSpaces(spaces(), panes(), machine, after.gone).forEach((orphan) => {
+				if (orphan.step === "Close") run("space.close", {
+					id: orphan.space,
+					confirmed: true
+				});
+			});
+		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */
 	jobsDone(cx) {
@@ -13762,6 +13867,8 @@ var Worktrunk = class extends View {
 					cx.notify();
 					return this.reposToRead();
 				}, (machine, answer) => {
+					this.orphans = listsRead(this.orphans, this.lists, machine, answer);
+					this.checkOrphans(cx, machine);
 					const kept = keepLists({
 						lists: this.lists,
 						machines: this.machineStatus
