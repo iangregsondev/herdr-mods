@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import type { SpaceLike } from "../src/spaces.ts";
 import {
   buildView,
+  ciTooltip,
   DEFAULT_VIEW_STATE,
   reposToRead,
   type RepoView,
@@ -371,11 +372,6 @@ describe("buildView: sublines", () => {
 });
 
 describe("buildView: header, banners and empty states", () => {
-  test("the spinner shows while loading", () => {
-    expect(buildView(snapshot({ loading: true })).loading).toBe(true);
-    expect(buildView(snapshot()).loading).toBe(false);
-  });
-
   test("a settings error shows as a banner saying defaults are in use", () => {
     expect(buildView(snapshot()).banners).toEqual([]);
     const s = snapshot({ settingsError: Option.some("iangregsondev-worktrunk.json: bad") });
@@ -1169,5 +1165,88 @@ describe("buildView: the machine filter", () => {
       Option.some("this machine"),
       Option.some("linux"),
     ]);
+  });
+});
+
+describe("tooltips", () => {
+  test("a CI badge says what its status means", () => {
+    expect(ciTooltip({ status: "passed", stale: false })).toBe("CI passed");
+    expect(ciTooltip({ status: "running", stale: false })).toBe("CI is running");
+    expect(ciTooltip({ status: "failed", stale: false })).toBe("CI failed");
+    expect(ciTooltip({ status: "conflicts", stale: false })).toBe("Conflicts with main");
+    expect(ciTooltip({ status: "unknown", stale: false })).toBe("No CI status");
+  });
+
+  test("a stale CI badge says the checks ran on an older commit than the one pushed", () => {
+    expect(ciTooltip({ status: "failed", stale: true })).toBe(
+      "CI failed on an older commit than the one pushed",
+    );
+    expect(ciTooltip({ status: "passed", stale: true })).toBe(
+      "CI passed on an older commit than the one pushed",
+    );
+  });
+
+  test("the dot says the row's state and whether a space sits on it", () => {
+    const s = snapshot({ spaces: [space("s1", "/w/api.new")] });
+    expect(row(s, "/w/api").tips.dot).toBe("Main checkout · no space open");
+    expect(row(s, "/w/api.old").tips.dot).toBe("Merged · no space open");
+    expect(row(s, "/w/api.new").tips.dot).toBe("In progress · open in a space");
+    expect(row(s, "/w/api.fight").tips.dot).toBe("Conflicts with main · no space open");
+  });
+
+  test("the new badge says nothing has happened in the worktree yet; no other row has one", () => {
+    const list = read([...API_WORKTREES, wt("/w/api.fresh", "fresh", NEW)]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(row(s, "/w/api.fresh").tips.badge).toEqual(Option.some("No commits or changes yet"));
+    expect(row(s, "/w/api.new").tips.badge).toEqual(Option.none());
+  });
+
+  test("the uncommitted-changes dot says so; a clean row has none", () => {
+    const list = read([wt("/w/api", "main", MAIN), wt("/w/api.d", "d", ACTIVE, { dirty: true })]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(row(s, "/w/api.d").tips.dirty).toEqual(Option.some("Uncommitted changes"));
+    expect(row(s, "/w/api").tips.dirty).toEqual(Option.none());
+  });
+
+  test("the open marker on this machine's row says a space sits on it; a row with none has none", () => {
+    const s = snapshot({ spaces: [space("s1", "/w/api.new")] });
+    expect(row(s, "/w/api.new").tips.open).toEqual(Option.some("Open in a space"));
+    expect(row(s, "/w/api").tips.open).toEqual(Option.none());
+  });
+
+  test("the open marker on another machine's row names the machine", () => {
+    const s = snapshot({
+      repos: [API_LINUX],
+      lists: new Map([[repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])]]),
+      spaces: [space("s1", "/w/api", { machine: "linux" })],
+    });
+    const linux = tree(s)[0]?.main[0];
+    expect(linux?.tips.open).toEqual(Option.some("Open in a space on linux"));
+  });
+
+  test("a row's CI badge carries its label; a row with no badge has none", () => {
+    const ci = new Map([
+      [
+        repoKey(API),
+        {
+          byPath: new Map<string, Ci>([
+            ["/w/api", { _tag: "Checks", status: "failed", stale: true }],
+          ]),
+          error: Option.none(),
+        },
+      ],
+    ]);
+    const s = snapshot({ ci });
+    expect(row(s, "/w/api").tips.ci).toEqual(
+      Option.some("CI failed on an older commit than the one pushed"),
+    );
+    expect(row(s, "/w/api.new").tips.ci).toEqual(Option.none());
+  });
+
+  test("the spinner says a refresh is running; no spinner, no label", () => {
+    expect(buildView(snapshot({ loading: true })).spinnerTip).toEqual(
+      Option.some("Refreshing worktrees"),
+    );
+    expect(buildView(snapshot()).spinnerTip).toEqual(Option.none());
   });
 });

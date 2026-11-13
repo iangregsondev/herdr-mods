@@ -6,6 +6,7 @@ import {
   machineName,
   repoKey,
   type RepoKey,
+  THIS_MACHINE,
   type Machine,
   type MachineStatus,
 } from "./machines.ts";
@@ -108,6 +109,30 @@ export interface CiBadge {
   readonly stale: boolean;
 }
 
+const CI_TOOLTIPS: Readonly<Record<CiBadge["status"], string>> = {
+  passed: "CI passed",
+  running: "CI is running",
+  failed: "CI failed",
+  conflicts: "Conflicts with main",
+  unknown: "No CI status",
+};
+
+/** What a row's CI badge means, for its hover label. */
+export const ciTooltip = (badge: CiBadge): string =>
+  badge.stale
+    ? `${CI_TOOLTIPS[badge.status]} on an older commit than the one pushed`
+    : CI_TOOLTIPS[badge.status];
+
+/** Hover labels for a row's status marks; none where the mark isn't drawn. */
+export interface RowTooltips {
+  /** The dot before the branch name: its state, and whether a space sits on it. */
+  readonly dot: string;
+  readonly badge: Option.Option<string>;
+  readonly dirty: Option.Option<string>;
+  readonly open: Option.Option<string>;
+  readonly ci: Option.Option<string>;
+}
+
 export interface RowView {
   /**
    * The worktree's machine and path, as `repoKey` keys a folder: unique, so also the
@@ -132,6 +157,7 @@ export interface RowView {
   readonly badge: Option.Option<string>;
   /** None when CI wasn't asked for, or there is no PR and no checks. */
   readonly ci: Option.Option<CiBadge>;
+  readonly tips: RowTooltips;
   readonly click: Click;
 }
 
@@ -209,8 +235,8 @@ export interface MachineChoice {
 }
 
 export interface PanelView {
-  /** Show the spinner. */
-  readonly loading: boolean;
+  /** The spinner's hover label: some while a refresh runs, so the spinner shows. */
+  readonly spinnerTip: Option.Option<string>;
   /** The machine filter: All, then each machine. */
   readonly machineFilter: readonly MachineChoice[];
   /** The group filter: All, then one per group. */
@@ -330,36 +356,62 @@ const ciOf = (snapshot: Snapshot, repo: Repo, worktree: Worktree): Ci =>
     () => worktree.ci,
   );
 
+const TONE_TOOLTIPS: Readonly<Record<Tone, string>> = {
+  main: "Main checkout",
+  merged: "Merged",
+  active: "In progress",
+  conflict: "Conflicts with main",
+};
+
+const dotTooltip = (tone: Tone, open: boolean): string =>
+  `${TONE_TOOLTIPS[tone]} · ${open ? "open in a space" : "no space open"}`;
+
+/** The hover label of the open marker: names the space's machine when it isn't this one. */
+const openTooltip = (machine: Machine): string =>
+  machine === THIS_MACHINE ? "Open in a space" : `Open in a space on ${machineName(machine)}`;
+
 const rowView = (
   snapshot: Snapshot,
   repo: Repo,
   worktree: Worktree,
   space: Option.Option<SpaceRef>,
-): RowView => ({
-  key: repoKey({ machine: repo.machine, root: worktree.path }),
-  repo: repo.root,
-  label: Option.getOrElse(worktree.branch, () => "(detached)"),
-  tone: Option.getOrElse(kindOf(worktree), (): Tone => "main"),
-  hollow: Option.isNone(space),
-  dirty: worktree.dirty,
-  open: Option.isSome(space),
-  current: Option.exists(space, (s) => s.active),
-  subline: subline(worktree, snapshot.now),
-  badge: worktree.state._tag === "New" ? Option.some("new") : Option.none(),
-  ci: badgeOf(ciOf(snapshot, repo, worktree)),
-  click: Option.match(space, {
-    onNone: (): Click => ({
-      _tag: "New",
-      name:
-        worktree.state._tag === "Main"
-          ? lastSegment(repo.root)
-          : Option.getOrElse(worktree.branch, () => lastSegment(worktree.path)),
-      folder: worktree.path,
-      machine: repo.machine,
+): RowView => {
+  const tone = Option.getOrElse(kindOf(worktree), (): Tone => "main");
+  const isNew = worktree.state._tag === "New";
+  const ci = badgeOf(ciOf(snapshot, repo, worktree));
+  return {
+    key: repoKey({ machine: repo.machine, root: worktree.path }),
+    repo: repo.root,
+    label: Option.getOrElse(worktree.branch, () => "(detached)"),
+    tone,
+    hollow: Option.isNone(space),
+    dirty: worktree.dirty,
+    open: Option.isSome(space),
+    current: Option.exists(space, (s) => s.active),
+    subline: subline(worktree, snapshot.now),
+    badge: isNew ? Option.some("new") : Option.none(),
+    ci,
+    tips: {
+      dot: dotTooltip(tone, Option.isSome(space)),
+      badge: isNew ? Option.some("No commits or changes yet") : Option.none(),
+      dirty: worktree.dirty ? Option.some("Uncommitted changes") : Option.none(),
+      open: Option.map(space, () => openTooltip(repo.machine)),
+      ci: Option.map(ci, ciTooltip),
+    },
+    click: Option.match(space, {
+      onNone: (): Click => ({
+        _tag: "New",
+        name:
+          worktree.state._tag === "Main"
+            ? lastSegment(repo.root)
+            : Option.getOrElse(worktree.branch, () => lastSegment(worktree.path)),
+        folder: worktree.path,
+        machine: repo.machine,
+      }),
+      onSome: (s): Click => ({ _tag: "Select", space: s.id }),
     }),
-    onSome: (s): Click => ({ _tag: "Select", space: s.id }),
-  }),
-});
+  };
+};
 
 const newestFirst = (a: Worktree, b: Worktree): number =>
   Option.getOrElse(b.committedAt, () => 0) - Option.getOrElse(a.committedAt, () => 0);
@@ -738,7 +790,7 @@ export const buildView = (whole: Snapshot): PanelView => {
   };
   const places = spacePlaces(snapshot.spaces, snapshot.panes);
   return {
-    loading: snapshot.loading,
+    spinnerTip: snapshot.loading ? Option.some("Refreshing worktrees") : Option.none(),
     machineFilter: machineFilterOf(whole),
     chips: chipsOf(snapshot),
     views: SHOWS.map(([show, label]) => ({ show, label, selected: show === snapshot.view.show })),

@@ -280,6 +280,9 @@ interface Style {
 const icon = (name: string, size: number, color: Hex): Element =>
   svg(`mods/${__MOD_ID__}/${name}.svg`).size(size).flex_none().text_color(color);
 
+/** `el` with a hover label, announced the same way to a screen reader. */
+const labelled = (el: Element, text: string): Element => el.tooltip(text).accessibility_label(text);
+
 const dot = (color: Hex, size: number, hollow: boolean): Element =>
   hollow
     ? div().w(size).h(size).flex_none().rounded_full().border(1.5).border_color(color)
@@ -1322,7 +1325,16 @@ export default class Worktrunk extends View {
       .border_color(t.border)
       .child(icon("git", 16, t.accent))
       .child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk"))
-      .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
+      .children(
+        Option.toArray(view.spinnerTip).map((tip) =>
+          labelled(
+            div()
+              .flex_none()
+              .child(icon("ring", 13, t.muted).spin(900)),
+            tip,
+          ),
+        ),
+      )
       .child(iconButton("new", "plus", () => send({ _tag: "NewOrOpen", folder: null })))
       .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
       .child(
@@ -2347,7 +2359,7 @@ export default class Worktrunk extends View {
       .hover((s) => s.bg(t.hover))
       .on_click(() => onClickRow(row.click))
       .on_mouse_down("right", () => this.openRowMenu(row))
-      .child(dot(toneColor(t, row.tone), 8, row.hollow))
+      .child(labelled(dot(toneColor(t, row.tone), 8, row.hollow), row.tips.dot))
       .child(
         v_flex()
           .flex_1()
@@ -2358,31 +2370,49 @@ export default class Worktrunk extends View {
               .items_center()
               .child(div().min_w(0).truncate().font_medium().child(row.label))
               .children(
-                Option.toArray(row.badge).map((word) =>
-                  div()
+                Option.toArray(row.badge).map((word) => {
+                  const badge = div()
                     .flex_none()
                     .px(5)
                     .rounded(4)
                     .bg(t.hover)
                     .text_size(sizes.label)
                     .text_color(t.working)
-                    .child(word),
-                ),
+                    .child(word);
+                  return Option.match(row.tips.badge, {
+                    onNone: () => badge,
+                    onSome: (tip) => labelled(badge, tip),
+                  });
+                }),
               )
-              .when(row.dirty, (el) => el.child(dot(t.blocked, 6, false))),
+              .children(
+                Option.toArray(row.tips.dirty).map((tip) =>
+                  labelled(dot(t.blocked, 6, false), tip),
+                ),
+              ),
           )
           .child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline)),
       )
       .children(
-        Option.toArray(row.ci).map((badge) => {
+        Option.toArray(
+          Option.zipWith(row.ci, row.tips.ci, (badge, tip) => [badge, tip] as const),
+        ).map(([badge, tip]) => {
           const [name, color] = ciIcon(t, badge);
           // Checks on an older commit than the one pushed: shown, but dimmed.
           const drawn = icon(name, 13, badge.stale ? t.dim : color);
-          return badge.status === "running" ? drawn.spin(1200) : drawn;
+          // An svg carries no hover, so a div around it holds the label.
+          return labelled(
+            div()
+              .flex_none()
+              .child(badge.status === "running" ? drawn.spin(1200) : drawn),
+            tip,
+          );
         }),
       )
-      .when(row.open, (el) =>
-        el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")),
+      .children(
+        Option.toArray(row.tips.open).map((tip) =>
+          labelled(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open"), tip),
+        ),
       );
   }
 }
