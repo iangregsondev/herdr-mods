@@ -109,8 +109,15 @@ describe("SCAN_SCRIPT", () => {
     );
   });
 
-  test("a group folder that doesn't exist finds nothing, and the scan still succeeds", () => {
-    expect(scan(4, "", [join(tempDir(), "missing")])).toEqual({ code: 0, stdout: "", stderr: "" });
+  test("a group folder that doesn't exist is printed alone on its line; the scan goes on", () => {
+    const root = tempDir();
+    folders(root, ["work/api/.git"]);
+    const missing = join(root, "missing");
+    expect(scan(4, "", [missing, join(root, "work")])).toEqual({
+      code: 0,
+      stdout: `${missing}\n${join(root, "work")}\t${join(root, "work/api")}\t1\n`,
+      stderr: "",
+    });
   });
 });
 

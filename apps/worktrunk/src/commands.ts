@@ -33,7 +33,8 @@ export const shArgs = (body: string, args: readonly string[]): readonly string[]
  * wrapped in slashes ("/node_modules//.cache/"); then the group folders. A folder with a
  * `.git` folder is a repo (a linked worktree's `.git` is a file, so it never counts). It
  * never enters a repo, a symlink, a hidden folder or a skipped name. Prints
- * `group folder<TAB>repo<TAB>worktree count` per repo.
+ * `group folder<TAB>repo<TAB>worktree count` per repo, and a group folder that doesn't
+ * exist alone on its line.
  */
 export const SCAN_SCRIPT = `depth=$1; skip=$2; shift 2
 walk() {
@@ -53,7 +54,10 @@ walk() {
     walk "$child" $((level + 1))
   done
 }
-for top in "$@"; do top=\${top%/}; walk "$top" 0; done
+for top in "$@"; do
+  top=\${top%/}
+  if [ -d "$top" ]; then walk "$top" 0; else printf '%s\\n' "$top"; fi
+done
 exit 0`;
 
 /**

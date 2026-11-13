@@ -20,7 +20,14 @@ import {
 } from "./commands.ts";
 import { parseBranches } from "./dialog.ts";
 import { THIS_MACHINE } from "./machines.ts";
-import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
+import {
+  currentRepo,
+  missingFolders,
+  parseOwners,
+  parseScan,
+  type FoundRepo,
+  type Scan,
+} from "./repos.ts";
 import type { Settings } from "./settings.ts";
 import { parseList } from "./worktrees.ts";
 
@@ -137,11 +144,15 @@ export const wtCi = Effect.fn("wtCi")(function* (root: string) {
   return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
 });
 
-/** The repos the folder scan finds in the settings' group folders. */
+/** The repos the folder scan finds in the settings' group folders, and those that don't exist. */
 export const scanRepos = Effect.fn("scanRepos")(function* (settings: Settings, home: string) {
-  if (settings.folders.length === 0) return [];
+  if (settings.folders.length === 0) return { repos: [], missing: [] } satisfies Scan;
   const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-  return parseScan(run.stdout, THIS_MACHINE);
+  const scan: Scan = {
+    repos: parseScan(run.stdout, THIS_MACHINE),
+    missing: missingFolders(run.stdout),
+  };
+  return scan;
 });
 
 /** The repos the given folders are in (each once); none for no folders. */

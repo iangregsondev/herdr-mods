@@ -306,7 +306,7 @@ describe("findRepos", () => {
       assert.deepStrictEqual(
         found,
         Result.succeed({
-          scanned: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }],
+          scanned: { repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 1 }], missing: [] },
           repos: [
             { machine: THIS_MACHINE, root: "/tmp/api", count: 2, group: "Other" },
             { machine: THIS_MACHINE, root: "/w/zed", count: 1, group: "Work" },
@@ -333,7 +333,7 @@ describe("findRepos", () => {
   it.effect("with no scan due, keeps the last scan and runs only the open spaces' lookup", () =>
     Effect.gen(function* () {
       const { api, ran } = scripts({ scan: "/w\t/w/new\t1\n", owners: "" });
-      const last = [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }];
+      const last = { repos: [{ machine: THIS_MACHINE, root: "/w/zed", count: 3 }], missing: [] };
       const found = yield* findRepos(settings, "/h", ["/tmp"], Option.some(last)).pipe(
         Effect.provide(Shell.layer(api)),
       );

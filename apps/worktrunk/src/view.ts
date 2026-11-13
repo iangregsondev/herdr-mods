@@ -54,6 +54,8 @@ export interface Snapshot {
   readonly settingsError: Option.Option<string>;
   /** Why the last search for repos (folder scan, open spaces' repos) failed, if it did. */
   readonly discoverError: Option.Option<string>;
+  /** The group folders the last scan found missing, as it scanned them. */
+  readonly missingFolders: readonly string[];
   /** The settings file's name, for the empty-state hint. */
   readonly settingsFile: string;
   readonly spaces: readonly SpaceLike[];
@@ -622,6 +624,9 @@ export const buildView = (snapshot: Snapshot): PanelView => {
       ),
       ...Option.toArray(
         Option.map(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`),
+      ),
+      ...snapshot.missingFolders.map(
+        (folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`,
       ),
     ],
     body: bodyOf(snapshot, places),

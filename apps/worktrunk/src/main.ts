@@ -120,7 +120,7 @@ import {
   type RepoList,
 } from "./reads.ts";
 import { repoKey, repoOfKey, type RepoId } from "./machines.ts";
-import type { FoundRepo, Repo } from "./repos.ts";
+import type { Repo, Scan } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
   addFolder,
@@ -477,8 +477,8 @@ export default class Worktrunk extends View {
   copy: Copy = { _tag: "Panel" };
   settings: Settings = DEFAULT_SETTINGS;
   settingsError: Option.Option<string> = Option.none();
-  /** The last folder scan's repos, and what and when it scanned. */
-  scanned: Option.Option<readonly FoundRepo[]> = Option.none();
+  /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
+  scanned: Option.Option<Scan> = Option.none();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
@@ -1094,6 +1094,10 @@ export default class Worktrunk extends View {
       settings: this.settings,
       settingsError: this.settingsError,
       discoverError: this.discoverError,
+      missingFolders: Option.match(this.scanned, {
+        onNone: () => [],
+        onSome: (scan) => scan.missing,
+      }),
       settingsFile: SETTINGS_FILE,
       spaces: spaces(),
       panes: panes(),

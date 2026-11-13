@@ -85,6 +85,7 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w" }] },
   settingsError: Option.none(),
   discoverError: Option.none(),
+  missingFolders: [],
   settingsFile: "iangregsondev-worktrunk.json",
   spaces: [],
   panes: [],
@@ -385,6 +386,18 @@ describe("buildView: header, banners and empty states", () => {
     expect(buildView(s).banners).toEqual([
       "iangregsondev-worktrunk.json: bad — using defaults until it's fixed.",
       "Couldn't look for repos: git: command not found",
+    ]);
+  });
+
+  test("each missing group folder shows as a banner, after a failed search", () => {
+    const s = snapshot({
+      discoverError: Option.some("git: command not found"),
+      missingFolders: ["/h/gone", "/h/also"],
+    });
+    expect(buildView(s).banners).toEqual([
+      "Couldn't look for repos: git: command not found",
+      "Group folder /h/gone doesn't exist, so it lists no repos.",
+      "Group folder /h/also doesn't exist, so it lists no repos.",
     ]);
   });
 

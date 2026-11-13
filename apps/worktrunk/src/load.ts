@@ -18,7 +18,7 @@ import {
   type ParsedSettings,
   type Settings,
 } from "./settings.ts";
-import { reposFrom, withoutHidden, type FoundRepo, type Repo } from "./repos.ts";
+import { reposFrom, withoutHidden, type FoundRepo, type Repo, type Scan } from "./repos.ts";
 import { syncNotice } from "./sync.ts";
 import {
   branchAt,
@@ -128,7 +128,7 @@ const asReason = <A, R>(
 
 export interface Found {
   /** What the folder scan found (this time, or the last time when none was due). */
-  readonly scanned: readonly FoundRepo[];
+  readonly scanned: Scan;
   /** The repos to list: scanned and open spaces' repos, grouped, by name, none hidden. */
   readonly repos: readonly Repo[];
 }
@@ -142,12 +142,17 @@ export const findRepos = Effect.fn("findRepos")(function* (
   settings: Settings,
   home: string,
   places: readonly string[],
-  lastScan: Option.Option<readonly FoundRepo[]>,
+  lastScan: Option.Option<Scan>,
   current: Option.Option<FoundRepo> = Option.none(),
 ) {
   const scanned = Option.isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
   const owners = yield* reposOf(places);
-  const repos = reposFrom(scanned, [...owners, ...Option.toArray(current)], settings.folders, home);
+  const repos = reposFrom(
+    scanned.repos,
+    [...owners, ...Option.toArray(current)],
+    settings.folders,
+    home,
+  );
   const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
   return found;
 }, asReason);

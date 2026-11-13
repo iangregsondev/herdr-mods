@@ -256,10 +256,28 @@ describe("scanRepos", () => {
         stderr: "",
       });
       const repos = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }]);
+      assert.deepStrictEqual(repos, {
+        repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
+        missing: [],
+      });
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(SCAN_SCRIPT, scanArgs(settings, "/h")), { timeout: 60_000 }],
       ]);
+    }),
+  );
+
+  it.effect("names the group folders the scan found missing", () =>
+    Effect.gen(function* () {
+      const { api } = recording({
+        code: 0,
+        stdout: "/h/gone\n/h/work\t/h/work/api\t2\n",
+        stderr: "",
+      });
+      const scan = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual(scan, {
+        repos: [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }],
+        missing: ["/h/gone"],
+      });
     }),
   );
 
@@ -267,7 +285,7 @@ describe("scanRepos", () => {
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/x\t/x/y\t1\n", stderr: "" });
       const repos = yield* scanRepos(DEFAULT_SETTINGS, "/h").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual([repos, calls], [[], []]);
+      assert.deepStrictEqual([repos, calls], [{ repos: [], missing: [] }, []]);
     }),
   );
 });
