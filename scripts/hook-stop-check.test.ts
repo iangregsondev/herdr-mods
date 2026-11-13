@@ -1,4 +1,5 @@
-import { join, relative } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import {
   type ShResult,
@@ -358,6 +359,15 @@ describe("stop-check.sh", () => {
     const result = run();
     expect(result.code).toBe(0);
     expect(loggedLines(logOf("vpHome"))).toEqual([]);
+    expect(loggedLines(logOf("home"))).toEqual(["run verify"]);
+  });
+
+  test("passes over a folder named vp in an earlier Vite+ bin folder", () => {
+    const { project, logOf, run } = setup({ vpIn: ["home"] });
+    mkdirSync(join(vpFolder(dirname(project), "vpHome"), "vp"), { recursive: true });
+    writeFile(project, "a.txt", "changed\n");
+    const result = run();
+    expect(result.code).toBe(0);
     expect(loggedLines(logOf("home"))).toEqual(["run verify"]);
   });
 
