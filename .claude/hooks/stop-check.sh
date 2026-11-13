@@ -8,7 +8,9 @@
 # - stop_hook_active is set: Claude is already continuing after a block, so the next stop
 #   after a block is never checked (no loop);
 # - the project folder can't be entered: there is nothing to check;
-# - the branch is untouched: a clean tree and HEAD at its merge-base with origin/main;
+# - the branch is merged: a clean tree, and merging HEAD into origin/main would change
+#   nothing (an untouched branch, or one squash-merged even after main moved on). It
+#   trusts the local origin/main and never fetches;
 # - vp is missing: not on PATH and in none of the Vite+ bin folders (find-vp.sh). It says
 #   so on stderr and exits 1, so a missing tool never reads as failing checks;
 # - the hook times out (the `timeout` in .claude/settings.json): Claude Code ends it and
@@ -33,10 +35,15 @@ active=$(jq -r '.stop_hook_active // false')
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
-# Untouched branch: nothing here differs from main. Without origin/main, run anyway.
+# Merged branch: on a clean tree, skip when merging HEAD into origin/main would change
+# nothing (an untouched or squash-merged branch). Without origin/main, or when merge-tree
+# fails (conflicts, or git older than 2.38), run anyway. No fetch: the local ref is trusted.
 if [ -z "$(git status --porcelain)" ]; then
-  base=$(git merge-base HEAD origin/main 2>/dev/null)
-  [ -n "$base" ] && [ "$base" = "$(git rev-parse HEAD)" ] && exit 0
+  main_tree=$(git rev-parse -q --verify 'origin/main^{tree}' 2>/dev/null)
+  if [ -n "$main_tree" ] && merged=$(git merge-tree --write-tree origin/main HEAD 2>/dev/null); then
+    [ "${merged%%
+*}" = "$main_tree" ] && exit 0
+  fi
 fi
 
 . "$hook_dir/find-vp.sh"
