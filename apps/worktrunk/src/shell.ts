@@ -12,6 +12,7 @@ import {
   startedAddress,
   waitResult,
   type Job,
+  LISTS_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -19,9 +20,17 @@ import {
   shArgs,
 } from "./commands.ts";
 import { parseBranches } from "./dialog.ts";
-import { currentRepo, parseOwners, parseScan, type FoundRepo } from "./repos.ts";
+import { THIS_MACHINE, type Homes, type Machine, type RepoId } from "./machines.ts";
+import {
+  currentRepo,
+  missingFolders,
+  parseOwners,
+  parseScan,
+  type FoundRepo,
+  type Scan,
+} from "./repos.ts";
 import type { Settings } from "./settings.ts";
-import { parseList } from "./worktrees.ts";
+import { lastLine, parseList, parseLists } from "./worktrees.ts";
 
 /** The parts of Herdr's API this service calls. */
 export type ExecApi = Pick<typeof herdr, "exec" | "hc">;
@@ -43,6 +52,8 @@ export class CommandFailed extends Data.TaggedError("CommandFailed")<{
 
 export interface ExecOptions {
   readonly cwd?: string;
+  /** The machine to run on; this machine when left out. */
+  readonly on?: Machine;
   /** In ms; Herdr's default is 30 seconds. */
   readonly timeout?: number;
 }
@@ -88,19 +99,32 @@ export class Shell extends Context.Service<
 /** The longest a script may run, in ms. */
 const SCRIPT_TIMEOUT = 60_000;
 
+/** `options` with `on` set for a machine other than this one; this machine's runs leave it out. */
+const onMachine = (on: Machine | undefined, options: ExecOptions): ExecOptions =>
+  on === undefined || on === THIS_MACHINE ? options : { ...options, on };
+
+/** Where a script runs, and for how long. */
+export interface ScriptOptions {
+  /** The machine; this machine when left out. */
+  readonly on?: Machine;
+  /** In ms; a minute when left out. */
+  readonly timeout?: number;
+}
+
 /**
- * Runs `body` under `sh` with `args` as $1..., for up to `timeout` ms; a failure names
- * the run `label`.
+ * Runs `body` under `sh` with `args` as $1..., on the machine and for up to the time
+ * `options` give; a failure names the run `label`.
  */
 export const runScript = Effect.fn("runScript")(function* (
   label: string,
   body: string,
   args: readonly string[],
-  timeout: number = SCRIPT_TIMEOUT,
+  options: ScriptOptions = {},
 ) {
   const shell = yield* Shell;
+  const timeout = options.timeout ?? SCRIPT_TIMEOUT;
   return yield* shell
-    .exec("sh", shArgs(body, args), { timeout })
+    .exec("sh", shArgs(body, args), onMachine(options.on, { timeout }))
     .pipe(
       Effect.catchTag("CommandFailed", (failed) =>
         Effect.fail(
@@ -110,65 +134,121 @@ export const runScript = Effect.fn("runScript")(function* (
     );
 });
 
-/** The worktrees `body` prints for the repo at `root`, its run named `label`. */
+/** The worktrees `body` prints for `repo`, run on its machine, the run named `label`. */
 const worktreesFrom = Effect.fnUntraced(function* (
   label: string,
   body: string,
-  root: string,
+  repo: RepoId,
   timeout?: number,
 ) {
-  const run = yield* runScript(label, body, [root], timeout);
+  const run = yield* runScript(label, body, [repo.root], { on: repo.machine, timeout });
   return yield* Effect.fromResult(parseList(run.stdout)).pipe(
     Effect.mapError((message) => new ListUnreadable({ message })),
   );
 });
 
-/** The worktrees of the repo at `root`, from `wt list --format=json`. */
-export const wtList = Effect.fn("wtList")(function* (root: string) {
-  return yield* worktreesFrom("wt list", LIST_SCRIPT, root);
+/** The worktrees of `repo`, from `wt list --format=json` on its machine. */
+export const wtList = Effect.fn("wtList")(function* (repo: RepoId) {
+  return yield* worktreesFrom("wt list", LIST_SCRIPT, repo);
+});
+
+/** The batched list reads a machine's repos a few at a time, so it gets longer than one script. */
+const LISTS_TIMEOUT = 180_000;
+
+/**
+ * The worktrees of every repo in `roots` on `machine`, from one batched `wt list` run
+ * there, by folder: each repo's list, or its read's one-line reason.
+ */
+export const wtLists = Effect.fn("wtLists")(function* (machine: Machine, roots: readonly string[]) {
+  const run = yield* runScript("wt list", LISTS_SCRIPT, roots, {
+    on: machine,
+    timeout: LISTS_TIMEOUT,
+  });
+  return parseLists(run.stdout, roots);
 });
 
 /** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
 const CI_TIMEOUT = 240_000;
 
-/** The worktrees of the repo at `root` with their CI, from `wt list --full`. */
-export const wtCi = Effect.fn("wtCi")(function* (root: string) {
-  return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
-});
-
-/** The repos the folder scan finds in the settings' group folders. */
-export const scanRepos = Effect.fn("scanRepos")(function* (settings: Settings, home: string) {
-  if (settings.folders.length === 0) return [];
-  const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-  return parseScan(run.stdout);
-});
-
-/** The repos the given folders are in (each once); none for no folders. */
-export const reposOf = Effect.fn("reposOf")(function* (folders: readonly string[]) {
-  if (folders.length === 0) return [];
-  const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
-  return parseOwners(run.stdout);
+/** The worktrees of `repo` with their CI, from `wt list --full` on its machine. */
+export const wtCi = Effect.fn("wtCi")(function* (repo: RepoId) {
+  return yield* worktreesFrom("wt list --full", CI_SCRIPT, repo, CI_TIMEOUT);
 });
 
 /**
- * The repo the folder `folder` is in (the Current repo of the focused folder), through
- * its shared git folder, so a linked worktree names its repo; none outside every repo.
+ * The repos the folder scan finds in the settings' group folders on `machine` (its home
+ * in `homes`), and those that don't exist.
  */
-export const repoAt = Effect.fn("repoAt")(function* (folder: string) {
-  if (folder === "") return Option.none<FoundRepo>();
-  const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-  return currentRepo(run.stdout);
+export const scanRepos = Effect.fn("scanRepos")(function* (
+  settings: Settings,
+  machine: Machine,
+  homes: Homes,
+) {
+  const args = scanArgs(settings, machine, homes);
+  if (args.length <= 2) return { repos: [], missing: [] } satisfies Scan;
+  const run = yield* runScript("the folder scan", SCAN_SCRIPT, args, { on: machine });
+  const scan: Scan = {
+    repos: parseScan(run.stdout, machine),
+    missing: missingFolders(run.stdout),
+  };
+  return scan;
 });
 
-/** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
-export const gitBranches = Effect.fn("gitBranches")(function* (root: string) {
-  const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [root]);
+/** The home folder of `machine`, read there; an empty $HOME fails, since `~` can't mean it. */
+export const machineHome = Effect.fn("machineHome")(function* (machine: Machine) {
+  const shell = yield* Shell;
+  const run = yield* shell.exec("sh", ["-c", 'printf %s "$HOME"'], onMachine(machine, {}));
+  const home = run.stdout.trim();
+  if (home === "") {
+    return yield* new CommandFailed({
+      command: "the home folder's lookup",
+      code: 0,
+      stderr: "$HOME is empty",
+    });
+  }
+  return home;
+});
+
+/** The repos the given folders on `machine` are in (each once); none for no folders. */
+export const reposOf = Effect.fn("reposOf")(function* (
+  folders: readonly string[],
+  machine: Machine = THIS_MACHINE,
+) {
+  if (folders.length === 0) return [];
+  const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
+  return parseOwners(run.stdout, machine);
+});
+
+/**
+ * The repo the folder `folder` on `machine` is in (the Current repo of the focused
+ * folder), looked up there through its shared git folder, so a linked worktree names its
+ * repo; none outside every repo.
+ */
+export const repoAt = Effect.fn("repoAt")(function* (
+  folder: string,
+  machine: Machine = THIS_MACHINE,
+) {
+  if (folder === "") return Option.none<FoundRepo>();
+  const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder], {
+    on: machine,
+  });
+  return currentRepo(run.stdout, machine);
+});
+
+/** The local and origin branches of `repo`, read on its machine, for the New-or-open dialog. */
+export const gitBranches = Effect.fn("gitBranches")(function* (repo: RepoId) {
+  const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [repo.root], {
+    on: repo.machine,
+  });
   return parseBranches(run.stdout);
 });
 
-/** The branch the folder `folder` is on; none when its HEAD is detached. */
-export const branchAt = Effect.fn("branchAt")(function* (folder: string) {
-  const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+/** The branch the folder `folder` on `machine` is on, read there; none when its HEAD is detached. */
+export const branchAt = Effect.fn("branchAt")(function* (
+  folder: string,
+  machine: Machine = THIS_MACHINE,
+) {
+  const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder], { on: machine });
   return Option.liftPredicate(run.stdout.trim(), (branch) => branch !== "");
 });
 
@@ -188,18 +268,35 @@ export const failureText = (error: ShellError | CommandFailed | ListUnreadable):
 export const causeText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** The last line of `text` that has anything on it; empty when none does. */
-const lastLine = (text: string): string => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+/**
+ * The person's login shell couldn't be found, so a job would run with the wrong PATH.
+ * `reason` says why.
+ */
+export class LoginShellUnknown extends Data.TaggedError("LoginShellUnknown")<{
+  readonly reason: string;
+}> {}
 
-/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
-export const loginShell = Effect.fn("loginShell")(function* () {
+/** The options that run a command on `machine`: none for this machine. */
+const runOn = (machine: Machine): ExecOptions | undefined =>
+  machine === THIS_MACHINE ? undefined : { on: machine };
+
+/**
+ * The person's login shell on `machine`, from `$SHELL` there. A read that fails is
+ * `LoginShellUnknown`: another shell would run the job with another PATH.
+ */
+export const loginShell = Effect.fn("loginShell")(function* (machine: Machine = THIS_MACHINE) {
   const shell = yield* Shell;
-  const out = yield* shell.exec("sh", ["-c", 'printf %s "$SHELL"']).pipe(
-    Effect.map((run) => run.stdout),
-    // Any shell will do to run a job; the person's own is only preferred.
-    Effect.orElseSucceed(() => ""),
-  );
-  return out.trim() || "/bin/sh";
+  const out = yield* shell
+    .exec("sh", ["-c", 'printf %s "$SHELL"'], runOn(machine))
+    .pipe(
+      Effect.mapError(
+        (failed) =>
+          new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` }),
+      ),
+    );
+  const found = out.stdout.trim();
+  if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
+  return found;
 });
 
 /** `hc run` printed no terminal address: the job never started. `reason` says why. */
@@ -238,10 +335,30 @@ export const waitForJob = (addr: string): Effect.Effect<Option.Option<number>, S
     }
   });
 
-/** Which of `folders` no longer exist. */
-export const goneFolders = Effect.fn("goneFolders")(function* (folders: readonly string[]) {
+/**
+ * Whether `folder` is a folder on `machine`, checked there. The test exits 1 for "no";
+ * any other failure (the machine can't be reached) is the check's own error.
+ */
+export const isFolder = Effect.fn("isFolder")(function* (folder: string, machine: Machine) {
+  const shell = yield* Shell;
+  return yield* shell.exec("sh", ["-c", '[ -d "$1" ]', "sh", folder], onMachine(machine, {})).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (failed) => failed._tag === "CommandFailed" && failed.code === 1,
+      () => Effect.succeed(false),
+    ),
+  );
+});
+
+/** Which of `folders` on `machine` no longer exist, checked there. */
+export const goneFolders = Effect.fn("goneFolders")(function* (
+  folders: readonly string[],
+  machine: Machine = THIS_MACHINE,
+) {
   if (folders.length === 0) return [];
-  const run = yield* runScript("the removed folders' check", GONE_SCRIPT, folders);
+  const run = yield* runScript("the removed folders' check", GONE_SCRIPT, folders, {
+    on: machine,
+  });
   return run.stdout.split("\n").filter((line) => line !== "");
 });
 
@@ -257,10 +374,10 @@ export const reveal = Effect.fn("reveal")(function* (path: string) {
   yield* shell.exec("open", [path]);
 });
 
-/** A new private temp folder (`mktemp -d`), for a job's answer file. */
-export const makeTempDir = Effect.fn("makeTempDir")(function* () {
+/** A new private temp folder (`mktemp -d`) on `machine`, for a job's answer file. */
+export const makeTempDir = Effect.fn("makeTempDir")(function* (machine: Machine = THIS_MACHINE) {
   const shell = yield* Shell;
-  const run = yield* shell.exec("mktemp", ["-d"]);
+  const run = yield* shell.exec("mktemp", ["-d"], runOn(machine));
   const dir = run.stdout.trim();
   if (dir === "") {
     return yield* new CommandFailed({
@@ -272,10 +389,13 @@ export const makeTempDir = Effect.fn("makeTempDir")(function* () {
   return dir;
 });
 
-/** Removes the folder at `dir` and everything in it. */
-export const removeDir = Effect.fn("removeDir")(function* (dir: string) {
+/** Removes the folder at `dir` on `machine` and everything in it. */
+export const removeDir = Effect.fn("removeDir")(function* (
+  dir: string,
+  machine: Machine = THIS_MACHINE,
+) {
   const shell = yield* Shell;
-  yield* shell.exec("rm", ["-rf", dir]);
+  yield* shell.exec("rm", ["-rf", dir], runOn(machine));
 });
 
 /** Removes the ended job's terminal from herdr-core. */

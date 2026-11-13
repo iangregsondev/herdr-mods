@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { Input, InputState, h_flex, v_flex } from "gpui-base";
-import { appHome, closeOverlay, exec, focused, hc, home, layout, nextCommand, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, focused, hc, home, layout, machines, nextCommand, notify, openOverlay, panes, pickFolder, props, readTextFile, run, setShared, settings, shared, spaces, theme, updates, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -1784,18 +1784,6 @@ function isJsonPrimitiveWrapper(object) {
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Inspectable.js
 /**
-* Controls how values appear in logs and debugging output.
-*
-* Effect data types use `Inspectable` to provide stable string, JSON, and
-* Node.js inspection output. This keeps custom values readable in logs, REPLs,
-* test failures, and diagnostics. This module defines the Node inspect symbol,
-* the `Inspectable` interface, safe conversion helpers, and shared prototype or
-* class implementations for custom values.
-*
-* @stability stable
-* @since 2.0.0
-*/
-/**
 * Defines the symbol used by Node.js for custom object inspection.
 *
 * **When to use**
@@ -1860,31 +1848,6 @@ const toJson = (input) => {
 		return input;
 	} catch {
 		return "[toJSON threw]";
-	}
-};
-/**
-* Converts an unknown value to a string for diagnostics.
-*
-* **When to use**
-*
-* Use to produce a diagnostic string from a value whose runtime type is unknown.
-*
-* **Details**
-*
-* Strings are returned unchanged. Objects are formatted as JSON using the
-* provided whitespace setting when possible, and values that cannot be
-* formatted are converted with `String`.
-*
-* @stability stable
-* @category converting
-* @since 2.0.0
-*/
-const toStringUnknown = (u, whitespace = 2) => {
-	if (typeof u === "string") return u;
-	try {
-		return typeof u === "object" ? formatJson(u, { space: whitespace }) : format(u, { space: whitespace });
-	} catch {
-		return String(u);
 	}
 };
 
@@ -2227,8 +2190,6 @@ const causeAddInterrupts = (self, interrupts) => {
 	for (const reason of interrupts.reasons) if (isInterruptReason(reason) && !reasons.some((r) => isInterruptReason(r) && r.fiberId === reason.fiberId && r.annotations === reason.annotations)) reasons.push(reason);
 	return reasons.length === self.reasons.length ? self : new CauseImpl(reasons);
 };
-/** @internal */
-const causeEmpty = /*#__PURE__*/ new CauseImpl([]);
 /** @internal */
 const causeFail = (error) => new CauseImpl([new Fail(error)]);
 /** @internal */
@@ -2604,6 +2565,8 @@ const succeed$4 = (success) => new SuccessImpl(success);
 const getFailure$1 = (self) => isSuccess$1(self) ? none$1 : some$1(self.failure);
 /** @internal */
 const getSuccess$1 = (self) => isFailure$1(self) ? none$1 : some$1(self.success);
+/** @internal */
+const fromOption$3 = /*#__PURE__*/ dual(2, (self, onNone) => isNone$1(self) ? fail$3(onNone()) : succeed$4(self.value));
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Order.js
 /**
@@ -3199,6 +3162,37 @@ const flatMap$3 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(s
 */
 const flatten$1 = /*#__PURE__*/ flatMap$3(identity);
 /**
+* Combines two `Option`s into a `Some` containing a tuple `[A, B]` if both
+* are `Some`.
+*
+* **When to use**
+*
+* Use when you need to require two `Option` values to both be `Some` and keep
+* both values as a tuple.
+*
+* **Details**
+*
+* - Both `Some` → `Some([a, b])`
+* - Either `None` → `None`
+*
+* **Example** (Pairing two Options)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.product(Option.some("hello"), Option.some(42)) // => Option.some(["hello", 42])
+* Option.product(Option.none(), Option.some(42)) // => Option.none()
+* ```
+*
+* @see {@link zipWith} to combine with a function instead of a tuple
+* @see {@link all} to combine many `Option`s
+*
+* @stability stable
+* @category combining
+* @since 2.0.0
+*/
+const product = /*#__PURE__*/ dual(2, (self, that) => isSome(self) && isSome(that) ? some([self.value, that.value]) : none());
+/**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
 *
@@ -3255,6 +3249,39 @@ const all$2 = (input) => {
 	}
 	return some(out);
 };
+/**
+* Combines two `Option`s using a provided function.
+*
+* **When to use**
+*
+* Use when you need to combine two present `Option` values into a computed
+* result.
+*
+* **Details**
+*
+* - Both `Some` → applies `f(a, b)` and wraps in `Some`
+* - Either `None` → `None`
+*
+* **Example** (Combining with a function)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* Option.zipWith(
+*   Option.some("John"),
+*   Option.some(25),
+*   (name, age) => ({ name: name.toUpperCase(), age })
+* ) // => Option.some({ name: "JOHN", age: 25 })
+* ```
+*
+* @see {@link product} to combine into a tuple instead
+* @see {@link lift2} to lift a binary function
+*
+* @stability stable
+* @category zipping
+* @since 2.0.0
+*/
+const zipWith = /*#__PURE__*/ dual(3, (self, that, f) => map$3(product(self, that), ([a, b]) => f(a, b)));
 /**
 * Converts an `Option` into an `Array`.
 *
@@ -4138,6 +4165,39 @@ const succeed$3 = succeed$4;
 * @since 4.0.0
 */
 const fail$2 = fail$3;
+/**
+* Converts an `Option<A>` into a `Result<A, E>`.
+*
+* **When to use**
+*
+* Use when an existing `Option` should become a `Result`, preserving `Some` as
+* success and turning `None` into a caller-provided failure.
+*
+* **Details**
+*
+* - `Some<A>` becomes `Success<A>`
+* - `None` becomes `Failure<E>` using the provided function
+* - Supports both data-first and data-last (piped) usage
+*
+* **Example** (Converting an Option to a Result)
+*
+* ```ts import.meta.vitest
+* import { Option, Result } from "effect"
+*
+* Result.fromOption(Option.some(1), () => "missing") // => Result.succeed(1)
+*
+* Result.fromOption(Option.none(), () => "missing") // => Result.fail("missing")
+* ```
+*
+* @see {@link getSuccess} to extract the success value as an Option
+* @see {@link getFailure} to extract the failure value as an Option
+* @see {@link fromNullishOr} to build a Result from nullable values
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+const fromOption$2 = fromOption$3;
 const try_ = (evaluate) => {
 	if (isFunction(evaluate)) try {
 		return succeed$3(evaluate());
@@ -5694,8 +5754,6 @@ const TracerSpanAnnotations = /*#__PURE__*/ Reference("effect/References/TracerS
 /** @internal */
 const TracerSpanLinks = /*#__PURE__*/ Reference("effect/References/TracerSpanLinks", { defaultValue: () => [] });
 /** @internal */
-const CurrentLogAnnotations = /*#__PURE__*/ Reference("effect/References/CurrentLogAnnotations", { defaultValue: () => ({}) });
-/** @internal */
 const CurrentLogLevel = /*#__PURE__*/ Reference("effect/References/CurrentLogLevel", {
 	fiberCached: true,
 	defaultValue: () => "Info"
@@ -5705,10 +5763,6 @@ const MinimumLogLevel = /*#__PURE__*/ Reference("effect/References/MinimumLogLev
 	fiberCached: true,
 	defaultValue: () => "Info"
 });
-/** @internal */
-const UnhandledLogLevel = /*#__PURE__*/ Reference("effect/References/UnhandledLogLevel", { defaultValue: () => "Error" });
-/** @internal */
-const CurrentLogSpans = /*#__PURE__*/ Reference("effect/References/CurrentLogSpans", { defaultValue: () => [] });
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/internal/tracer.js
 /** @internal */
@@ -5778,6 +5832,11 @@ const causeElectDefects = (self) => hasDies(self) && hasFails(self) ? causeFromR
 * @internal
 */
 const findRecoverableError = (self) => hasDies(self) ? fail$2(causeElectDefects(self)) : findError(self);
+/** @internal */
+const findDefect = (self) => {
+	const reason = self.reasons.find(isDieReason);
+	return reason ? succeed$3(reason.defect) : fail$2(self);
+};
 /** @internal */
 const hasInterrupts = (self) => self.reasons.some(isInterruptReason);
 /** @internal */
@@ -6406,7 +6465,7 @@ const fromIteratorUnsafe = /*#__PURE__*/ function() {
 	};
 }();
 /** @internal */
-const as = /*#__PURE__*/ dual(2, (self, value) => new ContImpl(self, returnPayload, succeed$2(value)));
+const as$1 = /*#__PURE__*/ dual(2, (self, value) => new ContImpl(self, returnPayload, succeed$2(value)));
 const evaluateCont = function(fiber) {
 	fiber._stack.push(this);
 	return this[args];
@@ -6454,6 +6513,10 @@ const tapCont = function(value) {
 const tapEffectCont = function(value) {
 	return new ContImpl(this.payload, succeedPayload, value);
 };
+/** @internal */
+const asSome$1 = (self) => map$1(self, some);
+/** @internal */
+const andThen$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? returnPayload : andThenCont, f));
 /** @internal */
 const tap$1 = /*#__PURE__*/ dual(2, (self, f) => new ContImpl(self, isEffect(f) ? tapEffectCont : tapCont, f));
 /** @internal */
@@ -6524,9 +6587,11 @@ const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(s
 	return isFailure(eb) ? failCause(eb.failure) : f(eb.success, cause);
 }));
 /** @internal */
-const catch_ = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
+const catch_$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
 /** @internal */
-const catchIf = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
+const catchDefect$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findDefect, f));
+/** @internal */
+const catchIf$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
 	if (!predicate(error.success)) return orElse ? orElse(error.success) : failCause(cause);
@@ -6543,7 +6608,7 @@ const catchFilter = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, filte
 /** @internal */
 const catchTag$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, k, f, orElse) => {
 	const pred = Array.isArray(k) ? (e) => hasProperty(e, "_tag") && k.includes(e._tag) : isTagged(k);
-	return catchIf(self, pred, f, orElse);
+	return catchIf$1(self, pred, f, orElse);
 });
 /** @internal */
 const catchTags$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, cases, orElse) => {
@@ -6555,28 +6620,6 @@ const catchTags$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, cases
 });
 /** @internal */
 const mapError$1 = /*#__PURE__*/ dual(2, (self, f) => catchCause(self, (cause) => failCause(causeMap(cause, f))));
-/** @internal */
-const orElseSucceed$1 = /*#__PURE__*/ dual(2, (self, f) => catch_(self, (error) => sync$1(() => f(error))));
-/** @internal */
-const ignoreCauseLogger = (log) => log === "Unhandled" ? (...message) => withFiber((fiber) => {
-	const level = fiber.getRef(UnhandledLogLevel);
-	return level === void 0 ? void_ : logWithLevel(level)(...message);
-}) : logWithLevel(log === true ? void 0 : log);
-/** @internal */
-const ignore$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, options) => {
-	if (!options?.log) return matchEffect$1(self, {
-		onFailure: (_) => void_,
-		onSuccess: (_) => void_
-	});
-	const logEffect = ignoreCauseLogger(options.log);
-	return matchCauseEffect(self, {
-		onFailure(cause) {
-			const error = findRecoverableError(cause);
-			return isFailure(error) ? failCause(error.failure) : options.message === void 0 ? logEffect(cause) : logEffect(options.message, cause);
-		},
-		onSuccess: (_) => void_
-	});
-});
 /** @internal */
 const option$1 = (self) => match$2(self, {
 	onFailure: none,
@@ -6644,7 +6687,7 @@ const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 	return match$2(self, options);
 });
 /** @internal */
-const exit$1 = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
+const exit = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
 const exitPrimitive = /*#__PURE__*/ makePrimitive({
 	op: "Exit",
 	[evaluate](fiber) {
@@ -6697,7 +6740,7 @@ const scopeCloseFinalizers = /*#__PURE__*/ fnUntraced$1(function* (self, finaliz
 	const parent = getCurrentFiber();
 	for (let i = arr.length - 1; i >= 0; i--) {
 		const [key, finalizer] = arr[i];
-		if (self.strategy === "sequential") exits.push(yield* exit$1(runFinalizer(finalizer, exit_)));
+		if (self.strategy === "sequential") exits.push(yield* exit(runFinalizer(finalizer, exit_)));
 		else if (key !== parent) fibers.push(forkUnsafe$1(parent, runFinalizer(finalizer, exit_), true, true, "inherit"));
 	}
 	if (fibers.length > 0) exits = yield* fiberAwaitAll(fibers);
@@ -6810,6 +6853,8 @@ const onExitUnsafe = (fiber, f) => {
 /** @internal */
 const onExit = /*#__PURE__*/ dual(2, onExitPrimitive);
 /** @internal */
+const ensuring$1 = /*#__PURE__*/ dual(2, (self, finalizer) => onExit(self, (_) => finalizer));
+/** @internal */
 const uninterruptible = (self) => withFiber((fiber) => {
 	if (!fiber.interruptible) return self;
 	fiber.interruptible = false;
@@ -6873,14 +6918,14 @@ const forEach$1 = /*#__PURE__*/ dual((args) => typeof args[1] === "function", (i
 		f,
 		out
 	}, items, { concurrency });
-	return eff ? as(eff, out) : succeed$2(out);
+	return eff ? as$1(eff, out) : succeed$2(out);
 }));
 const forEachSequential = (iterable, f, options) => suspend(() => {
 	const out = options?.discard ? void 0 : [];
 	const iterator = iterable[Symbol.iterator]();
 	let state = iterator.next();
 	let index = 0;
-	return as(whileLoop({
+	return as$1(whileLoop({
 		while: () => !state.done,
 		body: () => f(state.value, index++),
 		step: (b) => {
@@ -7193,8 +7238,6 @@ var UnknownError = class extends (/*#__PURE__*/ TaggedError$1("UnknownError")) {
 	}
 };
 /** @internal */
-const ConsoleRef = /*#__PURE__*/ Reference("effect/Console", { defaultValue: () => globalThis.console });
-/** @internal */
 const logLevelToOrder = (level) => {
 	switch (level) {
 		case "All": return Number.MIN_SAFE_INTEGER;
@@ -7211,73 +7254,6 @@ const logLevelToOrder = (level) => {
 const LogLevelOrder = /*#__PURE__*/ mapInput(Number$1, logLevelToOrder);
 /** @internal */
 const isLogLevelGreaterThan = /*#__PURE__*/ isGreaterThan(LogLevelOrder);
-/** @internal */
-const CurrentLoggers = /*#__PURE__*/ Reference("effect/Logger/CurrentLoggers", { defaultValue: () => /* @__PURE__ */ new Set([defaultLogger, tracerLogger]) });
-/** @internal */
-const LogToStderr = /*#__PURE__*/ Reference("effect/Logger/LogToStderr", { defaultValue: constFalse });
-/** @internal */
-const LoggerTypeId = "~effect/Logger";
-const LoggerProto = {
-	[LoggerTypeId]: {
-		_Message: identity,
-		_Output: identity
-	},
-	pipe() {
-		return pipeArguments(this, arguments);
-	}
-};
-/** @internal */
-const loggerMake = (log) => {
-	const self = Object.create(LoggerProto);
-	self.log = log;
-	return self;
-};
-/**
-* Sanitize a given string by replacing spaces, equal signs, and double quotes
-* with underscores.
-*
-* @internal
-*/
-const formatLabel = (key) => key.replace(/[\s="]/g, "_");
-/**
-* Formats a log span into a `<label>=<value>ms` string.
-*
-* @internal
-*/
-const formatLogSpan = (self, now) => {
-	return `${formatLabel(self[0])}=${now - self[1]}ms`;
-};
-/** @internal */
-const logWithLevel = (level) => (...message) => {
-	let cause = void 0;
-	for (let i = 0, len = message.length; i < len; i++) {
-		const msg = message[i];
-		if (isCause(msg)) {
-			if (cause) message.splice(i, 1);
-			else message = message.slice(0, i).concat(message.slice(i + 1));
-			cause = cause ? causeFromReasons(cause.reasons.concat(msg.reasons)) : msg;
-			i--;
-		}
-	}
-	if (cause === void 0) cause = causeEmpty;
-	return withFiber((fiber) => {
-		const logLevel = level ?? fiber.cache.logLevel;
-		if (isLogLevelGreaterThan(fiber.cache.minimumLogLevel, logLevel)) return void_;
-		const clock = fiber.getRef(ClockRef);
-		const loggers = fiber.getRef(CurrentLoggers);
-		if (loggers.size > 0) {
-			const date = new Date(clock.currentTimeMillisUnsafe());
-			for (const logger of loggers) logger.log({
-				cause,
-				fiber,
-				date,
-				logLevel,
-				message
-			});
-		}
-		return void_;
-	});
-};
 const colors = {
 	bold: "1",
 	red: "31",
@@ -7300,33 +7276,6 @@ const logLevelColors = {
 	Error: [colors.red],
 	Fatal: [colors.bgBrightRed, colors.black]
 };
-const defaultDateFormat = (date) => `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}:${date.getSeconds().toString().padStart(2, "0")}.${date.getMilliseconds().toString().padStart(3, "0")}`;
-/** @internal */
-const defaultLogger = /*#__PURE__*/ loggerMake(({ cause, date, fiber, logLevel, message }) => {
-	const message_ = Array.isArray(message) ? message.slice() : [message];
-	if (cause.reasons.length > 0) message_.push(causePretty(cause));
-	const now = date.getTime();
-	const spans = fiber.getRef(CurrentLogSpans);
-	let spanString = "";
-	for (const span of spans) spanString += ` ${formatLogSpan(span, now)}`;
-	const annotations = fiber.getRef(CurrentLogAnnotations);
-	if (Object.keys(annotations).length > 0) message_.push(annotations);
-	const console = fiber.getRef(ConsoleRef);
-	(fiber.getRef(LogToStderr) ? console.error : console.log)(`[${defaultDateFormat(date)}] ${logLevel.toUpperCase()} (#${fiber.id})${spanString}:`, ...message_);
-});
-/** @internal */
-const tracerLogger = /*#__PURE__*/ loggerMake(({ cause, fiber, logLevel, message }) => {
-	const clock = fiber.getRef(ClockRef);
-	const annotations = fiber.getRef(CurrentLogAnnotations);
-	const span = fiber.cache.span;
-	if (span === void 0 || span._tag === "ExternalSpan" || span.status._tag === "Ended") return;
-	const attributes = {};
-	for (const [key, value] of Object.entries(annotations)) assignProperty(attributes, key, value);
-	attributes["effect.fiberId"] = fiber.id;
-	attributes["effect.logLevel"] = logLevel.toUpperCase();
-	if (cause.reasons.length > 0) attributes["effect.cause"] = causePretty(cause);
-	span.event(toStringUnknown(Array.isArray(message) && message.length === 1 ? message[0] : message), clock.currentTimeNanosUnsafe(), attributes);
-});
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Cause.js
 /**
@@ -8659,6 +8608,89 @@ const fromOption = fromOption$1;
 */
 const flatMap = flatMap$1;
 /**
+* Runs this effect and then runs another effect, optionally using the first
+* effect's success value to choose the next effect.
+*
+* **When to use**
+*
+* Use when you need one effect to run after another and the second effect may
+* depend on the first effect's success value.
+*
+* **Details**
+*
+* When the second argument is an `Effect`, the first success value is discarded
+* and the returned effect produces the second effect's value. When the second
+* argument is a function, it receives the first success value and must return
+* the next `Effect`.
+*
+* Failures or requirements from either effect are preserved in the returned
+* effect.
+*
+* **Example** (Choosing andThen syntax variants)
+*
+* ```ts import.meta.vitest
+* import { Effect, pipe } from "effect"
+* const output: Array<unknown> = []
+*
+* const myEffect = Effect.succeed(1)
+* const anotherEffect = Effect.succeed("done")
+*
+* const transformedWithPipe = pipe(myEffect, Effect.andThen(anotherEffect))
+* const transformedWithDataFirst = Effect.andThen(myEffect, anotherEffect)
+* const transformedWithMethod = myEffect.pipe(Effect.andThen(anotherEffect))
+*
+* void output.push(Effect.runSync(Effect.all([
+*   transformedWithPipe,
+*   transformedWithDataFirst,
+*   transformedWithMethod
+* ])))
+* output // => [['done', 'done', 'done']]
+* ```
+*
+* **Example** (Sequencing a discount calculation after fetching a total)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, pipe } from "effect"
+*
+* class DiscountRateError extends Data.TaggedError("DiscountRateError")<{}> {}
+*
+* // Function to apply a discount safely to a transaction amount
+* const applyDiscount = (
+*   total: number,
+*   discountRate: number
+* ): Effect.Effect<number, DiscountRateError> =>
+*   discountRate === 0
+*     ? Effect.fail(new DiscountRateError())
+*     : Effect.succeed(total - (total * discountRate) / 100)
+*
+* // Simulated asynchronous task to fetch a transaction amount from database
+* const fetchTransactionAmount = Effect.promise(() => Promise.resolve(100))
+*
+* // Using Effect.map and Effect.flatMap
+* const result1 = pipe(
+*   fetchTransactionAmount,
+*   Effect.map((amount) => amount * 2),
+*   Effect.flatMap((amount) => applyDiscount(amount, 5))
+* )
+*
+* await Effect.runPromise(result1) // => 190
+*
+* // Using Effect.andThen
+* const result2 = pipe(
+*   fetchTransactionAmount,
+*   Effect.andThen((amount) => Effect.succeed(amount * 2)),
+*   Effect.andThen((amount) => applyDiscount(amount, 5))
+* )
+*
+* await Effect.runPromise(result2) // => 190
+* ```
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const andThen = andThen$1;
+/**
 * Runs a side effect with the result of an effect without changing the original
 * value.
 *
@@ -8814,48 +8846,6 @@ const result = result$1;
 */
 const option = option$1;
 /**
-* Transforms an effect to encapsulate both failure and success using the `Exit`
-* data type.
-*
-* **When to use**
-*
-* Use when you need to inspect the full outcome, including typed failures, defects,
-* and interruptions.
-*
-* **Details**
-*
-* `exit` wraps an effect's success or failure inside an `Exit` type, allowing
-* you to handle both cases explicitly.
-*
-* The resulting effect cannot fail because the failure is encapsulated within
-* the `Exit.Failure` type. The error type is set to `never`, indicating that
-* the effect is structured to never fail directly.
-*
-* **Example** (Capturing completion as Exit)
-*
-* ```ts import.meta.vitest
-* import { Effect, Exit } from "effect"
-*
-* const success = Effect.succeed(42)
-* const failure = Effect.fail("Something went wrong")
-*
-* const program1 = Effect.exit(success)
-* const program2 = Effect.exit(failure)
-*
-* Effect.runSync(program1) // => Exit.succeed(42)
-*
-* Effect.runSync(program2) // => Exit.fail("Something went wrong")
-* ```
-*
-* @see {@link option} for a version that uses `Option` instead.
-* @see {@link result} for a version that uses `Result` instead.
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const exit = exit$1;
-/**
 * Transforms the value inside an effect by applying a function to it.
 *
 * **When to use**
@@ -8920,6 +8910,56 @@ const exit = exit$1;
 */
 const map = map$1;
 /**
+* Replaces the value inside an effect with a constant value.
+*
+* **When to use**
+*
+* Use to replace a successful value with a constant while preserving failures
+* and requirements.
+*
+* **Details**
+*
+* `as` allows you to ignore the original value inside an effect and
+* replace it with a new constant value.
+*
+* **Example** (Replacing a success value)
+*
+* ```ts import.meta.vitest
+* import { Effect, pipe } from "effect"
+*
+* // Replaces the value 5 with the constant "new value"
+* const program = pipe(Effect.succeed(5), Effect.as("new value"))
+*
+* Effect.runSync(program) // => "new value"
+* ```
+*
+* @see {@link map} for deriving the replacement value from the success value
+* @see {@link asVoid} for replacing the success value with `void`
+*
+* @stability stable
+* @category mapping
+* @since 2.0.0
+*/
+const as = as$1;
+/**
+* Maps the success value of an `Effect` to `Some`, preserving failures.
+*
+* **Example** (Wrapping success in Option.some)
+*
+* ```ts import.meta.vitest
+* import { Effect, Option } from "effect"
+*
+* const program = Effect.asSome(Effect.succeed(42))
+*
+* Effect.runSync(program) // => Option.some(42)
+* ```
+*
+* @stability stable
+* @category mapping
+* @since 2.0.0
+*/
+const asSome = asSome$1;
+/**
 * Maps the success value of an `Effect` to `void`, preserving failures.
 *
 * **Example** (Discarding success values)
@@ -8937,6 +8977,7 @@ const map = map$1;
 * @since 2.0.0
 */
 const asVoid = asVoid$1;
+const catch_ = catch_$1;
 /**
 * Catches and handles specific errors by their `_tag` field, which is used as a
 * discriminator.
@@ -9048,6 +9089,109 @@ const catchTag = catchTag$1;
 */
 const catchTags = catchTags$1;
 /**
+* Recovers from defects using a provided recovery function.
+*
+* **When to use**
+*
+* Use when you need to report or translate defects at integration boundaries.
+*
+* **Details**
+*
+* `catchDefect` handles unexpected defects, such as thrown exceptions or
+* values passed to `die`, without catching typed failures or interruptions.
+*
+* When to Recover from Defects:
+*
+* Defects are unexpected errors that typically should not be recovered from, as
+* they often indicate serious issues. In some cases, such as dynamically loaded
+* plugins, controlled recovery may be needed.
+*
+* **Gotchas**
+*
+* `catchDefect` recovers any cause that contains a defect, including causes
+* that also contain typed errors. Typed error handlers such as `catch` skip
+* those causes, so defects always take precedence.
+*
+* **Example** (Recovering from defects)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* // An effect that might throw an unexpected error (defect)
+* const program = Effect.sync(() => {
+*   throw new Error("Unexpected error")
+* })
+*
+* // Recover from defects only
+* const recovered = Effect.catchDefect(program, (defect) => {
+*   return Effect.sync(() => { output.push(`Caught defect: ${(defect as Error).message}`) }).pipe(
+*     Effect.as("Recovered from defect")
+*   )
+* })
+*
+* void output.push(Effect.runSync(recovered))
+* output // => ["Caught defect: Unexpected error", "Recovered from defect"]
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 4.0.0
+*/
+const catchDefect = catchDefect$1;
+/**
+* Recovers from specific errors using a `Predicate` or `Refinement`.
+*
+* **When to use**
+*
+* Use when you need to recover from errors that match a condition.
+*
+* **Details**
+*
+* Use a `Refinement` for type narrowing or a `Predicate` for simple boolean
+* matching. Non-matching errors re-fail with the original cause. Defects and
+* interrupts are not caught.
+*
+* **Gotchas**
+*
+* If the cause contains a defect, the handler is skipped and every typed error
+* is converted to a defect, preserving reason order and interrupts. An
+* interruption alongside a typed error does not prevent recovery.
+*
+* **Example** (Recovering when a predicate matches)
+*
+* ```ts import.meta.vitest
+* import { Data, Effect, Filter } from "effect"
+*
+* class NotFound extends Data.TaggedError("NotFound")<{ id: string }> {}
+*
+* const program = Effect.fail(new NotFound({ id: "user-1" }))
+*
+* // With a refinement
+* const recovered = program.pipe(
+*   Effect.catchIf(
+*     (error): error is NotFound => error._tag === "NotFound",
+*     (error) => Effect.succeed(`missing:${error.id}`)
+*   )
+* )
+*
+* // With a Filter
+* const recovered2 = program.pipe(
+*   Effect.catchFilter(
+*     Filter.tagged("NotFound"),
+*     (error) => Effect.succeed(`missing:${error.id}`)
+*   )
+* )
+*
+* Effect.runSync(Effect.all([recovered, recovered2])) // => ['missing:user-1', 'missing:user-1']
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 2.0.0
+*/
+const catchIf = catchIf$1;
+/**
 * Transforms the failure value of an effect without changing its success value.
 *
 * **When to use**
@@ -9091,103 +9235,6 @@ const catchTags = catchTags$1;
 * @since 2.0.0
 */
 const mapError = mapError$1;
-/**
-* Discards both the success and failure values of an effect.
-*
-* **When to use**
-*
-* Use when an effect should run for its side effects while both success and
-* failure values are discarded.
-*
-* **Details**
-*
-* Use the `log` option to emit the full {@link Cause} when the effect fails,
-* and `message` to prepend a custom log message.
-* Set `log: "Unhandled"` to read `References.UnhandledLogLevel` when the
-* failure occurs; `undefined` disables logging. Minimum log level filtering
-* still applies.
-*
-* **Gotchas**
-*
-* Defects take precedence over typed errors. If the cause also contains a
-* defect, the failure is not ignored and is propagated with every typed error
-* converted to a defect. An interruption alongside a typed error does not
-* prevent the error from being ignored.
-*
-* **Example** (Discarding success and failure values)
-*
-* ```ts import.meta.vitest
-* import { Effect } from "effect"
-*
-* //      ┌─── Effect<number, string, never>
-* //      ▼
-* const task = Effect.fail("Uh oh!").pipe(Effect.as(5))
-*
-* //      ┌─── Effect<void, never, never>
-* //      ▼
-* const program = task.pipe(Effect.ignore)
-* Effect.runSync(program) // => undefined
-* ```
-*
-* **Example** (Logging failures while ignoring results)
-*
-* ```ts import.meta.vitest
-* import { Effect } from "effect"
-*
-* const task = Effect.fail("Uh oh!")
-*
-* const program = task.pipe(Effect.ignore)
-* Effect.runSync(program) // => undefined
-* ```
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const ignore = ignore$1;
-/**
-* Recovers from a typed failure by producing a fallback success value.
-*
-* **Details**
-*
-* If the source effect succeeds, its value is preserved. If it fails in the
-* error channel, `orElseSucceed` evaluates the fallback with that error and
-* succeeds with the returned value, removing the typed error from the returned
-* effect.
-*
-* Defects and interruptions are not recovered by this operator.
-*
-* **Gotchas**
-*
-* If the cause contains a defect, the handler is skipped and every typed error
-* is converted to a defect, preserving reason order and interrupts. An
-* interruption alongside a typed error does not prevent recovery.
-*
-* **Example** (Replacing failures with a value)
-*
-* ```ts import.meta.vitest
-* import { Effect, Exit } from "effect"
-*
-* const validate = (age: number): Effect.Effect<number, string> => {
-*   if (age < 0) {
-*     return Effect.fail("NegativeAgeError")
-*   } else if (age < 18) {
-*     return Effect.fail("IllegalAgeError")
-*   } else {
-*     return Effect.succeed(age)
-*   }
-* }
-*
-* const program = Effect.orElseSucceed(validate(-1), (error) => error === "IllegalAgeError" ? 18 : 0)
-*
-* Effect.runSyncExit(program) // => Exit.succeed(0)
-* ```
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const orElseSucceed = orElseSucceed$1;
 /**
 * Filters an effect, failing with a custom error if the predicate fails.
 *
@@ -9371,6 +9418,46 @@ const matchEffect = matchEffect$1;
 * @since 2.0.0
 */
 const provide = provide$1;
+/**
+* Returns an effect that, if this effect _starts_ execution, then the
+* specified `finalizer` is guaranteed to be executed, whether this effect
+* succeeds, fails, or is interrupted.
+*
+* **Details**
+*
+* For use cases that need access to the effect's result, see `onExit`.
+*
+* Finalizers offer very powerful guarantees, but they are low-level, and
+* should generally not be used for releasing resources. For higher-level
+* logic built on `ensuring`, see the `acquireRelease` family of methods.
+*
+* **Example** (Always running cleanup)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* const task = Effect.gen(function*() {
+*   yield* Effect.sync(() => { output.push("Task started") })
+*   yield* Effect.sync(() => { output.push("Task completed") })
+*   return 42
+* })
+*
+* // Ensure cleanup always runs, regardless of success or failure
+* const program = Effect.ensuring(
+*   task,
+*   Effect.sync(() => { output.push("Cleanup: This always runs!") })
+* )
+*
+* void output.push(Effect.runSync(program))
+* output // => ["Task started", "Task completed", "Cleanup: This always runs!", 42]
+* ```
+*
+* @stability stable
+* @category resource management
+* @since 2.0.0
+*/
+const ensuring = ensuring$1;
 /**
 * Runs an effect and returns a `Promise` that resolves to an `Exit`, which
 * represents the outcome (success or failure) of the effect.
@@ -9628,6 +9715,31 @@ const fnUntraced = fnUntraced$1;
 */
 const fn = fn$1;
 
+// ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Brand.js
+/**
+* Returns a `Constructor` that **does not apply any runtime checks** and just
+* returns the provided value.
+*
+* **When to use**
+*
+* Use to create nominal types that allow distinguishing between two values
+* of the same type but with different meanings.
+*
+* @see {@link make} for constructing branded values with validation.
+* @see {@link check} for constructing branded values from schema checks.
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+function nominal() {
+	return Object.assign((input) => input, {
+		option: (input) => some(input),
+		result: (input) => succeed$3(input),
+		is: (_) => true
+	});
+}
+
 // ../../packages/worktrunk-mailbox/src/files.ts
 /** There is no file at `path`. */
 var FileMissing = class extends TaggedError("FileMissing") {};
@@ -9639,8 +9751,8 @@ var WriteConflict = class extends TaggedError("WriteConflict") {};
 var PickerFailed = class extends TaggedError("PickerFailed") {};
 var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 	static layer = (api) => {
-		const read = (path) => tryPromise({
-			try: () => api.readTextFile(path),
+		const read = (path, on = null) => tryPromise({
+			try: () => on === null ? api.readTextFile(path) : api.readTextFile(path, { on }),
 			catch: (cause) => new FileError({
 				path,
 				cause
@@ -9667,10 +9779,25 @@ var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 			try: () => api.pickFolder({ prompt }),
 			catch: (cause) => new PickerFailed({ cause })
 		}).pipe(map(fromNullishOr));
+		const remove = (path) => tryPromise({
+			try: () => api.exec("rm", [
+				"-f",
+				"--",
+				path
+			]),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(filterOrFail((run) => run.code === 0, (run) => new FileError({
+			path,
+			cause: run.stderr.trim()
+		})), asVoid);
 		return succeed$1(Files, Files.of({
 			read,
 			create,
 			replace,
+			remove,
 			pickFolder
 		}));
 	};
@@ -9748,9 +9875,65 @@ const requestKey = (panelMod) => `${panelMod}.request.v1`;
 /** Every SpaceAct, for readers of a request. */
 const SPACE_ACTS = [
 	"NewOrOpen",
+	"Open",
 	"Merge",
 	"Remove"
 ];
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
+const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
+
+// src/machines.ts
+/** This machine: the one the Herdr app runs on. */
+const THIS_MACHINE = null;
+/** What the panel calls `machine`: Herdr's name for it, or "this machine". */
+const machineName = (machine) => machine ?? "this machine";
+const RepoKey = nominal();
+/**
+* The key a repo is kept under (lists, CI, folded state): its folder on this machine, else
+* `<machine>:<folder>`. A folder is absolute, so no key from another machine starts with
+* `/` the way this machine's do.
+*/
+const repoKey = (repo) => RepoKey(repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`);
+/**
+* The repo a `repoKey` names. Herdr's machine names never hold `/` (its ids use
+* `<machine>/` as a prefix), so the first `/` starts the folder.
+*/
+const repoOfKey = (key) => {
+	const slash = key.indexOf("/");
+	return slash <= 0 ? {
+		machine: null,
+		root: key
+	} : {
+		machine: key.slice(0, slash - 1),
+		root: key.slice(slash)
+	};
+};
+/** Herdr's machine list (`machines()`) by machine. */
+const machineStates = (list) => new Map(list.map((machine) => [machine.name, machine.layout]));
+/**
+* What a machine's state says before anything runs there; none when it can be read. This
+* machine is always read: its commands run here, whatever its layout's state.
+*/
+const statusOf$1 = (states, machine) => {
+	switch (machine === null ? "ready" : states.get(machine)) {
+		case "loading": return some({ _tag: "Connecting" });
+		case "unavailable": return some({
+			_tag: "Down",
+			reason: "Herdr can't reach it"
+		});
+		default: return none();
+	}
+};
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+/**
+* A folder on its machine, for a label: on another machine `<machine>: <folder>`; on
+* this one the folder alone (`~` for `home`), or after "this machine" with `nameHere`.
+*/
+const locatedLabel = ({ machine, folder }, options = {}) => {
+	if (machine !== null || options.nameHere === true) return `${machineName(machine)}: ${folder}`;
+	return options.home === void 0 ? folder : tildePath(folder, options.home);
+};
 
 // src/settings.ts
 const DEFAULT_SETTINGS = {
@@ -9760,7 +9943,8 @@ const DEFAULT_SETTINGS = {
 	hidden: [],
 	noWrapper: false
 };
-const isFolderEntry = (value) => isObject(value) && isString(value.path) && (value.name === void 0 || isString(value.name));
+const isFolderEntry = (value) => isObject(value) && isString(value.path) && (value.name === void 0 || isString(value.name)) && (value.machine === void 0 || isString(value.machine));
+const isHiddenEntry = (value) => isString(value) || isObject(value) && isString(value.machine) && isString(value.path);
 const listOf$1 = (value, item) => Array.isArray(value) && value.every(item);
 /** The file's shape, or what is wrong with it. A wrong shape is never half read. */
 const readSettingsFile = (value) => {
@@ -9769,7 +9953,7 @@ const readSettingsFile = (value) => {
 	if (folders !== void 0 && !listOf$1(folders, isFolderEntry)) return fail$2("\"folders\" must be a list of { \"name\", \"path\" }");
 	if (depth !== void 0 && isNone(finite(depth))) return fail$2("\"depth\" must be a number");
 	if (skip !== void 0 && !listOf$1(skip, isString)) return fail$2("\"skip\" must be a list of folder names");
-	if (hidden !== void 0 && !listOf$1(hidden, isString)) return fail$2("\"hidden\" must be a list of repo folders");
+	if (hidden !== void 0 && !listOf$1(hidden, isHiddenEntry)) return fail$2("\"hidden\" must be a list of repo folders");
 	if (noWrapper !== void 0 && !isBoolean(noWrapper)) return fail$2("\"noWrapper\" must be true or false");
 	return succeed$3({
 		...folders === void 0 ? {} : { folders },
@@ -9783,8 +9967,6 @@ const readSettingsFile = (value) => {
 const lastSegment = (path) => path.split("/").filter((part) => part !== "").at(-1) ?? path;
 /** `path` with a leading `~` turned into `home`. */
 const expandHome = (path, home) => path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
-/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
-const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 const trimSlashes = (path) => path.trim().replace(/\/+$/, "");
 const clampDepth = (depth) => Math.min(8, Math.max(1, Math.round(depth)));
 const normalize = (file) => ({
@@ -9794,12 +9976,19 @@ const normalize = (file) => ({
 		const name = folder.name?.trim() ?? "";
 		return [{
 			name: name === "" ? lastSegment(path) : name,
-			path
+			path,
+			machine: folder.machine ?? null
 		}];
 	}),
 	depth: file.depth === void 0 ? DEFAULT_SETTINGS.depth : clampDepth(file.depth),
 	skip: file.skip === void 0 ? DEFAULT_SETTINGS.skip : file.skip.map((name) => name.trim()).filter((name) => name !== ""),
-	hidden: (file.hidden ?? DEFAULT_SETTINGS.hidden).filter((root) => root !== ""),
+	hidden: (file.hidden ?? []).map((entry) => isString(entry) ? {
+		machine: null,
+		root: entry
+	} : {
+		machine: entry.machine,
+		root: entry.path
+	}).filter((repo) => repo.root !== ""),
 	noWrapper: file.noWrapper ?? DEFAULT_SETTINGS.noWrapper
 });
 /**
@@ -9826,13 +10015,20 @@ const parseSettings = (text, fileName) => {
 /** What the file holds: a stable key order and two-space indent, so it reads and diffs well. */
 const serializeSettings = ({ folders, depth, skip, hidden, noWrapper }) => {
 	const ordered = {
-		folders: folders.map(({ name, path }) => ({
+		folders: folders.map(({ name, path, machine }) => machine === null ? {
 			name,
 			path
-		})),
+		} : {
+			name,
+			path,
+			machine
+		}),
 		depth,
 		skip,
-		hidden,
+		hidden: hidden.map(({ machine, root }) => machine === null ? root : {
+			machine,
+			path: root
+		}),
 		noWrapper
 	};
 	return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -9857,18 +10053,18 @@ const planImport = (current, legacy, settled) => {
 	};
 };
 /**
-* The settings file's text with the repo at `root` hidden, from its text now (null when
+* The settings file's text with `repo` (by machine and folder) hidden, from its text now (null when
 * there is none). A file that doesn't parse is never replaced: the result is its error
 * instead, so a hand edit in progress is never lost to the defaults. A repo already
 * hidden leaves the text as it is.
 */
-const hideRepo = (current, root, fileName) => {
+const hideRepo = (current, repo, fileName) => {
 	const { settings, error } = parseSettings(current, fileName);
 	if (isSome(error)) return fail$2(error.value);
-	if (current !== null && settings.hidden.includes(root)) return succeed$3(current);
+	if (current !== null && settings.hidden.some((hidden) => repoKey(hidden) === repoKey(repo))) return succeed$3(current);
 	return succeed$3(serializeSettings({
 		...settings,
-		hidden: [...settings.hidden, root]
+		hidden: [...settings.hidden, repo]
 	}));
 };
 /**
@@ -9892,24 +10088,31 @@ const planSave = (opened, onDisk, settings, fileName) => {
 		expected: opened
 	};
 };
-/** The settings with `root` no longer hidden. */
-const unhide = (settings, root) => ({
+/** The settings with `repo` (by machine and folder) no longer hidden. */
+const unhide = (settings, repo) => ({
 	...settings,
-	hidden: settings.hidden.filter((hidden) => hidden !== root)
+	hidden: settings.hidden.filter((hidden) => repoKey(hidden) !== repoKey(repo))
 });
 /**
-* The settings with the folder picked at `picked` added as the last group, named after
-* its last segment and written with `~` under `home`. A folder already listed changes
-* nothing.
+* The settings with the folder picked at `picked` (on this machine, whose home is `home`)
+* added as the last group, named after its last segment and written with `~` under
+* `home`. A folder already listed on this machine changes nothing.
 */
-const addFolder = (settings, picked, home) => {
-	const path = tildePath(trimSlashes(picked), home);
+const addFolder = (settings, picked, home) => withFolder(settings, null, picked, home);
+/**
+* The settings with `typed` on `machine` (whose home is `home`) added as the last group,
+* named after its last segment and written with `~` under `home`. A blank folder, or one
+* already listed on that machine, changes nothing.
+*/
+const withFolder = (settings, machine, typed, home) => {
+	const path = tildePath(trimSlashes(typed), home);
 	if (path === "") return settings;
-	return settings.folders.some((folder) => expandHome(folder.path, home) === expandHome(path, home)) ? settings : {
+	return settings.folders.some((folder) => folder.machine === machine && expandHome(folder.path, home) === expandHome(path, home)) ? settings : {
 		...settings,
 		folders: [...settings.folders, {
 			name: lastSegment(path),
-			path
+			path,
+			machine
 		}]
 	};
 };
@@ -9946,72 +10149,111 @@ const withFields = (settings, fields) => ({
 	folders: settings.folders.map((folder, i) => {
 		const name = (fields.names[i] ?? folder.name).trim();
 		return {
-			name: name === "" ? lastSegment(folder.path) : name,
-			path: folder.path
+			...folder,
+			name: name === "" ? lastSegment(folder.path) : name
 		};
 	}),
 	skip: fields.skip.split(",").map((name) => name.trim()).filter((name) => name !== ""),
 	depth: clampDepth(fields.depth)
 });
+/** The machines a group folder can be added on by path: Herdr's machines other than this one. */
+const otherMachines = (list) => list.flatMap(({ name }) => name === null ? [] : [name]);
+/**
+* The settings with the folder typed as `typed` on `machine` (whose home there is `home`)
+* added as the last group, as `addFolder` adds one on this machine.
+*/
+const addFolderOn = (settings, machine, typed, home) => withFolder(settings, machine, typed, home);
 
 // src/repos.ts
 /** True when `path` is `root` or inside it. */
 const isUnder = (path, root) => path === root || path.startsWith(`${root}/`);
 /** The group of a repo inside no group folder. */
 const OTHER = "Other";
-/** The repo's group: the deepest group folder that holds it, else Other. */
-const groupOf = (root, folders, home) => folders.map((folder) => ({
+/**
+* The folder `folder` names on its machine: `~` is that machine's home in `homes`. None
+* for a `~` folder whose machine's home isn't known.
+*/
+const folderOn = (folder, homes) => folder.path === "~" || folder.path.startsWith("~/") ? map$3(fromNullishOr(homes.get(folder.machine)), (home) => expandHome(folder.path, home)) : some(folder.path);
+/**
+* The repo's group: the deepest group folder that holds it, else Other. A folder's `~` is
+* its machine's home in `homes`.
+*/
+const groupOf = ({ machine, root }, folders, homes) => folders.filter((folder) => folder.machine === machine).flatMap((folder) => toArray(folderOn(folder, homes)).map((path) => ({
 	name: folder.name,
-	path: expandHome(folder.path, home)
-})).filter((folder) => isUnder(root, folder.path)).reduce((best, folder) => isSome(best) && best.value.path.length >= folder.path.length ? best : some(folder), none()).pipe(map$3((folder) => folder.name), getOrElse$1(() => OTHER));
+	path
+}))).filter((folder) => isUnder(root, folder.path)).reduce((best, folder) => isSome(best) && best.value.path.length >= folder.path.length ? best : some(folder), none()).pipe(map$3((folder) => folder.name), getOrElse$1(() => OTHER));
 const count$1 = (text) => {
 	const n = Number(text);
 	return Number.isInteger(n) && n > 0 ? n : 1;
 };
-/** The folder scan's output: one `group folder<TAB>repo<TAB>count` line per repo. */
-const parseScan = (stdout) => stdout.split("\n").flatMap((line) => {
+/**
+* The folder scan's output, from the scan run on `machine`: one
+* `group folder<TAB>repo<TAB>count` line per repo.
+*/
+const parseScan = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	const [, root, n] = line.split("	");
 	return root ? [{
+		machine,
 		root,
 		count: count$1(n)
 	}] : [];
 });
-/** The open spaces' repos: one `repo<TAB>count` line per repo. */
-const parseOwners = (stdout) => stdout.split("\n").flatMap((line) => {
+/** The group folders the scan found missing: each printed alone on its line. */
+const missingFolders = (stdout) => stdout.split("\n").filter((line) => line !== "" && !line.includes("	"));
+/** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
+const parseOwners = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	const [root, n] = line.split("	");
 	return root && line.includes("	") ? [{
+		machine,
 		root,
 		count: count$1(n)
 	}] : [];
 });
-/** The Current repo: the repo the owners script names for the focused folder, if any. */
-const currentRepo = (stdout) => fromNullishOr(parseOwners(stdout)[0]);
 /**
-* Every repo once, scanned or from an open space, with its group, by folder name.
-* An open space's count is fresher than the scan's, so it wins.
+* The Current repo: the repo the owners script, run on `machine`, names for the focused
+* folder, if any.
 */
-const reposFrom = (scanned, owners, folders, home) => Array.from(new Map([...scanned, ...owners].map((repo) => [repo.root, repo.count]))).map(([root, n]) => ({
+const currentRepo = (stdout, machine) => fromNullishOr(parseOwners(stdout, machine)[0]);
+/**
+* Every repo once (by machine and folder), scanned or from an open space, with its group,
+* by folder name. An open space's count is fresher than the scan's, so it wins.
+*/
+const reposFrom = (scanned, owners, folders, homes) => Array.from(new Map([...scanned, ...owners].map((repo) => [repoKey(repo), repo])).values()).map(({ machine, root, count: n }) => ({
+	machine,
 	root,
 	count: n,
-	group: groupOf(root, folders, home)
+	group: groupOf({
+		machine,
+		root
+	}, folders, homes)
 })).sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
-/** `repos` without the hidden ones (by main checkout folder), in their order. */
-const withoutHidden = (repos, hidden) => repos.filter((repo) => !hidden.includes(repo.root));
+/** `repos` without the hidden ones (by machine and main checkout folder), in their order. */
+const withoutHidden = (repos, hidden) => {
+	const keys = new Set(hidden.map(repoKey));
+	return repos.filter((repo) => !keys.has(repoKey(repo)));
+};
 
 // src/commands.ts
-/** The scan's arguments for these settings. */
-const scanArgs = (settings, home) => [
+/** The scan's arguments for these settings' group folders on `machine`, `~` from `homes`. */
+const scanArgs = (settings, machine, homes) => [
 	String(settings.depth),
 	settings.skip.map((name) => `/${name}/`).join(""),
-	...settings.folders.map((folder) => expandHome(folder.path, home))
+	...settings.folders.filter((folder) => folder.machine === machine).flatMap((folder) => toArray(folderOn(folder, homes)))
 ];
 /** argv[0] for `sh -c`: the name the scripts report errors under. */
 const SCRIPT_NAME = "worktrunk";
-const PATH_LINE = "PATH=\"$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin\"; export PATH";
+const LOGIN_PATH = `[ -n "$SHELL" ] || {
+  printf '%s\\n' "worktrunk: \\$SHELL is empty, so the login shell's PATH is unknown" >&2
+  exit 127
+}
+nl='
+'
+login_path=$("$SHELL" -l -c 'printf "\\n%s" "$PATH"') || exit
+PATH=\${login_path##*"$nl"}; export PATH`;
 /** `body` as the arguments to `sh`: `-c`, the script, its name, then `args` as $1... */
 const shArgs = (body, args) => [
 	"-c",
-	`${PATH_LINE}\n${body}`,
+	`${LOGIN_PATH}\n${body}`,
 	SCRIPT_NAME,
 	...args
 ];
@@ -10020,7 +10262,8 @@ const shArgs = (body, args) => [
 * wrapped in slashes ("/node_modules//.cache/"); then the group folders. A folder with a
 * `.git` folder is a repo (a linked worktree's `.git` is a file, so it never counts). It
 * never enters a repo, a symlink, a hidden folder or a skipped name. Prints
-* `group folder<TAB>repo<TAB>worktree count` per repo.
+* `group folder<TAB>repo<TAB>worktree count` per repo, and a group folder that doesn't
+* exist alone on its line.
 */
 const SCAN_SCRIPT = `depth=$1; skip=$2; shift 2
 walk() {
@@ -10040,7 +10283,10 @@ walk() {
     walk "$child" $((level + 1))
   done
 }
-for top in "$@"; do top=\${top%/}; walk "$top" 0; done
+for top in "$@"; do
+  top=\${top%/}
+  if [ -d "$top" ]; then walk "$top" 0; else printf '%s\\n' "$top"; fi
+done
 exit 0`;
 /**
 * The repos the given folders are in, through each folder's shared git folder, so a
@@ -10058,6 +10304,32 @@ const OWNERS_SCRIPT = `for dir in "$@"; do
 done | sort -u`;
 /** Lists the worktrees of the repo at $1. */
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
+/** How many repos the batched list reads at once. */
+const LISTS_AT_ONCE = 4;
+/**
+* Lists the worktrees of every repo in the arguments, in one run: a few repos at a time,
+* each answer kept in a private temp folder, then printed in the arguments' order. Each
+* repo's record starts with the ASCII record separator, then `<exit code><TAB><folder>`
+* on its own line, then what \`wt list --format=json\` printed: its JSON, or its errors
+* when it failed.
+*/
+const LISTS_SCRIPT = `tmp=$(mktemp -d) || exit
+trap 'rm -rf "$tmp"' EXIT
+i=0
+for repo in "$@"; do
+  i=$((i + 1))
+  { (cd "$repo" && wt list --format=json) >"$tmp/$i.out" 2>"$tmp/$i.err"; echo $? >"$tmp/$i.code"; } &
+  [ $((i % ${LISTS_AT_ONCE})) -eq 0 ] && wait
+done
+wait
+i=0
+rs=$(printf '\\036')
+for repo in "$@"; do
+  i=$((i + 1))
+  code=$(cat "$tmp/$i.code" 2>/dev/null) || code=127
+  printf '%s%s\\t%s\\n' "$rs" "$code" "$repo"
+  if [ "$code" = 0 ]; then cat "$tmp/$i.out"; else cat "$tmp/$i.err"; fi
+done`;
 /** Lists the worktrees of the repo at $1 with their CI. */
 const CI_SCRIPT = `${LIST_SCRIPT} --full`;
 /** The local and origin branches of the repo at $1, one full ref name per line. */
@@ -10146,12 +10418,16 @@ fi
 exit "$rc"`;
 /** Prints each folder argument that no longer exists, one per line. */
 const GONE_SCRIPT = `for dir in "$@"; do [ -e "$dir" ] || printf '%s\\n' "$dir"; done`;
-/** `hc` arguments that start `job` as a background terminal, printing its address as JSON. */
-const jobArgs = ({ cwd, shell, body }) => [
+/**
+* `hc` arguments that start `job` as a background terminal, printing its address as
+* JSON. A job on another machine starts there (`--on`); this machine's needs no flag.
+*/
+const jobArgs = ({ cwd, shell, body, on }) => [
 	"run",
 	"--json",
 	"--bg",
 	"--no-parent",
+	...on === null ? [] : ["--on", on],
 	"--cwd",
 	cwd,
 	"--",
@@ -10255,18 +10531,20 @@ const rank = (name, query) => {
 const choiceName = (choice) => choice._tag === "Worktree" ? choice.branch : choice.name;
 /**
 * What Enter asks the panel to run: switch to or create the choice's branch in the repo
-* at `main`. `current` is the branch I'm on; with none, the default branch is the base.
+* `repo`. `current` is the branch I'm on; with none, the default branch is the base.
 */
-const enterAction = (main, choice, base, current) => ({
+const enterAction = (repo, choice, base, current) => ({
 	_tag: "Create",
-	main,
+	machine: repo.machine,
+	main: repo.root,
 	name: choiceName(choice),
 	base: base === "current" ? getOrNull(current) : null
 });
-/** The repos (main checkouts) whose folder name matches the typed text, best first. */
-const reposFor = (typed, repos) => ranked(repos, lastSegment, typed.trim().toLowerCase());
+/** The repos whose main checkout's folder name matches the typed text, best first. */
+const reposFor = (typed, repos) => ranked(repos, (repo) => lastSegment(repo.root), typed.trim().toLowerCase());
 /** The dialog as it opens with `props`: reading its repo, unless it must ask for one. */
 const openDialog = (props) => ({
+	mode: props.mode,
 	repo: props.repo,
 	current: props.branch,
 	repos: props.repos,
@@ -10279,13 +10557,19 @@ const openDialog = (props) => ({
 });
 /** The most lines the dialog lists. */
 const LINE_LIMIT = 50;
-/** The dialog's lines for the typed text: repos while it asks for one, else choices. */
+/** The worktrees whose branch matches the typed text, best first, at most `limit`. */
+const worktreesFor = (typed, worktrees, limit) => ranked(candidates(worktrees, []), choiceName, typed.trim().toLowerCase()).slice(0, Math.max(0, limit));
+/**
+* The dialog's lines for the typed text: repos while it asks for one, else choices: the
+* repo's worktrees when picking one to open, else worktrees and branches to switch to or
+* create.
+*/
 const linesFor = (state, typed) => match$5(state.repo, {
-	onNone: () => reposFor(typed, state.repos).map((root) => ({
+	onNone: () => reposFor(typed, state.repos).map((repo) => ({
 		_tag: "Repo",
-		root
+		repo
 	})),
-	onSome: () => choicesFor(typed, state.worktrees, state.branches, 50)
+	onSome: () => state.mode === "open" ? worktreesFor(typed, state.worktrees, 50) : choicesFor(typed, state.worktrees, state.branches, 50)
 });
 /**
 * The dialog once its repo is read: the worktrees and branches, each read's failure
@@ -10324,10 +10608,10 @@ const pick = (state, line) => {
 	const taken = line.value;
 	if (taken._tag === "Repo") return {
 		_tag: "ReadRepo",
-		root: taken.root,
+		repo: taken.repo,
 		state: {
 			...state,
-			repo: some(taken.root),
+			repo: some(taken.repo),
 			current: none(),
 			reading: true,
 			at: 0
@@ -10335,12 +10619,39 @@ const pick = (state, line) => {
 	};
 	return match$5(state.repo, {
 		onNone: () => ({ _tag: "Nothing" }),
-		onSome: (main) => ({
+		onSome: (repo) => ({
 			_tag: "Send",
-			action: enterAction(main, taken, state.base, state.current)
+			action: state.mode === "open" && taken._tag === "Worktree" ? {
+				_tag: "GoTo",
+				machine: repo.machine,
+				folder: taken.path,
+				name: taken.branch
+			} : enterAction(repo, taken, state.base, state.current)
 		})
 	});
 };
+/** The dialog's title: what it is for, and the repo and machine it works in. */
+const dialogTitle = (state) => {
+	const what = state.mode === "open" ? "Open a worktree" : "New or open worktree";
+	const where = state.mode === "open" ? "of" : "in";
+	return match$5(state.repo, {
+		onNone: () => `${what}: pick a repo`,
+		onSome: ({ machine, root }) => `${what} ${where} ${lastSegment(root)}${machine === null ? "" : ` on ${machine}`}`
+	});
+};
+/** What the dialog says at its step: see `DialogCopy`. */
+const dialogCopy = (state) => ({
+	placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link",
+	empty: isNone(state.repo) ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : state.mode === "open" ? "No worktree matches." : "Type a branch name to create it.",
+	footer: isNone(state.repo) ? "↑↓ choose · Enter picks the repo · Esc closes" : state.mode === "open" ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+	offersBase: isSome(state.repo) && state.mode === "new",
+	worktreeHint: (path) => state.mode === "open" ? lastSegment(path) : "open worktree"
+});
+/** The hint beside a repo the dialog offers: where it is, and on which machine. */
+const repoHint = ({ machine, root }, home) => locatedLabel({
+	machine,
+	folder: root
+}, { home });
 
 // src/keys.ts
 const IGNORE = { _tag: "Ignore" };
@@ -10433,14 +10744,25 @@ const noticeFor = (step) => {
 };
 
 // src/menus.ts
+/** How many worktrees `batches` remove. */
+const removedBy = (batches) => batches.reduce((n, batch) => n + batch.paths.length, 0);
+/** How many worktrees a clean up removes. */
+const cleanupCount = (action) => removedBy(action.batches);
 const item = (label, action, danger = false) => ({
 	label,
 	danger,
+	checked: false,
 	action
 });
-const mergeOf = (root, worktree, branch, mode) => ({
+/** "Reveal in Finder" for a folder on `machine`: only this machine's Finder can show it. */
+const revealOn = (machine, path) => machine === null ? [item("Reveal in Finder", {
+	_tag: "Reveal",
+	path
+})] : [];
+const mergeOf = ({ machine, root }, worktree, branch, mode) => ({
 	_tag: "Merge",
 	target: {
+		machine,
 		main: root,
 		path: worktree.path,
 		branch
@@ -10449,23 +10771,24 @@ const mergeOf = (root, worktree, branch, mode) => ({
 	dirty: worktree.dirty
 });
 /** Removing a linked worktree: by its branch, or by its folder when it has none. */
-const removeOf = (root, worktree) => ({
+const removeOf = ({ machine, root }, worktree) => ({
 	_tag: "Remove",
 	target: {
+		machine,
 		main: root,
 		path: worktree.path,
 		branch: getOrElse$1(worktree.branch, () => worktree.path)
 	},
 	dirty: worktree.dirty
 });
-/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
-const rowMenu = (root, worktree, click) => {
-	const remove = item("Remove…", removeOf(root, worktree), true);
+/** The right-click menu of a worktree of `repo`. */
+const rowMenu = (repo, worktree, click) => {
+	const remove = item("Remove…", removeOf(repo, worktree), true);
 	const linked = worktree.state._tag === "Main" ? [] : match$5(worktree.branch, {
 		onNone: () => [remove],
 		onSome: (branch) => [
-			item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
-			item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
+			item("Merge into main (squash)", mergeOf(repo, worktree, branch, "squash")),
+			item("Merge, keeping every commit", mergeOf(repo, worktree, branch, "keep")),
 			remove
 		]
 	});
@@ -10479,25 +10802,24 @@ const rowMenu = (root, worktree, click) => {
 			_tag: "CopyPath",
 			path: worktree.path
 		}),
-		item("Reveal in Finder", {
-			_tag: "Reveal",
-			path: worktree.path
-		})
+		...revealOn(repo.machine, worktree.path)
 	];
 };
 /**
-* Merging (squashed) or removing the worktree of the repo at `root` that holds `folder`,
-* as a space's menu asks: the deepest of `worktrees` containing it. Fails, saying why,
-* for the main checkout, a detached worktree's merge, or a folder in none of them.
+* Merging (squashed) or removing the worktree of `repo` that holds `folder` (on the
+* repo's machine), as a space's menu asks: the deepest of `worktrees` containing it.
+* Fails, saying why, for the main checkout, a detached worktree's merge, or a folder in
+* none of them.
 */
-const spaceWorktreeAction = (act, root, worktrees, folder) => {
+const spaceWorktreeAction = (act, repo, worktrees, folder) => {
+	const root = repo.root;
 	const holder = worktrees.filter((w) => isUnder(folder, w.path)).reduce((best, w) => best && best.path.length >= w.path.length ? best : w, void 0);
 	if (holder === void 0) return fail$2(`${folder} isn't in a worktree of ${lastSegment(root)}.`);
 	if (holder.state._tag === "Main") return fail$2(`${lastSegment(root)}'s main checkout can't be merged or removed.`);
-	if (act === "Remove") return succeed$3(removeOf(root, holder));
+	if (act === "Remove") return succeed$3(removeOf(repo, holder));
 	return match$5(holder.branch, {
 		onNone: () => fail$2(`${lastSegment(holder.path)} has no branch to merge.`),
-		onSome: (branch) => succeed$3(mergeOf(root, holder, branch, "squash"))
+		onSome: (branch) => succeed$3(mergeOf(repo, holder, branch, "squash"))
 	});
 };
 /** One menu row's height, in px. */
@@ -10508,9 +10830,10 @@ const MENU_CHROME = 40;
 const menuHeight = (items) => 40 + items * 30;
 /** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
 const cleanupAction = (repos) => {
-	const found = repos.flatMap(({ root, worktrees }) => {
+	const found = repos.flatMap(({ machine, root, worktrees }) => {
 		const merged = worktrees.filter((w) => w.state._tag === "Merged");
 		return merged.length === 0 ? [] : [{
+			machine,
 			root,
 			merged
 		}];
@@ -10519,49 +10842,65 @@ const cleanupAction = (repos) => {
 	const all = found.flatMap(({ merged }) => merged);
 	return some({
 		_tag: "Cleanup",
-		batches: found.map(({ root, merged }) => ({
+		batches: found.map(({ machine, root, merged }) => ({
+			machine,
 			main: root,
-			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path))
+			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path)),
+			paths: merged.map((w) => w.path)
 		})),
-		paths: all.map((w) => w.path),
 		dirty: all.filter((w) => w.dirty).length
 	});
 };
-/** The right-click menu of the repo whose main checkout is `root`. */
-const repoMenu = (root, worktrees) => [
+/** The right-click menu of `repo`. */
+const repoMenu = ({ machine, root }, worktrees) => [
 	item("New or open worktree…", {
-		_tag: "NewOrOpen",
-		folder: root
+		_tag: "NewOrOpenAt",
+		at: {
+			machine,
+			folder: root
+		}
 	}),
 	...toArray(cleanupAction([{
+		machine,
 		root,
 		worktrees
-	}])).map((action) => item(`Clean up ${action.paths.length} merged…`, action, true)),
+	}])).map((action) => item(`Clean up ${cleanupCount(action)} merged…`, action, true)),
 	item("Refresh", { _tag: "Refresh" }),
-	item("Reveal in Finder", {
-		_tag: "Reveal",
-		path: root
-	}),
+	...revealOn(machine, root),
 	item("Hide this repo", {
 		_tag: "Hide",
+		machine,
 		root
 	})
 ];
-/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
-const findWorktree = (lists, path) => fromNullishOr(Array.from(lists).flatMap(([root, list]) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
-	root,
-	worktree
-})))[0]);
 /**
-* Removing the merged worktrees among those at `paths`, batched by repo in the order
-* their repos first appear; none when none of them is merged.
+* The worktree a row's key names (its machine and path, as `repoKey` keys a folder) in
+* any list of a repo on that machine (`lists`, by `repoKey`).
 */
-const cleanupFor = (lists, paths) => {
-	const found = paths.flatMap((path) => toArray(findWorktree(lists, path)));
-	const roots = Array.from(new Set(found.map(({ root }) => root)));
-	return cleanupAction(roots.map((root) => ({
-		root,
-		worktrees: found.filter((f) => f.root === root).map((f) => f.worktree)
+const findWorktree = (lists, key) => {
+	const { machine, root: path } = repoOfKey(key);
+	return fromNullishOr(Array.from(lists).map(([listKey, list]) => ({
+		repo: repoOfKey(listKey),
+		list
+	})).filter(({ repo }) => repo.machine === machine).flatMap(({ repo, list }) => list.worktrees.filter((w) => w.path === path).map((worktree) => ({
+		...repo,
+		worktree
+	})))[0]);
+};
+/**
+* Removing the merged worktrees among those the row `keys` name (see `findWorktree`),
+* batched by repo (machine and folder) in the order their repos first appear; none when
+* none of them is merged.
+*/
+const cleanupFor = (lists, keys) => {
+	const found = keys.flatMap((key) => toArray(findWorktree(lists, key)));
+	const repos = Array.from(new Map(found.map((f) => [repoKey(f), {
+		machine: f.machine,
+		root: f.root
+	}])));
+	return cleanupAction(repos.map(([key, repo]) => ({
+		...repo,
+		worktrees: found.filter((f) => repoKey(f) === key).map((f) => f.worktree)
 	})));
 };
 const DIRTY_LINE = "It has uncommitted changes: wt stops rather than lose them.";
@@ -10591,7 +10930,7 @@ const confirmFor = (action) => {
 			danger: true
 		});
 		case "Cleanup": {
-			const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
+			const count = cleanupCount(action);
 			return some({
 				title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
 				lines: [
@@ -10608,28 +10947,45 @@ const confirmFor = (action) => {
 };
 /** The confirm dialog's height for `lines` lines of text, in px, never taller than 560. */
 const dialogHeight = (lines) => Math.min(560, 132 + lines * 22);
-/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
-const jobFor = (action, options) => {
+/** The clean up of `batches`, all on `machine`, as one job; none for no batches. */
+const cleanupJob = (batches, machine, title, options) => toArray(map$3(fromNullishOr(batches[0]), (first) => ({
+	title,
+	cwd: first.main,
+	body: cleanupScript(batches, options),
+	gone: batches.flatMap((batch) => batch.paths),
+	on: machine
+})));
+/**
+* The jobs for `action`, in the order they run; none for actions that aren't jobs
+* (Create is built with its temp file). Each job runs on its repo's machine. A job runs
+* on one machine, so a clean up is one job per machine its repos are on, in the order the
+* machines first appear, each named after its machine when there are several.
+*/
+const jobsFor = (action, options) => {
 	switch (action._tag) {
-		case "Merge": return some({
+		case "Merge": return [{
 			title: `Merge ${action.target.branch} into main`,
 			cwd: action.target.main,
 			body: mergeScript(action.target, action.mode, options),
-			gone: [action.target.path]
-		});
-		case "Remove": return some({
+			gone: [action.target.path],
+			on: action.target.machine
+		}];
+		case "Remove": return [{
 			title: `Remove ${action.target.branch}`,
 			cwd: action.target.main,
 			body: removeScript(action.target.main, [action.target.branch], options),
-			gone: [action.target.path]
-		});
-		case "Cleanup": return map$3(fromNullishOr(action.batches[0]), (first) => ({
-			title: `Clean up ${action.paths.length} merged`,
-			cwd: first.main,
-			body: cleanupScript(action.batches, options),
-			gone: action.paths
-		}));
-		default: return none();
+			gone: [action.target.path],
+			on: action.target.machine
+		}];
+		case "Cleanup": {
+			const machines = Array.from(new Set(action.batches.map((batch) => batch.machine)));
+			return machines.flatMap((machine) => {
+				const batches = action.batches.filter((batch) => batch.machine === machine);
+				const where = machines.length > 1 ? ` on ${machineName(machine)}` : "";
+				return cleanupJob(batches, machine, `Clean up ${removedBy(batches)} merged${where}`, options);
+			});
+		}
+		default: return [];
 	}
 };
 /** What to say when a job is asked for while `running` (its title) still runs. */
@@ -10637,9 +10993,60 @@ const busyNotice = (running) => ({
 	title: "worktrunk is busy",
 	body: `Wait for "${running}" to finish.`
 });
+/** The step for `act` on the space `space`, from where every space is now (`places`). */
+const spaceStep = (places, space, act) => match$5(fromNullishOr(places.find((p) => p.space.id === space)), {
+	onNone: () => ({ _tag: "NoFolder" }),
+	onSome: ({ machine, place }) => {
+		const at = {
+			machine,
+			folder: place
+		};
+		switch (act) {
+			case "NewOrOpen": return {
+				_tag: "Dialog",
+				mode: "new",
+				at
+			};
+			case "Open": return {
+				_tag: "Dialog",
+				mode: "open",
+				at
+			};
+			default: return {
+				_tag: "Act",
+				act,
+				at
+			};
+		}
+	}
+});
+/** The machine filter's menu: All machines, then each machine, the current one checked. */
+const machineMenu = (choices) => choices.map((choice) => ({
+	...item(isNone(choice.machine) ? "All machines" : choice.label, {
+		_tag: "PickMachine",
+		machine: match$5(choice.machine, {
+			onNone: () => null,
+			onSome: (name) => ({ name })
+		})
+	}),
+	checked: choice.selected
+}));
+/** The group filter's menu: All groups, then each group, the current one checked. */
+const groupMenu = (chips) => chips.map((chip) => ({
+	...item(isNone(chip.group) ? "All groups" : chip.label, {
+		_tag: "PickGroup",
+		group: getOrNull(chip.group)
+	}),
+	checked: chip.selected
+}));
+/**
+* A filter dropdown's button text: its menu's checked item, else the first (a saved group
+* the first scan hasn't found yet is in no item).
+*/
+const filterButton = (items) => (items.find((i) => i.checked) ?? items[0])?.label ?? "";
 
 // src/sync.ts
-const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
+const parseRecord$1 = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all$2({
 	layout: text(at(json, "layout")),
 	version: text(at(json, "version"))
 }));
@@ -10649,7 +11056,7 @@ const parseRecord = (raw) => flatMap$3(getSuccess(parseJson(raw)), (json) => all
 * the panel last showed this toast for, so it shows once per version. None when there is
 * no readable record, the versions match, or the installed version is unknown.
 */
-const syncNotice = (record, installed, told) => record.pipe(flatMap$3(parseRecord), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
+const syncNotice = (record, installed, told) => record.pipe(flatMap$3(parseRecord$1), filter((built) => installed !== "" && built.version !== installed), filter(() => told !== installed), map$3((built) => ({
 	title: "Herdr updated: run herdr:sync",
 	body: `Your "${built.layout}" layout was built from Herdr ${built.version}; Herdr is now ${installed}. Run \`vp run herdr:sync\` in herdr-mods.`
 })));
@@ -10664,12 +11071,29 @@ const CHANGE_KINDS = [
 	"conflicted"
 ];
 const count = (item, ...path) => getOrElse$1(finite(at(item, ...path)), () => 0);
-const stateOf = (item) => {
-	if (at(item, "worktree", "main") === true) return { _tag: "Main" };
+const dirtyOf = (item) => CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
+const isMain = (item) => at(item, "worktree", "main") === true;
+const headOf = (item) => text(at(item, "head", "sha"));
+/**
+* New: no commits or changes of its own, and at main's tip or at the main checkout's commit.
+* wt compares with the remote's main, so a worktree made from a main checkout that hasn't
+* pulled reads as integrated "ancestor" although nothing was done in it.
+*/
+const isNew = (item, mainHead) => {
+	if (dirtyOf(item) || count(item, "default_branch", "ahead") !== 0) return false;
+	const atTip = at(item, "display", "state") === "empty" && contains(text(at(item, "default_branch", "integration", "reason")), "same_commit");
+	const head = headOf(item);
+	const atMainCheckout = isSome(head) && contains(mainHead, head.value);
+	return atTip || atMainCheckout;
+};
+const stateOf = (item, mainHead) => {
+	if (isMain(item)) return { _tag: "Main" };
+	if (isNew(item, mainHead)) return { _tag: "New" };
 	const state = at(item, "display", "state");
+	const reason = text(at(item, "default_branch", "integration", "reason"));
 	if (state === "integrated" || state === "empty") return {
 		_tag: "Merged",
-		reason: text(at(item, "default_branch", "integration", "reason"))
+		reason
 	};
 	if (state === "would_conflict") return { _tag: "Conflict" };
 	return { _tag: "Active" };
@@ -10694,12 +11118,12 @@ const ciOf$1 = (item, asked) => {
 	if (checks === void 0 && at(item, "pr") !== null) return { _tag: "None" };
 	return { _tag: "Unknown" };
 };
-const toWorktree = (item, asked) => map$3(text(at(item, "worktree", "path")), (path) => {
+const toWorktree = (item, asked, mainHead) => map$3(text(at(item, "worktree", "path")), (path) => {
 	const upstream = at(item, "upstream");
 	return {
 		branch: text(at(item, "branch")),
 		path,
-		state: stateOf(item),
+		state: stateOf(item, mainHead),
 		ahead: count(item, "default_branch", "ahead"),
 		behind: count(item, "default_branch", "behind"),
 		added: count(item, "default_branch", "diff", "added"),
@@ -10708,7 +11132,7 @@ const toWorktree = (item, asked) => map$3(text(at(item, "worktree", "path")), (p
 			ahead: count(upstream, "ahead"),
 			behind: count(upstream, "behind")
 		}) : none(),
-		dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+		dirty: dirtyOf(item),
 		ci: ciOf$1(item, asked),
 		committedAt: committedAt(item)
 	};
@@ -10720,8 +11144,32 @@ const itemsOf = (list) => {
 /** The worktrees in `wt list --format=json` output, in wt's order, or why it didn't parse. */
 const parseList = (output) => parseJson(output).pipe(flatMap$2((list) => map$2(itemsOf(list), (items) => {
 	const asked = at(list, "collected", "ci") === true;
-	return items.flatMap((item) => toArray(toWorktree(item, asked)));
+	const mainHead = flatMap$3(fromNullishOr(items.find(isMain)), headOf);
+	return items.flatMap((item) => toArray(toWorktree(item, asked, mainHead)));
 })));
+/** The last line of `text` that has anything on it; empty when none does. */
+const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+/** Starts each repo's record in the batched read's output (ASCII record separator). */
+const RECORD_START = "";
+/** One record: `<exit code><TAB><folder>`, then on the next lines what `wt list` printed. */
+const parseRecord = (record) => {
+	const newline = record.indexOf("\n");
+	const head = newline < 0 ? record : record.slice(0, newline);
+	const body = newline < 0 ? "" : record.slice(newline + 1);
+	const tab = head.indexOf("	");
+	if (tab < 0) return [];
+	const code = head.slice(0, tab);
+	return [[head.slice(tab + 1), code === "0" ? parseList(body) : fail$2(lastLine(body) || `wt list failed (exit ${code})`)]];
+};
+/**
+* Each repo's `wt list` from the batched read's output, by its folder: its worktrees, or
+* the failed read's last error line.
+*/
+const parseLists = (stdout, roots) => {
+	const read = new Map(stdout.split("").flatMap(parseRecord));
+	const unanswered = fail$2("wt list gave no answer for it");
+	return new Map(roots.map((root) => [root, read.get(root) ?? unanswered]));
+};
 
 // src/shell.ts
 /** The promise rejected: the program couldn't start (not installed, no such folder). */
@@ -10755,61 +11203,105 @@ var Shell = class Shell extends Service()("iangregsondev-worktrunk/Shell") {
 };
 /** The longest a script may run, in ms. */
 const SCRIPT_TIMEOUT = 6e4;
+/** `options` with `on` set for a machine other than this one; this machine's runs leave it out. */
+const onMachine = (on, options) => on === void 0 || on === null ? options : {
+	...options,
+	on
+};
 /**
-* Runs `body` under `sh` with `args` as $1..., for up to `timeout` ms; a failure names
-* the run `label`.
+* Runs `body` under `sh` with `args` as $1..., on the machine and for up to the time
+* `options` give; a failure names the run `label`.
 */
-const runScript = fn("runScript")(function* (label, body, args, timeout = SCRIPT_TIMEOUT) {
-	return yield* (yield* Shell).exec("sh", shArgs(body, args), { timeout }).pipe(catchTag("CommandFailed", (failed) => fail(new CommandFailed({
+const runScript = fn("runScript")(function* (label, body, args, options = {}) {
+	const shell = yield* Shell;
+	const timeout = options.timeout ?? SCRIPT_TIMEOUT;
+	return yield* shell.exec("sh", shArgs(body, args), onMachine(options.on, { timeout })).pipe(catchTag("CommandFailed", (failed) => fail(new CommandFailed({
 		command: label,
 		code: failed.code,
 		stderr: failed.stderr
 	}))));
 });
-/** The worktrees `body` prints for the repo at `root`, its run named `label`. */
-const worktreesFrom = fnUntraced(function* (label, body, root, timeout) {
-	const run = yield* runScript(label, body, [root], timeout);
+/** The worktrees `body` prints for `repo`, run on its machine, the run named `label`. */
+const worktreesFrom = fnUntraced(function* (label, body, repo, timeout) {
+	const run = yield* runScript(label, body, [repo.root], {
+		on: repo.machine,
+		timeout
+	});
 	return yield* fromResult(parseList(run.stdout)).pipe(mapError((message) => new ListUnreadable({ message })));
 });
-/** The worktrees of the repo at `root`, from `wt list --format=json`. */
-const wtList = fn("wtList")(function* (root) {
-	return yield* worktreesFrom("wt list", LIST_SCRIPT, root);
+/** The worktrees of `repo`, from `wt list --format=json` on its machine. */
+const wtList = fn("wtList")(function* (repo) {
+	return yield* worktreesFrom("wt list", LIST_SCRIPT, repo);
+});
+/** The batched list reads a machine's repos a few at a time, so it gets longer than one script. */
+const LISTS_TIMEOUT = 18e4;
+/**
+* The worktrees of every repo in `roots` on `machine`, from one batched `wt list` run
+* there, by folder: each repo's list, or its read's one-line reason.
+*/
+const wtLists = fn("wtLists")(function* (machine, roots) {
+	const run = yield* runScript("wt list", LISTS_SCRIPT, roots, {
+		on: machine,
+		timeout: LISTS_TIMEOUT
+	});
+	return parseLists(run.stdout, roots);
 });
 /** `--full` asks the forge for every branch's checks: slow when cold or rate limited. */
 const CI_TIMEOUT = 24e4;
-/** The worktrees of the repo at `root` with their CI, from `wt list --full`. */
-const wtCi = fn("wtCi")(function* (root) {
-	return yield* worktreesFrom("wt list --full", CI_SCRIPT, root, CI_TIMEOUT);
-});
-/** The repos the folder scan finds in the settings' group folders. */
-const scanRepos = fn("scanRepos")(function* (settings, home) {
-	if (settings.folders.length === 0) return [];
-	const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
-	return parseScan(run.stdout);
-});
-/** The repos the given folders are in (each once); none for no folders. */
-const reposOf = fn("reposOf")(function* (folders) {
-	if (folders.length === 0) return [];
-	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders);
-	return parseOwners(run.stdout);
+/** The worktrees of `repo` with their CI, from `wt list --full` on its machine. */
+const wtCi = fn("wtCi")(function* (repo) {
+	return yield* worktreesFrom("wt list --full", CI_SCRIPT, repo, CI_TIMEOUT);
 });
 /**
-* The repo the folder `folder` is in (the Current repo of the focused folder), through
-* its shared git folder, so a linked worktree names its repo; none outside every repo.
+* The repos the folder scan finds in the settings' group folders on `machine` (its home
+* in `homes`), and those that don't exist.
 */
-const repoAt = fn("repoAt")(function* (folder) {
-	if (folder === "") return none();
-	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder]);
-	return currentRepo(run.stdout);
+const scanRepos = fn("scanRepos")(function* (settings, machine, homes) {
+	const args = scanArgs(settings, machine, homes);
+	if (args.length <= 2) return {
+		repos: [],
+		missing: []
+	};
+	const run = yield* runScript("the folder scan", SCAN_SCRIPT, args, { on: machine });
+	return {
+		repos: parseScan(run.stdout, machine),
+		missing: missingFolders(run.stdout)
+	};
 });
-/** The local and origin branches of the repo at `root`, for the New-or-open dialog. */
-const gitBranches = fn("gitBranches")(function* (root) {
-	const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [root]);
+/** The home folder of `machine`, read there; an empty $HOME fails, since `~` can't mean it. */
+const machineHome = fn("machineHome")(function* (machine) {
+	const home = (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$HOME\""], onMachine(machine, {}))).stdout.trim();
+	if (home === "") return yield* new CommandFailed({
+		command: "the home folder's lookup",
+		code: 0,
+		stderr: "$HOME is empty"
+	});
+	return home;
+});
+/** The repos the given folders on `machine` are in (each once); none for no folders. */
+const reposOf = fn("reposOf")(function* (folders, machine = null) {
+	if (folders.length === 0) return [];
+	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
+	return parseOwners(run.stdout, machine);
+});
+/**
+* The repo the folder `folder` on `machine` is in (the Current repo of the focused
+* folder), looked up there through its shared git folder, so a linked worktree names its
+* repo; none outside every repo.
+*/
+const repoAt = fn("repoAt")(function* (folder, machine = null) {
+	if (folder === "") return none();
+	const run = yield* runScript("the Current repo's lookup", OWNERS_SCRIPT, [folder], { on: machine });
+	return currentRepo(run.stdout, machine);
+});
+/** The local and origin branches of `repo`, read on its machine, for the New-or-open dialog. */
+const gitBranches = fn("gitBranches")(function* (repo) {
+	const run = yield* runScript("the branch list", BRANCHES_SCRIPT, [repo.root], { on: repo.machine });
 	return parseBranches(run.stdout);
 });
-/** The branch the folder `folder` is on; none when its HEAD is detached. */
-const branchAt = fn("branchAt")(function* (folder) {
-	const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder]);
+/** The branch the folder `folder` on `machine` is on, read there; none when its HEAD is detached. */
+const branchAt = fn("branchAt")(function* (folder, machine = null) {
+	const run = yield* runScript("the branch lookup", BRANCH_SCRIPT, [folder], { on: machine });
 	return liftPredicate(run.stdout.trim(), (branch) => branch !== "");
 });
 /** What the panel says about a failed run: one line. */
@@ -10822,11 +11314,21 @@ const failureText = (error) => {
 };
 /** A rejection's reason as text. */
 const causeText = (cause) => cause instanceof Error ? cause.message : String(cause);
-/** The last line of `text` that has anything on it; empty when none does. */
-const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
-/** The person's login shell, from `$SHELL`; `/bin/sh` when that can't be read. */
-const loginShell = fn("loginShell")(function* () {
-	return (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""]).pipe(map((run) => run.stdout), orElseSucceed(() => ""))).trim() || "/bin/sh";
+/**
+* The person's login shell couldn't be found, so a job would run with the wrong PATH.
+* `reason` says why.
+*/
+var LoginShellUnknown = class extends TaggedError("LoginShellUnknown") {};
+/** The options that run a command on `machine`: none for this machine. */
+const runOn = (machine) => machine === null ? void 0 : { on: machine };
+/**
+* The person's login shell on `machine`, from `$SHELL` there. A read that fails is
+* `LoginShellUnknown`: another shell would run the job with another PATH.
+*/
+const loginShell = fn("loginShell")(function* (machine = null) {
+	const found = (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""], runOn(machine)).pipe(mapError((failed) => new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` })))).stdout.trim();
+	if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
+	return found;
 });
 /** `hc run` printed no terminal address: the job never started. `reason` says why. */
 var JobNotStarted = class extends TaggedError("JobNotStarted") {};
@@ -10855,10 +11357,22 @@ const waitForJob = (addr) => gen(function* () {
 		case "Running": return yield* waitForJob(addr);
 	}
 });
-/** Which of `folders` no longer exist. */
-const goneFolders = fn("goneFolders")(function* (folders) {
+/**
+* Whether `folder` is a folder on `machine`, checked there. The test exits 1 for "no";
+* any other failure (the machine can't be reached) is the check's own error.
+*/
+const isFolder = fn("isFolder")(function* (folder, machine) {
+	return yield* (yield* Shell).exec("sh", [
+		"-c",
+		"[ -d \"$1\" ]",
+		"sh",
+		folder
+	], onMachine(machine, {})).pipe(as(true), catchIf((failed) => failed._tag === "CommandFailed" && failed.code === 1, () => succeed(false)));
+});
+/** Which of `folders` on `machine` no longer exist, checked there. */
+const goneFolders = fn("goneFolders")(function* (folders, machine = null) {
 	if (folders.length === 0) return [];
-	return (yield* runScript("the removed folders' check", GONE_SCRIPT, folders)).stdout.split("\n").filter((line) => line !== "");
+	return (yield* runScript("the removed folders' check", GONE_SCRIPT, folders, { on: machine })).stdout.split("\n").filter((line) => line !== "");
 });
 /** Stops the job in terminal `addr`. */
 const stopJob = fn("stopJob")(function* (addr) {
@@ -10868,9 +11382,9 @@ const stopJob = fn("stopJob")(function* (addr) {
 const reveal = fn("reveal")(function* (path) {
 	yield* (yield* Shell).exec("open", [path]);
 });
-/** A new private temp folder (`mktemp -d`), for a job's answer file. */
-const makeTempDir = fn("makeTempDir")(function* () {
-	const dir = (yield* (yield* Shell).exec("mktemp", ["-d"])).stdout.trim();
+/** A new private temp folder (`mktemp -d`) on `machine`, for a job's answer file. */
+const makeTempDir = fn("makeTempDir")(function* (machine = null) {
+	const dir = (yield* (yield* Shell).exec("mktemp", ["-d"], runOn(machine))).stdout.trim();
 	if (dir === "") return yield* new CommandFailed({
 		command: "mktemp",
 		code: 0,
@@ -10878,9 +11392,9 @@ const makeTempDir = fn("makeTempDir")(function* () {
 	});
 	return dir;
 });
-/** Removes the folder at `dir` and everything in it. */
-const removeDir = fn("removeDir")(function* (dir) {
-	yield* (yield* Shell).exec("rm", ["-rf", dir]);
+/** Removes the folder at `dir` on `machine` and everything in it. */
+const removeDir = fn("removeDir")(function* (dir, machine = null) {
+	yield* (yield* Shell).exec("rm", ["-rf", dir], runOn(machine));
 });
 /** Removes the ended job's terminal from herdr-core. */
 const removeTerminal = fn("removeTerminal")(function* (addr) {
@@ -10890,7 +11404,8 @@ const removeTerminal = fn("removeTerminal")(function* (addr) {
 // src/load.ts
 /**
 * The settings, read from `files.path`, after the one-time import of the old mod's
-* settings when there is no settings file yet and the import isn't `settled`.
+* settings when there is no settings file yet and the import isn't `settled`. A
+* successful import deletes the old file; a failed one leaves it.
 */
 const loadSettings = fn("loadSettings")(function* (files, settled) {
 	const disk = yield* Files;
@@ -10900,11 +11415,21 @@ const loadSettings = fn("loadSettings")(function* (files, settled) {
 	const plan = planImport(text, legacy, settled);
 	const loaded = (now) => ({
 		parsed: parseSettings(now, files.name),
-		settled: plan.settled
+		settled: plan.settled,
+		leftover: none()
 	});
 	if (isNone(plan.write)) return loaded(text);
 	const created = yield* result(disk.create(files.path, plan.write.value));
-	if (isSuccess(created)) return loaded(plan.write.value);
+	if (isSuccess(created)) {
+		const removed = yield* result(disk.remove(files.legacyPath));
+		const imported = loaded(plan.write.value);
+		if (isSuccess(removed)) return imported;
+		const why = `${lastSegment(files.legacyPath)}: imported, but couldn't delete it (${causeText(removed.failure.cause)})`;
+		return {
+			...imported,
+			leftover: some(why)
+		};
+	}
 	if (created.failure._tag === "FileError") {
 		const what = `${files.name}: couldn't create it from ${lastSegment(files.legacyPath)}`;
 		return defaultsBecause(what, created.failure, false);
@@ -10916,104 +11441,234 @@ const defaultsBecause = (what, failed, settled) => ({
 		settings: DEFAULT_SETTINGS,
 		error: some(`${what} (${causeText(failed.cause)})`)
 	},
-	settled
+	settled,
+	leftover: none()
+});
+/** What a folder scan scans, as a key: a scan is due again when it changes. */
+const scanKey = ({ folders, depth, skip }) => JSON.stringify({
+	folders,
+	depth,
+	skip
 });
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
-* The repos to list: the folder scan's (run again only when `lastScan` is none) plus the
-* repos the open spaces are in (`places`) and the Current repo (`current`), less the
-* hidden ones. A failure is its one-line reason.
+* Searches `machine`: scans its group folders when `scan` says to (after reading its
+* home there; this machine's is `home`), else keeps the scan of its `last` search, and
+* looks up the repos its open spaces (`places`) are in.
 */
-const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none()) {
-	const scanned = isSome(lastScan) ? lastScan.value : yield* scanRepos(settings, home);
-	const owners = yield* reposOf(places);
-	const repos = reposFrom(scanned, [...owners, ...toArray(current)], settings.folders, home);
+const searchOn = fnUntraced(function* (settings, machine, home, places, scan, last) {
+	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
+	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
+	return {
+		machine,
+		home: found,
+		scan: scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
+			onNone: () => ({
+				repos: [],
+				missing: []
+			}),
+			onSome: (before) => before.scan
+		}),
+		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
+	};
+});
+/** The machines a search covers: those with group folders, and those with open spaces. */
+const machinesOf$1 = (settings, places) => Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
+/**
+* `machine`'s search, or the status saying why it couldn't run there: its state in
+* `states`, or its failure, a bug included. A machine never scanned (or every machine,
+* when `rescan`) scans its group folders.
+*/
+const searchMachine = (ask, machine) => {
+	const held = statusOf$1(ask.states, machine);
+	if (isSome(held)) return succeed(fail$2(held.value));
+	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
+	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
+	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(fail$2({
+		_tag: "Down",
+		reason: failureText(failed)
+	}))), catchDefect((defect) => succeed(fail$2({
+		_tag: "Down",
+		reason: defectText(defect)
+	}))));
+};
+/**
+* One refresh of every machine in `ask` not busy, side by side: each machine's search,
+* handed to `onSearch` as it lands, which answers with that machine's repos to read; then
+* those repos' lists in one batched read, handed to `onLists`; then `onDone`, however the
+* machine's refresh ended. No machine waits on another. A machine whose search failed
+* reads no lists; this machine's lists are read even then, from the repos it kept.
+*/
+const refreshMachines = (ask, onSearch, onLists, onDone = () => void 0) => forEach(machinesOf$1(ask.settings, ask.places).filter((machine) => !ask.busy.has(machine)), (machine) => searchMachine(ask, machine).pipe(flatMap((search) => sync(() => onSearch(machine, search)).pipe(flatMap((repos) => readLists(repos.filter((repo) => repo.machine === machine), machine !== null && isFailure(search) ? /* @__PURE__ */ new Map([[machine, search.failure]]) : /* @__PURE__ */ new Map(), onLists)))), ensuring(sync(() => onDone(machine)))), {
+	concurrency: "unbounded",
+	discard: true
+});
+/**
+* `search` of `machine` landed. Another machine's failure is its status; this machine's
+* is the error, and its last search that worked stays, so its repos stay listed. A
+* search that works clears the machine's status, one a failed list read gave included.
+*/
+const landSearch = (landed, machine, search) => {
+	const here = machine === null;
+	const searches = new Map([...landed.searches, [machine, search]]);
+	return match$4(search, {
+		onSuccess: () => ({
+			searches,
+			error: here ? none() : landed.error,
+			statuses: new Map([...landed.statuses].filter(([at]) => at !== machine))
+		}),
+		onFailure: (status) => here ? {
+			...landed,
+			error: some(status._tag === "Down" ? status.reason : "connecting")
+		} : {
+			...landed,
+			searches,
+			statuses: new Map([...landed.statuses, [machine, status]])
+		}
+	});
+};
+/**
+* The repos to list, from each machine's search in `searches` (only the machines `settings`
+* and `places` cover): the folder scans' plus the repos the open spaces are in and the
+* Current repo (`current`), less the hidden ones. A machine whose search failed gives up
+* its repos.
+*/
+const foundOf = (settings, home, places, searches, current = none()) => {
+	const searched = machinesOf$1(settings, places).flatMap((machine) => toArray(map$3(fromNullishOr(searches.get(machine)), (result) => ({
+		machine,
+		result
+	}))));
+	const ok = searched.flatMap(({ result }) => toArray(getSuccess(result)));
+	const scans = ok.flatMap((found) => toArray(map$3(found.home, (at) => ({
+		...found,
+		home: at
+	}))));
+	const scanned = {
+		repos: scans.flatMap((found) => found.scan.repos),
+		missing: scans.flatMap((found) => found.scan.missing),
+		homes: new Map([[null, home], ...scans.map((found) => [found.machine, found.home])]),
+		machines: scans.map((found) => found.machine)
+	};
+	const repos = reposFrom(scanned.repos, [...ok.flatMap((found) => found.owners), ...toArray(current)], settings.folders, scanned.homes);
 	return {
 		scanned,
-		repos: withoutHidden(repos, settings.hidden)
+		repos: withoutHidden(repos, settings.hidden),
+		statuses: new Map(searched.flatMap(({ machine, result }) => toArray(map$3(getFailure(result), (status) => [machine, status]))))
 	};
+};
+/**
+* The Current repo: the repo `focused` (the focused folder, looked up on its machine;
+* empty for none) is in, if any, or the one-line reason the lookup failed.
+*/
+const lookUpCurrent = fn("lookUpCurrent")(function* (focused) {
+	return yield* repoAt(focused.folder, focused.machine);
 }, asReason);
 /**
-* The Current repo: the repo `folder` (the focused folder; empty for none) is in, if any,
-* or the one-line reason the lookup failed.
+* What the worktree dialog in `mode` opens with, for the repo `at` (a folder on a
+* machine; an empty folder for none) is in: that repo and the branch the folder is on,
+* and the `listed` repos to pick from, by folder name. None when there is no repo at
+* all. A lookup that fails is its one-line reason.
 */
-const lookUpCurrent = fn("lookUpCurrent")(function* (folder) {
-	return yield* repoAt(folder);
-}, asReason);
-/**
-* What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
-* empty for none) is in: that repo and the branch the folder is on, and the `listed`
-* repos to pick from, by folder name. None when there is no repo at all. A lookup that
-* fails is its one-line reason.
-*/
-const dialogFor = fn("dialogFor")(function* (folder, listed) {
-	const found = yield* repoAt(folder);
-	const branch = isSome(found) ? yield* branchAt(folder) : none();
-	const repos = [...listed].sort((a, b) => lastSegment(a).localeCompare(lastSegment(b)));
+const dialogFor = fn("dialogFor")(function* ({ machine, folder }, listed, mode = "new") {
+	const found = yield* repoAt(folder, machine);
+	const branch = isSome(found) ? yield* branchAt(folder, machine) : none();
+	const repos = [...listed].sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
 	const props = {
-		repo: map$3(found, (repo) => repo.root),
+		mode,
+		repo: map$3(found, ({ machine, root }) => ({
+			machine,
+			root
+		})),
 		branch,
 		repos
 	};
 	return isNone(found) && repos.length === 0 ? none() : some(props);
 }, asReason);
-/** The worktrees and branches of the repo at `root`, for the New-or-open dialog. */
-const readDialogRepo = (root) => all({
-	list: readList(root),
-	branches: readBranches(root)
+/** The worktrees and branches of `repo`, for the New-or-open dialog. */
+const readDialogRepo = (repo) => all({
+	list: readList(repo),
+	branches: readBranches(repo)
 }, { concurrency: 2 });
-/** The branches of the repo at `root`, or the one-line reason the read failed. */
-const readBranches = fn("readBranches")(function* (root) {
-	return yield* gitBranches(root);
+/** The branches of `repo`, or the one-line reason the read failed. */
+const readBranches = fn("readBranches")(function* (repo) {
+	return yield* gitBranches(repo);
 }, asReason);
-/** The worktrees of the repo at `root`, or the one-line reason the read failed. */
-const readList = fn("readList")(function* (root) {
-	return yield* wtList(root);
+/** The worktrees of `repo`, or the one-line reason the read failed. */
+const readList = fn("readList")(function* (repo) {
+	return yield* wtList(repo);
 }, asReason);
 /**
 * The Merge or Remove a space's menu asks for, of the worktree the space's folder
-* `folder` is in: found through its repo and that repo's list, read now, since the panel
-* may not list the repo (hidden, or outside the group folders). A failure, or a worktree
-* that can't be merged or removed, is its one-line reason.
+* `folder` is in on `machine`: found through its repo and that repo's list, read now on
+* that machine, since the panel may not list the repo (hidden, or outside the group
+* folders). A failure, or a worktree that can't be merged or removed, is its one-line
+* reason.
 */
-const spaceWorktree = (act, folder) => holderRepo(folder).pipe(map(flatMap$2(match$5({
+const spaceWorktree = (act, { machine, folder }) => holderRepo(folder, machine).pipe(map(flatMap$2(match$5({
 	onNone: () => fail$2(`${folder} isn't in a git repo.`),
-	onSome: ({ root, worktrees }) => spaceWorktreeAction(act, root, worktrees, folder)
+	onSome: ({ repo, worktrees }) => spaceWorktreeAction(act, repo, worktrees, folder)
 }))));
-/** The repo `folder` is in, with its worktrees; none outside every repo. */
-const holderRepo = fn("holderRepo")(function* (folder) {
-	const found = yield* repoAt(folder);
+/** The repo `folder` on `machine` is in, with its worktrees; none outside every repo. */
+const holderRepo = fn("holderRepo")(function* (folder, machine) {
+	const found = yield* repoAt(folder, machine);
 	if (isNone(found)) return none();
-	const root = found.value.root;
-	const worktrees = yield* wtList(root);
+	const worktrees = yield* wtList(found.value);
 	return some({
-		root,
+		repo: found.value,
 		worktrees
 	});
 }, asReason);
-/** The worktrees of the repo at `root` with their CI, or the one-line reason the read failed. */
-const readCi = fn("readCi")(function* (root) {
-	return yield* wtCi(root);
+/**
+* Reads every repo's worktrees with one batched `wt list` per machine, the machines side
+* by side, handing each machine's answer to `keep` as it lands. A machine in `skip`
+* (connecting, or found down) runs nothing and gets that status.
+*/
+const readLists = (repos, skip, keep) => {
+	const machines = Array.from(new Set(repos.map((repo) => repo.machine)));
+	const held = machines.flatMap((machine) => toArray(map$3(fromNullishOr(skip.get(machine)), (status) => [machine, status])));
+	return sync(() => held.forEach(([machine, status]) => keep(machine, fail$2(status)))).pipe(andThen(forEach(machines.filter((machine) => !skip.has(machine)), (machine) => machineLists(machine, repos.filter((repo) => repo.machine === machine).map((repo) => repo.root)).pipe(tap((answer) => sync(() => keep(machine, answer)))), {
+		concurrency: "unbounded",
+		discard: true
+	})));
+};
+/** The batched list read of `roots` on `machine`, keyed by `repoKey`. */
+const machineLists = (machine, roots) => wtLists(machine, roots).pipe(map((lists) => succeed$3(new Map(Array.from(lists, ([root, list]) => [repoKey({
+	machine,
+	root
+}), list])))), catch_((failed) => succeed(fail$2({
+	_tag: "Down",
+	reason: failureText(failed)
+}))), catchDefect((defect) => succeed(fail$2({
+	_tag: "Down",
+	reason: defectText(defect)
+}))));
+/** A defect, a bug, as its one-line reason. */
+const defectText = (defect) => `a bug: ${String(defect)}`;
+/** `read`, with a defect, a bug, as its failed answer, so the panel shows it like any other. */
+const defectAsReason = (read) => read.pipe(catchDefect((defect) => succeed(fail$2(defectText(defect)))));
+/** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
+const readCi = fn("readCi")(function* (repo) {
+	return yield* wtCi(repo);
 }, asReason);
 /**
-* Runs `read` on every repo root, at most `limit` at a time, handing each answer to
-* `keep` as it lands. Each read spawns processes, and Herdr runs out of open files when
-* every repo's list and CI start at once.
+* Runs `read` on every repo, at most `limit` at a time, handing each answer to `keep` as
+* it lands. Each read spawns processes, and Herdr runs out of open files when every
+* repo's list and CI start at once.
 */
-const readEach = (roots, limit, read, keep) => forEach(roots, (root) => read(root).pipe(tap((answer) => sync(() => keep(root, answer)))), {
+const readEach = (repos, limit, read, keep) => forEach(repos, (repo) => read(repo).pipe(tap((answer) => sync(() => keep(repo, answer)))), {
 	concurrency: limit,
 	discard: true
 });
 /**
 * The "run herdr:sync" toast to show, from the sync record at `path`, the installed Herdr
-* version and the version the toast was last shown for (see `syncNotice`).
+* version and the version the toast was last shown for (see `syncNotice`). A record that
+* can't be read is its one-line reason.
 */
 const syncToast = fn("syncToast")(function* (path, installed, told) {
-	const disk = yield* Files;
-	const record = yield* option(disk.read(path));
-	return syncNotice(record, installed, told);
-});
+	const record = yield* (yield* Files).read(path).pipe(asSome, catchTag("FileMissing", () => succeed(none())));
+	return succeed$3(syncNotice(record, installed, told));
+}, (effect, path) => effect.pipe(catchTag("FileError", (failed) => succeed(fail$2(`${lastSegment(path)}: couldn't read it (${causeText(failed.cause)})`)))));
 /** The settings file doesn't parse, so it is never written over; `reason` says why. */
 var SettingsBroken = class extends TaggedError("SettingsBroken") {};
 /** The settings file couldn't be read, so nothing can be written over it safely. */
@@ -11027,13 +11682,13 @@ const unreadableText = (name, failed) => `${name}: couldn't read it (${causeText
 /** What the panel says about a settings file it couldn't write. */
 const unsavedText = (name, failed) => `${name}: couldn't save it (${causeText(failed.cause)})`;
 /**
-* Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
+* Hides `repo` (by machine and folder) in the settings file (`files.path`), never over a hand edit
 * made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
 */
-const hideInSettings = fn("hideInSettings")(function* (files, root) {
+const hideInSettings = fn("hideInSettings")(function* (files, repo) {
 	const disk = yield* Files;
 	const current = yield* currentSettings(files.path);
-	const next = yield* fromResult(hideRepo(current, root, files.name)).pipe(mapError((reason) => new SettingsBroken({ reason })));
+	const next = yield* fromResult(hideRepo(current, repo, files.name)).pipe(mapError((reason) => new SettingsBroken({ reason })));
 	if (next === current) return succeed$3(void 0);
 	yield* current === null ? disk.create(files.path, next) : disk.replace(files.path, next, current);
 	return succeed$3(void 0);
@@ -11043,27 +11698,39 @@ const hideInSettings = fn("hideInSettings")(function* (files, root) {
 	WriteConflict: () => succeed(fail$2(`${files.name} changed while hiding the repo: try again.`)),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
+/** What the panel says about a file it couldn't read: one line. */
+const fileFailureText = (failed) => failed._tag === "FileMissing" ? `${failed.path} is missing` : causeText(failed.cause);
+/** A step that failed as its one line, `what` went wrong and why; nothing when it worked. */
+const problemOf = (step, what) => isFailure(step) ? [`${what}: ${failureText(step.failure)}`] : [];
 /**
-* Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
-* gets its address as soon as it starts (to open its window), then this waits for it to
-* end, removes its terminal and checks which of its folders are gone.
+* Runs `spec` as a job on its machine, in the person's login shell there, in a
+* background terminal: `shown` gets its address as soon as it starts (to open its
+* window), then this waits for it to end, removes its terminal and checks, on that
+* machine, which of its folders are gone.
 */
 const runJob = fn("runJob")(function* (spec, shown) {
-	const shell = yield* loginShell();
+	const shell = yield* loginShell(spec.on);
 	const addr = yield* startJob({
 		cwd: spec.cwd,
 		shell,
-		body: spec.body
+		body: spec.body,
+		on: spec.on
 	});
 	yield* sync(() => shown(addr));
-	const code = yield* waitForJob(addr).pipe(orElseSucceed(() => none()));
-	yield* ignore(removeTerminal(addr));
+	const waited = yield* result(waitForJob(addr));
+	const removed = yield* result(removeTerminal(addr));
+	const checked = yield* result(goneFolders(spec.gone, spec.on));
 	return {
 		_tag: "Ended",
-		code,
-		gone: yield* goneFolders(spec.gone).pipe(orElseSucceed(() => []))
+		code: getOrElse(waited, () => none()),
+		gone: getOrElse(checked, () => []),
+		problems: [
+			...problemOf(waited, "Lost track of the job"),
+			...problemOf(removed, "Couldn't remove the job's terminal"),
+			...problemOf(checked, "Couldn't check which folders went, so no space was closed")
+		]
 	};
-}, catchTags({
+}, (effect, spec) => effect.pipe(catchTags({
 	JobNotStarted: (failed) => succeed({
 		_tag: "NotStarted",
 		reason: failed.reason
@@ -11071,15 +11738,36 @@ const runJob = fn("runJob")(function* (spec, shown) {
 	ShellError: (failed) => succeed({
 		_tag: "NotStarted",
 		reason: failureText(failed)
+	}),
+	LoginShellUnknown: (failed) => succeed({
+		_tag: "NotStarted",
+		reason: `couldn't find your login shell: ${failed.reason}`
 	})
-}));
+}), map((outcome) => outcomeOn(spec.on, outcome))));
+/** `text` named as `machine`'s, so a failure says where to look; this machine's as is. */
+const onMachineText = (machine, text) => machine === null ? text : `On ${machineName(machine)}: ${text}`;
+/** `outcome` with its reason or problems named as `machine`'s. */
+const outcomeOn = (machine, outcome) => outcome._tag === "NotStarted" ? {
+	...outcome,
+	reason: onMachineText(machine, outcome.reason)
+} : {
+	...outcome,
+	problems: outcome.problems.map((line) => onMachineText(machine, line))
+};
+/** The worktree wt's answer file names, from its `read`, or the one line saying why not. */
+const switchedFrom = (read) => match$4(read, {
+	onFailure: (failed) => fail$2(`Couldn't read wt's answer, so no space was opened: ${fileFailureText(failed)}`),
+	onSuccess: (text) => fromOption$2(switchedTo(text), () => `wt's answer names no branch and folder, so no space was opened: ${text.trim()}`)
+});
 /**
-* Switches to or creates the worktree for `name` in the repo at `main` as a job (see
-* `runJob`), its JSON answer written to a private temp folder that is removed after.
+* Switches to or creates the worktree for `name` in the repo at `main` on `machine` as a
+* job (see `runJob`), its JSON answer written to a private temp folder there, read back
+* from there, and removed after. The folder must be on the job's machine: wt writes it
+* there, and Herdr reads files on any machine.
 */
 const newWorktree = fn("newWorktree")(function* (target, shown) {
 	const disk = yield* Files;
-	const dir = yield* makeTempDir().pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
+	const dir = yield* makeTempDir(target.machine).pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
 	const out = `${dir}/switch.json`;
 	const spec = {
 		title: `Open or create ${target.name}`,
@@ -11089,27 +11777,48 @@ const newWorktree = fn("newWorktree")(function* (target, shown) {
 			base: fromNullishOr(target.base),
 			out
 		}),
-		gone: []
+		gone: [],
+		on: target.machine
 	};
 	const outcome = yield* runJob(spec, shown);
-	const text = outcome._tag === "Ended" && contains(outcome.code, 0) ? yield* option(disk.read(out)) : none();
-	yield* ignore(removeDir(dir));
+	const read = outcome._tag === "Ended" && contains(outcome.code, 0) ? some(yield* result(disk.read(out, target.machine))) : none();
+	const removed = yield* result(removeDir(dir, target.machine));
+	const switched = map$3(read, switchedFrom);
 	return {
 		outcome,
-		switched: flatMap$3(text, switchedTo)
+		switched: flatMap$3(switched, getSuccess),
+		problems: [...toArray(flatMap$3(switched, getFailure)), ...problemOf(removed, `Couldn't remove the temp folder ${dir}`)].map((line) => onMachineText(target.machine, line))
 	};
-}, catchTag("JobNotStarted", (failed) => succeed({
+}, (effect, target) => effect.pipe(catchTag("JobNotStarted", (failed) => succeed({
 	outcome: {
 		_tag: "NotStarted",
-		reason: failed.reason
+		reason: onMachineText(target.machine, failed.reason)
 	},
-	switched: none()
-})));
+	switched: none(),
+	problems: []
+}))));
 /** The group folder picked in the system's folder picker (none if cancelled), or why it couldn't open. */
 const pickGroupFolder = fn("pickGroupFolder")(function* () {
 	const picked = yield* (yield* Files).pickFolder("Add group folder");
 	return succeed$3(picked);
 }, catchTag("PickerFailed", (failed) => succeed(fail$2(`couldn't open the folder picker (${causeText(failed.cause)})`))));
+/**
+* The settings with the folder typed as `typed` on `machine` added as a group, once a
+* check run there finds it (`~` is that machine's home, read there). A folder that isn't
+* there, or a check that can't run, is the answer's reason instead: nothing is added.
+*/
+const addGroupFolderOn = fn("addGroupFolderOn")(function* (settings, machine, typed) {
+	const path = typed.trim();
+	if (path === "") return fail$2(`Type the folder's path on ${machine}`);
+	const home = yield* machineHome(machine);
+	return (yield* isFolder(expandHome(path, home), machine)) ? succeed$3(addFolderOn(settings, machine, path, home)) : fail$2(`${path} isn't a folder on ${machine}`);
+}, (effect, _settings, machine, typed) => {
+	const cantCheck = (failed) => succeed(fail$2(`couldn't check ${typed.trim()} on ${machine}: ${failureText(failed)}`));
+	return effect.pipe(catchTags({
+		CommandFailed: cantCheck,
+		ShellError: cantCheck
+	}));
+});
 /** The settings file's text for the Settings dialog to open on (null: no file), or why it can't be read. */
 const settingsText = fn("settingsText")(function* (files) {
 	return succeed$3(yield* currentSettings(files.path));
@@ -11157,6 +11866,17 @@ const foldList = (old, read) => match$4(read, {
 			onSome: (list) => list.worktrees
 		}),
 		error: some(error)
+	})
+});
+/** What the panel keeps after `machine`'s batched list read answers. */
+const keepLists = (kept, machine, answer) => match$4(answer, {
+	onFailure: (status) => ({
+		...kept,
+		machines: new Map([...kept.machines, [machine, status]])
+	}),
+	onSuccess: (read) => ({
+		...kept,
+		lists: new Map([...kept.lists, ...Array.from(read, ([key, list]) => [key, foldList(fromNullishOr(kept.lists.get(key)), list)])])
 	})
 });
 /** A repo's CI after a CI read: each worktree's CI by path, or the old CI with the error. */
@@ -11251,10 +11971,10 @@ const onRender = (reads, now) => {
 	};
 };
 /**
-* The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
-* hidden one, say), grouped by the group folders.
+* The Current repo from its lookup: the listed repo (same machine and folder), or one the
+* panel doesn't list (a hidden one, say), grouped by the group folders.
 */
-const currentRepoOf = (found, repos, folders, home) => match$5(found, {
+const currentRepoOf = (found, repos, folders, homes) => match$5(found, {
 	onNone: () => ({ _tag: "Looking" }),
 	onSome: match$4({
 		onFailure: (reason) => ({
@@ -11265,9 +11985,9 @@ const currentRepoOf = (found, repos, folders, home) => match$5(found, {
 			onNone: () => ({ _tag: "NotInRepo" }),
 			onSome: (repo) => ({
 				_tag: "InRepo",
-				repo: repos.find((listed) => listed.root === repo.root) ?? {
+				repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
 					...repo,
-					group: groupOf(repo.root, folders, home)
+					group: groupOf(repo, folders, homes)
 				}
 			})
 		})
@@ -11279,8 +11999,8 @@ const NOT_FOLLOWING = {
 };
 /**
 * What a render looks up: while the Current view shows (`following`), the focused
-* folder, when it isn't the one last looked up. Herdr renders on every focus change,
-* so this never polls.
+* folder, when it isn't the one last looked up (the same path on another machine is
+* another folder). Herdr renders on every focus change, so this never polls.
 */
 const followFocus = (follow, { following, folder }) => !following ? {
 	follow: {
@@ -11310,25 +12030,24 @@ const takeLookup = (follow, folder, answer) => contains(follow.folder, folder) ?
 	},
 	refresh: match$5(follow.found, {
 		onNone: () => true,
-		onSome: (before) => rootOf(before) !== rootOf(answer)
+		onSome: (before) => keyOf(before) !== keyOf(answer)
 	})
 } : {
 	follow,
 	refresh: false
 };
-/** The repo root an answer names; undefined for none or a failed lookup. */
-const rootOf = (answer) => match$4(answer, {
+/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
+const keyOf = (answer) => match$4(answer, {
 	onFailure: () => void 0,
-	onSuccess: (found) => getOrUndefined$1(found)?.root
+	onSuccess: (found) => getOrUndefined$1(map$3(found, repoKey))
 });
 
 // src/spaces.ts
 /**
-* Where each space on this machine is now: its first pane's live folder, else the folder
-* it was made in. Spaces on other machines, and spaces with no folder at all, are left out.
+* Where each space is now, on its machine: its first pane's live folder, else the folder
+* it was made in. Spaces with no folder at all are left out.
 */
-const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
-	if (space.machine !== null) return [];
+const spacePlaces = (spaces, panes) => spaces.flatMap((space) => {
 	const tabs = new Set(space.tabs.map((tab) => tab.id));
 	const place = panes.find((pane) => tabs.has(pane.tab) && pane.cwd)?.cwd || space.folder;
 	return place ? [{
@@ -11336,17 +12055,18 @@ const localPlaces = (spaces, panes) => spaces.flatMap((space) => {
 			id: space.id,
 			active: space.active
 		},
+		machine: space.machine,
 		place
 	}] : [];
 });
-/** Where the space `id` is now; none for a space with no place here. */
-const placeOf = (places, id) => fromNullishOr(places.find((p) => p.space.id === id)?.place);
 /**
-* The space on each worktree path. A space sits on the longest worktree path that
-* contains its place, so a worktree nested in another's folder still gets its own.
-* When several sit on one worktree, the shown one wins, else the first.
+* The space on each of the worktree paths on `machine`. Only spaces on that machine
+* count: a folder of the same path elsewhere is another folder. A space sits on the
+* longest worktree path that contains its place, so a worktree nested in another's
+* folder still gets its own. When several sit on one worktree, the shown one wins, else
+* the first.
 */
-const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) => {
+const spacesOnWorktrees = (places, machine, paths) => places.filter((place) => place.machine === machine).flatMap(({ space, place }) => {
 	const longest = paths.filter((path) => isUnder(place, path)).reduce((best, path) => isSome(best) && best.value.length >= path.length ? best : some(path), none());
 	return match$5(longest, {
 		onNone: () => [],
@@ -11361,37 +12081,117 @@ const spacesOnWorktrees = (places, paths) => places.flatMap(({ space, place }) =
 	return new Map([...on, [path, space]]);
 }, /* @__PURE__ */ new Map());
 /**
-* The ids of the spaces on this machine whose folder (where the space was made) or
-* place (where its first terminal is now) is one of the `gone` folders, or inside one.
+* The ids of the spaces on `machine` whose folder (where the space was made) or place
+* (where its first terminal is now) is one of the `gone` folders there, or inside one. A
+* space on another machine never matches: the same path there is another folder.
 * Both count because wt moves a removed worktree into a trash folder and a shell inside
 * it moves too, so the place alone can point somewhere that still exists.
 */
-const spacesInGone = (spaces, panes, gone) => {
+const spacesInGone = (spaces, panes, machine, gone) => {
 	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
-	const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-	return spaces.filter((space) => space.machine === null).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
+	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+	return spaces.filter((space) => space.machine === machine).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
 };
 /**
-* The folder the person is working in: the focused terminal's, else (a mod pane or the
-* panel itself has focus) where the focused space is, so focusing the panel keeps it.
+* The folder the person is working in, on the focused space's machine: the focused
+* terminal's, else (a mod pane or the panel itself has focus) where the focused space
+* is, so focusing the panel keeps it. A terminal on this machine that has run `ssh`
+* still counts as this machine: Herdr knows only the space's machine.
 */
-const focusedFolder = (focus, places) => orElse(fromNullishOr(focus?.cwd || null), () => fromNullishOr(places.find((p) => p.space.id === focus?.space)?.place));
+const focusedFolder = (focus, places) => {
+	const at = fromNullishOr(places.find((p) => p.space.id === focus?.space));
+	const machine = match$5(at, {
+		onNone: () => null,
+		onSome: (p) => p.machine
+	});
+	return orElse(map$3(fromNullishOr(focus?.cwd || null), (folder) => ({
+		machine,
+		folder
+	})), () => map$3(at, (p) => ({
+		machine: p.machine,
+		folder: p.place
+	})));
+};
+/**
+* The focused folder (see `focusedFolder`), or this machine with no folder when nothing
+* is focused: what the panel looks up when it needs a place to start.
+*/
+const focusedOrHere = (focus, places) => getOrElse$1(focusedFolder(focus, places), () => ({
+	machine: null,
+	folder: ""
+}));
+/**
+* The Herdr command a click on a worktree row runs: select its space, or open a new one
+* on the worktree's machine (Herdr's `space.new` takes no machine for this one).
+*/
+const clickCommand = (click) => click._tag === "Select" ? {
+	command: "space.select",
+	args: { id: click.space }
+} : {
+	command: "space.new",
+	args: {
+		name: click.name,
+		folder: click.folder,
+		...click.machine === null ? {} : { machine: click.machine }
+	}
+};
+/** The space to go to for `wanted`: the one on it, else a new one there. */
+const goTo = (places, wanted) => match$5(fromNullishOr(spacesOnWorktrees(places, wanted.machine, [wanted.folder]).get(wanted.folder)), {
+	onSome: (on) => ({
+		_tag: "Select",
+		space: on.id
+	}),
+	onNone: () => ({
+		_tag: "New",
+		...wanted
+	})
+});
+/**
+* Each space's group, by space id, for the sidebar's labels: the group of the repo whose
+* worktree the space sits on, on the space's machine. As in `spacesOnWorktrees`, the
+* longest worktree path holding the space's place wins, across every repo there, so a
+* repo nested in another's folder keeps its own group. A repo whose list isn't read yet
+* counts its main checkout. Spaces on no repo, or on a repo in Other (which the panel
+* shows with no group), are left out.
+*/
+const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(({ space, machine, place }) => repos.filter((repo) => repo.machine === machine).flatMap((repo) => (lists.get(repoKey(repo))?.worktrees.map((w) => w.path) ?? [repo.root]).filter((path) => isUnder(place, path)).map((path) => ({
+	path,
+	group: repo.group
+}))).reduce((best, on) => best[0] && best[0].path.length >= on.path.length ? best : [on], []).filter((on) => on.group !== OTHER).map((on) => [space.id, on.group])));
+/**
+* Whether `groups` differ from those `published` in shared state (anything at all, since
+* any mod can write it): publishing only on a change spares every mod a render.
+*/
+const groupsChanged = (groups, published) => {
+	const entries = Object.entries(groups);
+	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, group]) => Reflect.get(published, space) !== group);
+};
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
 const SHOWS = [
+	["current", "Current"],
 	["repos", "Repos"],
 	["merged", "Clean up"],
 	["active", "Active"],
 	["conflict", "Conflicts"],
-	["open", "Open"],
-	["current", "Current"]
+	["open", "Open"]
 ];
 const DEFAULT_VIEW_STATE = {
 	group: none(),
 	show: "repos",
-	only: true
+	only: true,
+	machine: none()
 };
+const CI_TOOLTIPS = {
+	passed: "CI passed",
+	running: "CI is running",
+	failed: "CI failed",
+	conflicts: "Conflicts with main",
+	unknown: "No CI status"
+};
+/** What a row's CI badge means, for its hover label. */
+const ciTooltip = (badge) => badge.stale ? `${CI_TOOLTIPS[badge.status]} on an older commit than the one pushed` : CI_TOOLTIPS[badge.status];
 const SECTIONS = [
 	["merged", "Merged · ready to clean up"],
 	["active", "In progress"],
@@ -11402,6 +12202,7 @@ const kindOf = (worktree) => {
 	switch (worktree.state._tag) {
 		case "Main": return none();
 		case "Merged": return some("merged");
+		case "New":
 		case "Active": return some("active");
 		case "Conflict": return some("conflict");
 	}
@@ -11468,30 +12269,56 @@ const badgeOf = (ci) => {
 	}
 };
 /** The worktree's CI: from its repo's last CI read, else whatever its list carried. */
-const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repo.root)?.byPath.get(worktree.path)), () => worktree.ci);
-const rowView = (snapshot, repo, worktree, space) => ({
-	key: worktree.path,
-	repo: repo.root,
-	label: getOrElse$1(worktree.branch, () => "(detached)"),
-	tone: getOrElse$1(kindOf(worktree), () => "main"),
-	hollow: isNone(space),
-	dirty: worktree.dirty,
-	open: isSome(space),
-	current: exists(space, (s) => s.active),
-	subline: subline(worktree, snapshot.now),
-	ci: badgeOf(ciOf(snapshot, repo, worktree)),
-	click: match$5(space, {
-		onNone: () => ({
-			_tag: "New",
-			name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
-			folder: worktree.path
+const ciOf = (snapshot, repo, worktree) => getOrElse$1(fromNullishOr(snapshot.ci.get(repoKey(repo))?.byPath.get(worktree.path)), () => worktree.ci);
+const TONE_TOOLTIPS = {
+	main: "Main checkout",
+	merged: "Merged",
+	active: "In progress",
+	conflict: "Conflicts with main"
+};
+const dotTooltip = (tone, open) => `${TONE_TOOLTIPS[tone]} · ${open ? "open in a space" : "no space open"}`;
+/** The hover label of the open marker: names the space's machine when it isn't this one. */
+const openTooltip = (machine) => machine === null ? "Open in a space" : `Open in a space on ${machineName(machine)}`;
+const rowView = (snapshot, repo, worktree, space) => {
+	const tone = getOrElse$1(kindOf(worktree), () => "main");
+	const isNew = worktree.state._tag === "New";
+	const ci = badgeOf(ciOf(snapshot, repo, worktree));
+	return {
+		key: repoKey({
+			machine: repo.machine,
+			root: worktree.path
 		}),
-		onSome: (s) => ({
-			_tag: "Select",
-			space: s.id
+		repo: repo.root,
+		label: getOrElse$1(worktree.branch, () => "(detached)"),
+		tone,
+		hollow: isNone(space),
+		dirty: worktree.dirty,
+		open: isSome(space),
+		current: exists(space, (s) => s.active),
+		subline: subline(worktree, snapshot.now),
+		badge: isNew ? some("new") : none(),
+		ci,
+		tips: {
+			dot: dotTooltip(tone, isSome(space)),
+			badge: isNew ? some("No commits or changes yet") : none(),
+			dirty: worktree.dirty ? some("Uncommitted changes") : none(),
+			open: map$3(space, () => openTooltip(repo.machine)),
+			ci: map$3(ci, ciTooltip)
+		},
+		click: match$5(space, {
+			onNone: () => ({
+				_tag: "New",
+				name: worktree.state._tag === "Main" ? lastSegment(repo.root) : getOrElse$1(worktree.branch, () => lastSegment(worktree.path)),
+				folder: worktree.path,
+				machine: repo.machine
+			}),
+			onSome: (s) => ({
+				_tag: "Select",
+				space: s.id
+			})
 		})
-	})
-});
+	};
+};
 const newestFirst = (a, b) => getOrElse$1(b.committedAt, () => 0) - getOrElse$1(a.committedAt, () => 0);
 const statusOf = (list) => match$5(list, {
 	onNone: () => ({ _tag: "Reading" }),
@@ -11503,7 +12330,7 @@ const statusOf = (list) => match$5(list, {
 		})
 	})
 });
-const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repo.root));
+const listOf = (snapshot, repo) => fromNullishOr(snapshot.lists.get(repoKey(repo)));
 /** How many worktrees: wt list's answer once read, else the scan's. */
 const countOf = (repo, list) => match$5(list, {
 	onNone: () => repo.count,
@@ -11521,6 +12348,16 @@ const nameMatches = (query, repo) => match$5(query, {
 	onSome: (q) => lastSegment(repo.root).toLowerCase().includes(q)
 });
 const noMatch = (query) => `Nothing matches "${query}".`;
+/** The machine `repo` is on, named only while the list holds repos on more than one. */
+const machineLabel = (snapshot, repo) => liftPredicate(machineName(repo.machine), () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1);
+/** A flat row's repo: its folder name, after its machine while more than one is listed. */
+const flatRepoName = (snapshot, repo) => match$5(machineLabel(snapshot, repo), {
+	onNone: () => lastSegment(repo.root),
+	onSome: () => locatedLabel({
+		machine: repo.machine,
+		folder: lastSegment(repo.root)
+	}, { nameHere: true })
+});
 const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => {
 	const list = listOf(snapshot, repo);
 	const all = match$5(list, {
@@ -11530,26 +12367,28 @@ const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => 
 	const query = queryOf(snapshot);
 	const worktrees = all.filter((w) => matches(query, repo, w));
 	const searching = isSome(query);
-	const folded = foldable && !searching && snapshot.folded[repo.root] === true;
-	const on = spacesOnWorktrees(places, all.map((w) => w.path));
+	const key = repoKey(repo);
+	const folded = foldable && !searching && snapshot.folded[key] === true;
+	const on = spacesOnWorktrees(places, repo.machine, all.map((w) => w.path));
 	const toRow = (worktree) => rowView(snapshot, repo, worktree, fromNullishOr(on.get(worktree.path)));
 	const inSection = (kind) => worktrees.filter((w) => contains(kindOf(w), kind)).sort(newestFirst);
 	return {
-		key: repo.root,
+		key,
 		name: lastSegment(repo.root),
+		machine: machineLabel(snapshot, repo),
 		group: repo.group === "Other" ? none() : some(repo.group),
 		count: map$3(list, () => countOf(repo, list)),
 		status: statusOf(list),
-		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(repo.root)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
+		ciNote: map$3(flatMap$3(fromNullishOr(snapshot.ci.get(key)), (ci) => ci.error), (error) => `CI status not updated: ${error}`),
 		folded,
 		foldable,
 		main: folded ? [] : worktrees.filter((w) => isNone(kindOf(w))).map(toRow),
 		sections: folded ? [] : SECTIONS.flatMap(([kind, label]) => {
 			const rows = inSection(kind);
-			const key = `${repo.root}|${kind}`;
-			const sectionFolded = !searching && snapshot.folded[key] === true;
+			const sectionKey = `${key}|${kind}`;
+			const sectionFolded = !searching && snapshot.folded[sectionKey] === true;
 			return rows.length === 0 ? [] : [{
-				key,
+				key: sectionKey,
 				kind,
 				label,
 				count: rows.length,
@@ -11564,7 +12403,7 @@ const emptyText = (snapshot) => {
 	if (snapshot.settings.folders.length === 0) return `No repos yet. Add your repo folders in Settings, or in ${snapshot.settingsFile} in Herdr's folder.`;
 	return "No repos found in your group folders.";
 };
-/** Group names in chip order: Settings order, then unknown names sorted, then Other. */
+/** Group names in the group filter's order: Settings order, then unknown names sorted, then Other. */
 const orderGroups = (names, settings) => {
 	const have = new Set(names);
 	const order = settings.folders.map((folder) => folder.name);
@@ -11577,21 +12416,39 @@ const orderGroups = (names, settings) => {
 };
 /**
 * The selected group. A saved group no repo is in any more falls back to All, but only
-* once the repos are known, so a saved chip never flashes back to All at start.
+* once the repos are known, so a saved group never flashes back to All at start.
 */
 const selectedGroup = ({ repos, discovered, view }) => filter(view.group, (group) => !discovered || repos.some((repo) => repo.group === group));
-/** The repos the selected group chip lets through, in order: the ones worth reading. */
-const reposInGroup = (scope) => match$5(selectedGroup(scope), {
-	onNone: () => scope.repos,
-	onSome: (group) => scope.repos.filter((repo) => repo.group === group)
-});
+/** Every machine a repo or a group folder is on: this machine first, then by name. */
+const machinesOf = ({ repos, settings }) => Array.from(/* @__PURE__ */ new Set([...repos.map((repo) => repo.machine), ...settings.folders.map((folder) => folder.machine)])).sort(byMachine);
 /**
-* The repos worth reading: the selected chip's; in the Current view the Current repo
-* alone, or every repo (for the Open list) when the focused folder is in none.
+* The filtered machine. One no repo or folder is on any more falls back to All, but only
+* once the repos are known, so a saved filter never flashes back to All at start.
+*/
+const selectedMachine = (scope) => filter(scope.view.machine, (machine) => !scope.discovered || machinesOf(scope).includes(machine));
+/** The repos the machine filter lets through, in order. */
+const reposOnMachine = (scope) => match$5(selectedMachine(scope), {
+	onNone: () => scope.repos,
+	onSome: (machine) => scope.repos.filter((repo) => repo.machine === machine)
+});
+/** The repos the machine filter and the group filter let through, in order. */
+const reposInGroup = (scope) => {
+	const repos = reposOnMachine(scope);
+	return match$5(selectedGroup({
+		...scope,
+		repos
+	}), {
+		onNone: () => repos,
+		onSome: (group) => repos.filter((repo) => repo.group === group)
+	});
+};
+/**
+* The repos worth reading: the selected group's; in the Current view the Current repo
+* alone, or every repo on the filtered machines (for the Open list) when the focused
+* folder is in none. None on a machine that can't be read now.
 */
 const reposToRead = (scope) => {
-	if (scope.view.show !== "current") return reposInGroup(scope);
-	return scope.current._tag === "InRepo" ? [scope.current.repo] : scope.repos;
+	return (scope.view.show !== "current" ? reposInGroup(scope) : scope.current._tag === "InRepo" ? [scope.current.repo] : reposOnMachine(scope)).filter((repo) => !scope.machines.has(repo.machine));
 };
 const chipsOf = (snapshot) => {
 	const selected = selectedGroup(snapshot);
@@ -11635,7 +12492,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		});
-		const on = spacesOnWorktrees(places, worktrees.map((w) => w.path));
+		const on = spacesOnWorktrees(places, repo.machine, worktrees.map((w) => w.path));
 		return worktrees.filter((w) => show === "open" ? on.has(w.path) : contains(kindOf(w), show)).filter((w) => matches(query, repo, w)).map((worktree) => ({
 			repo,
 			worktree,
@@ -11643,7 +12500,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 		}));
 	});
 	if (found.length === 0) {
-		const unread = repos.some((repo) => !snapshot.lists.has(repo.root));
+		const unread = repos.some((repo) => !snapshot.lists.has(repoKey(repo)));
 		const empty = match$5(query, {
 			onSome: noMatch,
 			onNone: () => FLAT_EMPTY[show]
@@ -11653,7 +12510,7 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			text: unread ? "Reading…" : empty
 		};
 	}
-	const repoCount = new Set(found.map(({ repo }) => repo.root)).size;
+	const repoCount = new Set(found.map(({ repo }) => repoKey(repo))).size;
 	return {
 		_tag: "Flat",
 		summary: show === "merged" ? some(`${found.length} merged in ${plural(repoCount, "repo")}`) : none(),
@@ -11661,13 +12518,13 @@ const flatBody = (snapshot, places, show, repos = reposInGroup(snapshot)) => {
 			const row = rowView(snapshot, repo, worktree, space);
 			return {
 				...row,
-				subline: `${lastSegment(repo.root)} · ${row.subline}`
+				subline: `${flatRepoName(snapshot, repo)} · ${row.subline}`
 			};
 		})
 	};
 };
 /**
-* The Current repo as one expanded repo of the tree, whatever the group chip. Outside
+* The Current repo as one expanded repo of the tree, whatever the group filter. Outside
 * every repo: a line saying so, over the Open view's list across all repos.
 */
 const currentBody = (snapshot, places) => {
@@ -11710,11 +12567,38 @@ const bodyOf = (snapshot, places) => {
 	};
 	return show === "repos" ? treeBody(snapshot, places) : flatBody(snapshot, places, show);
 };
+/** Machines in the filter's order: this machine first, then the others by name. */
+const byMachine = (a, b) => a === b ? 0 : a === null ? -1 : b === null ? 1 : a.localeCompare(b);
+/**
+* The machine filter's choices: All, then every machine a repo or a group folder is on.
+* None while there is only one machine, as there is nothing to filter.
+*/
+const machineFilterOf = (snapshot) => {
+	const machines = machinesOf(snapshot);
+	const selected = selectedMachine(snapshot);
+	if (machines.length < 2) return [];
+	return [{
+		label: "All",
+		machine: none(),
+		selected: isNone(selected)
+	}, ...machines.map((machine) => ({
+		label: machineName(machine),
+		machine: some(machine),
+		selected: contains(selected, machine)
+	}))];
+};
+/** The one line for a machine that can't be read now. */
+const machineLine = (machine, status) => status._tag === "Connecting" ? `${machineName(machine)}: connecting…` : `Can't reach ${machineName(machine)}: ${status.reason}`;
 /** Everything the panel draws for `snapshot`. */
-const buildView = (snapshot) => {
-	const places = localPlaces(snapshot.spaces, snapshot.panes);
+const buildView = (whole) => {
+	const snapshot = {
+		...whole,
+		repos: reposOnMachine(whole).filter((repo) => !whole.machines.has(repo.machine))
+	};
+	const places = spacePlaces(snapshot.spaces, snapshot.panes);
 	return {
-		loading: snapshot.loading,
+		spinnerTip: snapshot.loading ? some("Refreshing worktrees") : none(),
+		machineFilter: machineFilterOf(whole),
 		chips: chipsOf(snapshot),
 		views: SHOWS.map(([show, label]) => ({
 			show,
@@ -11722,7 +12606,12 @@ const buildView = (snapshot) => {
 			selected: show === snapshot.view.show
 		})),
 		toggle: snapshot.view.show === "repos" ? some(snapshot.view.only) : none(),
-		banners: [...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)), ...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`))],
+		banners: [
+			...toArray(map$3(snapshot.settingsError, (error) => `${error} — using defaults until it's fixed.`)),
+			...toArray(map$3(snapshot.discoverError, (error) => `Couldn't look for repos: ${error}`)),
+			...snapshot.missingFolders.map((folder) => `Group folder ${folder} doesn't exist, so it lists no repos.`),
+			...Array.from(snapshot.machines, ([machine, status]) => machineLine(machine, status))
+		],
 		body: bodyOf(snapshot, places)
 	};
 };
@@ -11731,16 +12620,26 @@ const buildView = (snapshot) => {
 const writeViewState = (state) => ({
 	group: getOrNull(state.group),
 	show: state.show,
-	only: state.only
+	only: state.only,
+	machine: match$5(state.machine, {
+		onNone: () => null,
+		onSome: (name) => ({ name })
+	})
 });
 const readShow = (value) => fromNullishOr(SHOWS.find(([show]) => show === value)?.[0]);
+/** A stored machine filter; anything but `{ name }` with a text or null name is All. */
+const readMachineFilter = (value) => {
+	const { name } = fields(value);
+	return name === null || isString(name) ? some(name) : none();
+};
 /** The view state kept in shared state; anything missing or unreadable is the default. */
 const readViewState = (value) => {
-	const { group, show, only } = fields(value);
+	const { group, show, only, machine } = fields(value);
 	return {
 		group: text(group),
 		show: getOrElse$1(readShow(show), () => DEFAULT_VIEW_STATE.show),
-		only: isBoolean(only) ? only : DEFAULT_VIEW_STATE.only
+		only: isBoolean(only) ? only : DEFAULT_VIEW_STATE.only,
+		machine: readMachineFilter(machine)
 	};
 };
 /** The folded repos and groups record; entries that aren't true or false are left out. */
@@ -11748,6 +12647,25 @@ const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).f
 const oneOf = (options) => (value) => fromNullishOr(options.find((option) => option === value));
 const readMode = oneOf(["squash", "keep"]);
 const readAct = oneOf(SPACE_ACTS);
+const readDialogMode = oneOf(["new", "open"]);
+/** The machine a value names; no machine named is this machine. */
+const readMachine = (value) => getOrNull(text(value));
+/** A folder, and the machine it is on. */
+const readLocated = (value) => {
+	const f = fields(value);
+	return map$3(text(f.folder), (folder) => ({
+		machine: readMachine(f.machine),
+		folder
+	}));
+};
+/** A repo: its main checkout's folder, and the machine it is on. */
+const readRepoId = (value) => {
+	const f = fields(value);
+	return map$3(text(f.root), (root) => ({
+		machine: readMachine(f.machine),
+		root
+	}));
+};
 const readClick = (value) => {
 	const f = fields(value);
 	switch (f._tag) {
@@ -11760,25 +12678,33 @@ const readClick = (value) => {
 			folder: text(f.folder)
 		}), (click) => ({
 			_tag: "New",
-			...click
+			...click,
+			machine: readMachine(f.machine)
 		}));
 		default: return none();
 	}
 };
 const readLinked = (value) => {
 	const f = fields(value);
-	return all$2({
+	return map$3(all$2({
 		main: text(f.main),
 		path: text(f.path),
 		branch: text(f.branch)
-	});
+	}), (linked) => ({
+		machine: readMachine(f.machine),
+		...linked
+	}));
 };
 const readBatch = (value) => {
 	const f = fields(value);
-	return all$2({
+	return map$3(all$2({
 		main: text(f.main),
-		branches: listOf$2(f.branches, text)
-	});
+		branches: listOf$2(f.branches, text),
+		paths: listOf$2(f.paths, text)
+	}), (batch) => ({
+		machine: readMachine(f.machine),
+		...batch
+	}));
 };
 /** An Action, as `send` posts it or a menu item carries it; none for anything else. */
 const readAction = (value) => {
@@ -11805,7 +12731,6 @@ const readAction = (value) => {
 		}));
 		case "Cleanup": return map$3(all$2({
 			batches: listOf$2(f.batches, readBatch),
-			paths: listOf$2(f.paths, text),
 			dirty: finite(f.dirty)
 		}), (cleanup) => ({
 			_tag: "Cleanup",
@@ -11822,13 +12747,26 @@ const readAction = (value) => {
 			_tag: "NewOrOpen",
 			folder
 		}));
+		case "GoTo": return map$3(all$2({
+			folder: text(f.folder),
+			name: text(f.name)
+		}), (go) => ({
+			_tag: "GoTo",
+			...go,
+			machine: readMachine(f.machine)
+		}));
+		case "NewOrOpenAt": return map$3(readLocated(f.at), (at) => ({
+			_tag: "NewOrOpenAt",
+			at
+		}));
 		case "Create": return map$3(all$2({
 			main: text(f.main),
 			name: text(f.name),
 			base: textOrNull(f.base)
 		}), (create) => ({
 			_tag: "Create",
-			...create
+			...create,
+			machine: readMachine(f.machine)
 		}));
 		case "CopyPath": return map$3(text(f.path), (path) => ({
 			_tag: "CopyPath",
@@ -11838,13 +12776,27 @@ const readAction = (value) => {
 			_tag: "Reveal",
 			path
 		}));
-		case "Hide": return map$3(text(f.root), (root) => ({
+		case "Hide": return map$3(all$2({
+			machine: textOrNull(f.machine),
+			root: text(f.root)
+		}), (repo) => ({
 			_tag: "Hide",
-			root
+			...repo
 		}));
 		case "Refresh": return some({ _tag: "Refresh" });
 		case "Settings": return some({ _tag: "Settings" });
 		case "Focus": return some({ _tag: "Focus" });
+		case "PickMachine": return f.machine === null ? some({
+			_tag: "PickMachine",
+			machine: null
+		}) : map$3(readMachineFilter(f.machine), (name) => ({
+			_tag: "PickMachine",
+			machine: { name }
+		}));
+		case "PickGroup": return map$3(textOrNull(f.group), (group) => ({
+			_tag: "PickGroup",
+			group
+		}));
 		default: return none();
 	}
 };
@@ -11863,6 +12815,7 @@ const readMenuItem = (value) => {
 	return all$2({
 		label: text(f.label),
 		danger: bool(f.danger),
+		checked: bool(f.checked),
 		action: readAction(f.action)
 	});
 };
@@ -11886,7 +12839,7 @@ const readConfirmProps = (props) => flatMap$3(readAction(fields(props).action), 
 const readTitlebarProps = (props) => {
 	const f = fields(props);
 	return {
-		title: getOrElse$1(text(f.title), () => "worktrunk"),
+		title: getOrElse$1(text(f.title), () => "Worktrunk"),
 		addr: text(f.addr)
 	};
 };
@@ -11894,9 +12847,10 @@ const readTitlebarProps = (props) => {
 const readDialogProps = (props) => {
 	const f = fields(props);
 	return {
-		repo: text(f.repo),
+		mode: getOrElse$1(readDialogMode(f.mode), () => "new"),
+		repo: readRepoId(f.repo),
 		branch: text(f.branch),
-		repos: Array.isArray(f.repos) ? f.repos.filter(isString) : []
+		repos: Array.isArray(f.repos) ? f.repos.flatMap((repo) => toArray(readRepoId(repo))) : []
 	};
 };
 /** A menu's props, for `openOverlay`; read back with `readMenuProps`. */
@@ -11917,8 +12871,9 @@ const titlebarProps = (title, addr) => ({
 	addr
 });
 /** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
-const dialogProps = ({ repo, branch, repos }) => ({
+const dialogProps = ({ mode, repo, branch, repos }) => ({
 	role: "new",
+	mode,
 	repo: getOrNull(repo),
 	branch: getOrNull(branch),
 	repos
@@ -11939,7 +12894,7 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `iangregsondev-worktrunk.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `iangregsondev-worktrunk.folded.v1`;
-/** The selected group chip, view and toggle, remembered across restarts. */
+/** The machine filter, group filter, view and toggle, remembered across restarts. */
 const VIEW_KEY = `iangregsondev-worktrunk.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `iangregsondev-sync.json`;
@@ -11947,16 +12902,18 @@ const SYNC_RECORD = `iangregsondev-sync.json`;
 const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
 const REQUEST_KEY = requestKey("iangregsondev-worktrunk");
+/** Each space's group, by space id, for the menus mod's sidebar labels. */
+const GROUPS_KEY = groupsKey("iangregsondev-worktrunk");
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
 const SCAN_EVERY = 6e5;
 const CI_EVERY = 3e5;
 /**
-* How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
-* runs out of open files when every repo's start together.
+* How many repos' CI is read at once. Each read spawns processes, and Herdr runs out of
+* open files when every repo's start together. Lists need no limit: each machine's are
+* read in one batched run.
 */
-const LIST_LIMIT = 6;
 const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
 const services = mergeAll(Shell.layer({
@@ -11965,7 +12922,8 @@ const services = mergeAll(Shell.layer({
 }), Files.layer({
 	readTextFile,
 	writeTextFile,
-	pickFolder
+	pickFolder,
+	exec
 }));
 /**
 * Runs a program at the edge. The programs never fail (load.ts turns every failure into
@@ -11986,6 +12944,8 @@ const fontSizes = () => {
 	};
 };
 const icon = (name, size, color) => svg(`mods/iangregsondev-worktrunk/${name}.svg`).size(size).flex_none().text_color(color);
+/** `el` with a hover label, announced the same way to a screen reader. */
+const labelled = (el, text) => el.tooltip(text).accessibility_label(text);
 const dot = (color, size, hollow) => hollow ? div().w(size).h(size).flex_none().rounded_full().border(1.5).border_color(color) : div().w(size).h(size).flex_none().rounded_full().bg(color);
 const BUTTON_COLORS = {
 	plain: (t) => [t.raised, t.foreground],
@@ -12004,11 +12964,8 @@ const toneColor = (t, tone) => ({
 	conflict: t.blocked
 })[tone];
 const onClickRow = (click) => {
-	if (click._tag === "Select") run("space.select", { id: click.space });
-	else run("space.new", {
-		name: click.name,
-		folder: click.folder
-	});
+	const { command, args } = clickCommand(click);
+	run(command, args);
 };
 const toggleFold = (key) => {
 	const folded = readFolded(shared(FOLDED_KEY));
@@ -12017,13 +12974,20 @@ const toggleFold = (key) => {
 		[key]: !folded[key]
 	});
 };
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = (read) => exit(read).pipe(map(match$1({
-	onSuccess: (answer) => answer,
-	onFailure: (cause) => fail$2(pretty(cause))
-})));
-/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
-const readAll = (roots, limit, read, keep) => runEdge(readEach(roots, limit, (root) => defectAsFailure(read(root)), keep), () => void 0);
+/**
+* Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+* code that keeps the answers), as a toast: the read never stops silently.
+*/
+const showDefect = (what) => (body) => notify({
+	title: `Couldn't read ${what}`,
+	body,
+	level: "error"
+});
+/**
+* Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
+* under the repo's `repoKey`.
+*/
+const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsReason(read(repo)), (repo, answer) => keep(repoKey(repo), answer)), showDefect("CI"));
 const viewState = () => readViewState(shared(VIEW_KEY));
 const setView = (change) => setShared(VIEW_KEY, writeViewState({
 	...viewState(),
@@ -12038,21 +13002,37 @@ const ciIcon = (t, badge) => {
 		case "unknown": return ["help", t.muted];
 	}
 };
+/** One warning toast for each thing that went wrong around the job `title`. */
+const jobProblems = (title, problems) => problems.forEach((body) => notify({
+	title,
+	body,
+	level: "warning"
+}));
 /** Defers work out of `render`, which may not notify. */
 const later = (cx, fn) => cx.spawn(async (cx) => {
 	await cx.sleep(0);
 	fn(cx);
 });
-/** Shows one toast when Herdr has moved past the version the sync record names. */
+/**
+* Shows one toast when Herdr has moved past the version the sync record names, or says
+* the record couldn't be read (not marked as told, so a readable record still toasts).
+*/
 const checkSync = async () => {
 	const installed = updates().app.version;
-	const toast = await runEdge(syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)), () => none());
-	map$3(toast, (notice) => {
-		setShared(SYNC_TOLD_KEY, installed);
-		notify({
-			...notice,
+	const toast = await runEdge(syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)), fail$2);
+	match$4(toast, {
+		onFailure: (body) => notify({
+			title: "Couldn't check for herdr:sync",
+			body,
 			level: "warning"
-		});
+		}),
+		onSuccess: map$3((notice) => {
+			setShared(SYNC_TOLD_KEY, installed);
+			notify({
+				...notice,
+				level: "warning"
+			});
+		})
 	});
 };
 /** This copy's props: the layout block's or the overlay's, `overlay` added for an overlay. */
@@ -12125,13 +13105,19 @@ var Worktrunk = class extends View {
 	copy = { _tag: "Panel" };
 	settings = DEFAULT_SETTINGS;
 	settingsError = none();
-	/** The last folder scan's repos, and what and when it scanned. */
+	/** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
 	scanned = none();
+	/** Each machine's latest search, which the repos are found from. */
+	searches = /* @__PURE__ */ new Map();
+	/** The machines whose refresh is still running: a new refresh runs nothing there. */
+	refreshing = /* @__PURE__ */ new Set();
 	lastScan = none();
 	repos = [];
 	discovered = false;
 	discoverError = none();
 	lists = /* @__PURE__ */ new Map();
+	/** The machines that can't be read now, and why; their repos aren't listed or read. */
+	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
 	reads = NO_READS;
 	ci = /* @__PURE__ */ new Map();
@@ -12201,16 +13187,19 @@ var Worktrunk = class extends View {
 		}
 	}
 	/**
-	* Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
-	* offering the branch that folder is on as a base. Outside every repo, the dialog asks
-	* for one of the repos the panel lists.
+	* Opens the worktree dialog in `mode` for the repo `folder` is in, on its machine (none:
+	* the focused folder), offering the branch that folder is on as a base. Outside every
+	* repo, the dialog asks for one of the repos the panel lists, on any machine.
 	*/
-	openNewOrOpen(cx, folder) {
-		const places = localPlaces(spaces(), panes());
-		const at = folder ?? getOrElse$1(focusedFolder(focused(), places), () => "");
-		const listed = this.repos.map((repo) => repo.root);
+	openNewOrOpen(cx, folder, mode = "new") {
+		const places = spacePlaces(spaces(), panes());
+		const at = getOrElse$1(folder, () => focusedOrHere(focused(), places));
+		const listed = this.repos.map(({ machine, root }) => ({
+			machine,
+			root
+		}));
 		cx.spawn(async () => {
-			const opened = await runEdge(dialogFor(at, listed), fail$2);
+			const opened = await runEdge(dialogFor(at, listed, mode), fail$2);
 			match$4(opened, {
 				onSuccess: (props) => match$5(props, {
 					onNone: () => notify({
@@ -12275,7 +13264,7 @@ var Worktrunk = class extends View {
 	}
 	/** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
 	newInput(dialog, state) {
-		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link" });
+		const input = InputState.new({ placeholder: dialogCopy(state).placeholder });
 		input.on("change", (_event, cx) => {
 			dialog().state = retyped(dialog().state);
 			cx.notify();
@@ -12306,7 +13295,7 @@ var Worktrunk = class extends View {
 			case "ReadRepo":
 				dialog.state = picked.state;
 				dialog.input = this.newInput(() => dialog, picked.state);
-				this.readDialogRepo(cx, dialog, picked.root);
+				this.readDialogRepo(cx, dialog, picked.repo);
 				cx.notify();
 				return;
 			case "Send":
@@ -12328,6 +13317,9 @@ var Worktrunk = class extends View {
 			broken: parsed.error,
 			names: [],
 			skip,
+			machine: none(),
+			typed: InputState.new({ placeholder: "~/code" }),
+			checking: false,
 			note: ""
 		};
 		this.nameFields(draft);
@@ -12369,10 +13361,35 @@ var Worktrunk = class extends View {
 		});
 	}
 	/**
+	* Adds the typed folder on the picked machine once a check there finds it. A folder
+	* that isn't there, or a check that can't run, is the dialog's note; nothing is added.
+	*/
+	addTypedFolder(cx, draft, machine) {
+		if (draft.checking) return;
+		draft.checking = true;
+		draft.note = "";
+		const settings = this.drafted(draft);
+		cx.spawn(async (cx) => {
+			const added = await runEdge(addGroupFolderOn(settings, machine, draft.typed.value()), fail$2);
+			draft.checking = false;
+			match$4(added, {
+				onSuccess: (next) => {
+					this.editDraft(draft, () => next);
+					draft.typed.set_value("");
+				},
+				onFailure: (reason) => {
+					draft.note = reason;
+				}
+			});
+			cx.notify();
+		});
+	}
+	/**
 	* Saves the draft, never over a hand edit made since the dialog opened; then the panel
 	* reads everything again and the dialog closes. A save that didn't happen says why.
 	*/
 	saveSettings(cx, draft) {
+		if (draft.checking) return;
 		const settings = this.drafted(draft);
 		cx.spawn(async (cx) => {
 			const saved = await runEdge(saveSettings(settingsFile(), draft.opened, settings), fail$2);
@@ -12417,7 +13434,10 @@ var Worktrunk = class extends View {
 			case "Refresh": return this.refreshWithCi(cx, { scan: true });
 			case "Hide":
 				cx.spawn(async (cx) => {
-					const hid = await runEdge(hideInSettings(settingsFile(), action.root), fail$2);
+					const hid = await runEdge(hideInSettings(settingsFile(), {
+						machine: action.machine,
+						root: action.root
+					}), fail$2);
 					match$4(hid, {
 						onSuccess: () => void 0,
 						onFailure: (body) => notify({
@@ -12429,12 +13449,19 @@ var Worktrunk = class extends View {
 					this.refresh(cx, { scan: false });
 				});
 				return;
-			case "NewOrOpen": return this.openNewOrOpen(cx, action.folder);
+			case "NewOrOpen": return this.openNewOrOpen(cx, map$3(fromNullishOr(action.folder), (folder) => ({
+				machine: null,
+				folder
+			})));
+			case "GoTo": return onClickRow(goTo(spacePlaces(spaces(), panes()), action));
+			case "NewOrOpenAt": return this.openNewOrOpen(cx, some(action.at));
 			case "SpaceWorktree": return this.forSpace(cx, action.space, action.act);
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
 				return;
-			case "Create": return this.createWorktree(cx, action.main, action.name, action.base);
+			case "PickMachine": return setView({ machine: map$3(fromNullishOr(action.machine), ({ name }) => name) });
+			case "PickGroup": return setView({ group: fromNullishOr(action.group) });
+			case "Create": return this.createWorktree(cx, action);
 			case "Settings":
 				cx.spawn(async () => {
 					const text = await runEdge(settingsText(settingsFile()), fail$2);
@@ -12455,7 +13482,7 @@ var Worktrunk = class extends View {
 					});
 				});
 				return;
-			default: map$3(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
+			default: this.runJobs(cx, jobsFor(action, this.settings));
 		}
 	}
 	/**
@@ -12468,17 +13495,18 @@ var Worktrunk = class extends View {
 			body,
 			level: "warning"
 		});
-		const found = placeOf(localPlaces(spaces(), panes()), space);
-		if (isNone(found)) return warn("That space has no folder on this machine.");
-		const place = found.value;
-		if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
-		cx.spawn(async () => {
-			const asked = await runEdge(spaceWorktree(act, place), fail$2);
-			match$4(asked, {
-				onSuccess: ask,
-				onFailure: warn
+		const step = spaceStep(spacePlaces(spaces(), panes()), space, act);
+		switch (step._tag) {
+			case "NoFolder": return warn("That space has no folder.");
+			case "Dialog": return this.openNewOrOpen(cx, some(step.at), step.mode);
+			case "Act": cx.spawn(async () => {
+				const asked = await runEdge(spaceWorktree(step.act, step.at), fail$2);
+				match$4(asked, {
+					onSuccess: ask,
+					onFailure: warn
+				});
 			});
-		});
+		}
 	}
 	/** Busy with another job: says so and gives true. */
 	busy() {
@@ -12493,67 +13521,80 @@ var Worktrunk = class extends View {
 			}
 		});
 	}
-	/** What every job does once it has ended: say why it never started, or close spaces. */
-	jobEnded(cx, title, outcome) {
+	/**
+	* What every job does once it has ended: say why it never started, or close the spaces
+	* on its removed folders (on its machine) and say what went wrong around it.
+	*/
+	jobEnded(title, machine, outcome) {
 		if (outcome._tag === "NotStarted") notify({
 			title: `Couldn't start: ${title}`,
 			body: outcome.reason,
 			level: "error"
 		});
-		else spacesInGone(spaces(), panes(), outcome.gone).forEach((id) => run("space.close", {
-			id,
-			confirmed: true
-		}));
+		else {
+			spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) => run("space.close", {
+				id,
+				confirmed: true
+			}));
+			jobProblems(title, outcome.problems);
+		}
+	}
+	/** No job runs any more: the panel says so and reads the list again. */
+	jobsDone(cx) {
 		this.job = none();
 		cx.notify();
 		this.refresh(cx, { scan: false });
 	}
 	/**
-	* Runs `spec` as a terminal job in a floating window, one job at a time. The window
-	* closes when the job ends; a failed job waits for Enter first, so it stays open with
-	* its exit code. Then spaces on removed folders close and the list is read again.
+	* Runs `specs` one after another as terminal jobs, each in a floating window on its
+	* machine, one job at a time. A window closes when its job ends; a failed job waits
+	* for Enter first, so it stays open with its exit code. After each, spaces on its
+	* removed folders close; after the last, the list is read again.
 	*/
-	runJob(cx, spec) {
-		if (this.busy()) return;
-		this.job = some(spec.title);
+	runJobs(cx, specs) {
+		const [first] = specs;
+		if (first === void 0 || this.busy()) return;
+		this.job = some(first.title);
 		cx.notify();
 		cx.spawn(async (cx) => {
-			const outcome = await runEdge(runJob(spec, (addr) => openJobWindow(spec.title, addr)), (defect) => ({
-				_tag: "NotStarted",
-				reason: defect
-			}));
-			this.jobEnded(cx, spec.title, outcome);
+			for (const spec of specs) {
+				this.job = some(spec.title);
+				cx.notify();
+				const outcome = await runEdge(runJob(spec, (addr) => openJobWindow(spec.title, addr)), (defect) => ({
+					_tag: "NotStarted",
+					reason: defect
+				}));
+				this.jobEnded(spec.title, spec.on, outcome);
+			}
+			this.jobsDone(cx);
 		});
 	}
 	/**
-	* Switches to or creates the worktree for `name` as a job, then opens a space on it, or
-	* selects the one already there.
+	* Switches to or creates the worktree `create` asks for as a job on its repo's machine,
+	* then opens a space on it there, or selects the one already there.
 	*/
-	createWorktree(cx, main, name, base) {
+	createWorktree(cx, create) {
 		if (this.busy()) return;
-		const title = `Open or create ${name}`;
+		const title = `Open or create ${create.name}`;
 		this.job = some(title);
 		cx.notify();
 		cx.spawn(async (cx) => {
-			const made = await runEdge(newWorktree({
-				main,
-				name,
-				base
-			}, (addr) => openJobWindow(title, addr)), (defect) => ({
+			const made = await runEdge(newWorktree(create, (addr) => openJobWindow(title, addr)), (defect) => ({
 				outcome: {
 					_tag: "NotStarted",
 					reason: defect
 				},
-				switched: none()
+				switched: none(),
+				problems: []
 			}));
-			map$3(made.switched, ({ branch, path }) => match$5(fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)), {
-				onSome: (on) => run("space.select", { id: on.id }),
-				onNone: () => run("space.new", {
-					name: branch,
-					folder: path
-				})
-			}));
-			this.jobEnded(cx, title, made.outcome);
+			jobProblems(title, made.problems);
+			map$3(made.switched, ({ branch, path }) => onClickRow(goTo(spacePlaces(spaces(), panes()), {
+				machine: create.machine,
+				folder: path,
+				name: branch
+			})));
+			this.jobEnded(title, create.machine, made.outcome);
+			this.jobsDone(cx);
 		});
 	}
 	/** The repos the view shows: the only ones worth reading. */
@@ -12563,20 +13604,24 @@ var Worktrunk = class extends View {
 			discovered: this.discovered,
 			settings: this.settings,
 			view: viewState(),
-			current: this.currentRepo()
-		}).map((repo) => repo.root);
+			current: this.currentRepo(),
+			machines: this.machineStatus
+		});
 	}
 	/** The Current repo, with its group; Looking while it is first being looked up. */
 	currentRepo() {
-		return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+		return currentRepoOf(this.follow.found, this.repos, this.settings.folders, match$5(this.scanned, {
+			onNone: () => /* @__PURE__ */ new Map([[null, home()]]),
+			onSome: (scanned) => scanned.homes
+		}));
 	}
 	/**
 	* While the Current view shows, looks up the focused folder's repo whenever the folder
 	* changes. Herdr renders on every focus change, so this never polls.
 	*/
 	followFocus(cx, following) {
-		const places = localPlaces(spaces(), panes());
-		const folder = getOrElse$1(focusedFolder(focused(), places), () => "");
+		const places = spacePlaces(spaces(), panes());
+		const folder = focusedOrHere(focused(), places);
 		const step = followFocus(this.follow, {
 			following,
 			folder
@@ -12584,7 +13629,7 @@ var Worktrunk = class extends View {
 		this.follow = step.follow;
 		map$3(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
 	}
-	/** Looks up the repo of `folder`; a new Current repo is read at once. */
+	/** Looks up the repo of `folder`, on its machine; a new Current repo is read at once. */
 	lookUpCurrent(cx, folder) {
 		cx.spawn(async (cx) => {
 			const answer = await runEdge(lookUpCurrent(folder), fail$2);
@@ -12600,9 +13645,9 @@ var Worktrunk = class extends View {
 		this.checking = true;
 		this.ciAt = some(Date.now());
 		cx.spawn(async (cx) => {
-			await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
-				const old = fromNullishOr(this.ci.get(root));
-				this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+			await readAll(this.reposToRead(), CI_LIMIT, readCi, (key, read) => {
+				const old = fromNullishOr(this.ci.get(key));
+				this.ci = new Map([...this.ci, [key, foldCi(old, read)]]);
 				cx.notify();
 			});
 			this.checking = false;
@@ -12626,7 +13671,10 @@ var Worktrunk = class extends View {
 			if (isSome(done.again)) this.refresh(cx, done.again.value);
 		});
 	}
-	/** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+	/**
+	* One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+	* the machines side by side. It ends when this machine's part does.
+	*/
 	async load(cx, { scan }) {
 		const settled = shared(IMPORTED_KEY) === true;
 		const loaded = await runEdge(loadSettings({
@@ -12638,42 +13686,95 @@ var Worktrunk = class extends View {
 				settings: DEFAULT_SETTINGS,
 				error: some(`${SETTINGS_FILE}: ${defect}`)
 			},
-			settled
+			settled,
+			leftover: none()
 		}));
 		if (loaded.settled && !settled) setShared(IMPORTED_KEY, true);
+		map$3(loaded.leftover, (body) => notify({
+			title: "Old settings file left behind",
+			body,
+			level: "warning"
+		}));
 		this.settings = loaded.parsed.settings;
 		this.settingsError = loaded.parsed.error;
 		const now = Date.now();
-		const key = JSON.stringify(scanArgs(this.settings, home()));
+		const key = scanKey(this.settings);
 		const due = scanDue(this.lastScan, {
 			forced: scan,
 			key,
 			now,
 			every: SCAN_EVERY
 		});
-		const places = localPlaces(spaces(), panes()).map((p) => p.place);
-		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess))), fail$2);
-		if (isSuccess(found)) {
-			this.repos = found.success.repos;
-			this.scanned = some(found.success.scanned);
-			if (due) this.lastScan = some({
-				key,
-				at: now
+		const places = spacePlaces(spaces(), panes()).map((p) => ({
+			machine: p.machine,
+			folder: p.place
+		}));
+		const current = flatten$1(flatMap$3(this.follow.found, getSuccess));
+		const ask = {
+			settings: this.settings,
+			home: home(),
+			places,
+			last: this.searches,
+			rescan: due,
+			states: machineStates(machines()),
+			busy: this.refreshing
+		};
+		const started = machinesOf$1(this.settings, places).filter((machine) => !this.refreshing.has(machine));
+		this.refreshing = /* @__PURE__ */ new Set([...this.refreshing, ...started]);
+		await new Promise((done) => {
+			if (!started.includes(null)) done();
+			cx.spawn(async (cx) => {
+				await runEdge(refreshMachines(ask, (machine, search) => {
+					const landed = landSearch({
+						searches: this.searches,
+						error: this.discoverError,
+						statuses: this.machineStatus
+					}, machine, search);
+					this.searches = landed.searches;
+					this.discoverError = landed.error;
+					this.machineStatus = landed.statuses;
+					if (due && machine === null && isSuccess(search)) this.lastScan = some({
+						key,
+						at: now
+					});
+					const found = foundOf(this.settings, ask.home, places, this.searches, current);
+					this.repos = found.repos;
+					this.scanned = some(found.scanned);
+					this.discovered = true;
+					cx.notify();
+					return this.reposToRead();
+				}, (machine, answer) => {
+					const kept = keepLists({
+						lists: this.lists,
+						machines: this.machineStatus
+					}, machine, answer);
+					this.lists = kept.lists;
+					this.machineStatus = kept.machines;
+					cx.notify();
+				}, (machine) => {
+					this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+					if (machine === null) done();
+				}), showDefect("the repos"));
+				this.discovered = true;
+				cx.notify();
+				done();
 			});
-			this.discoverError = none();
-		} else this.discoverError = some(found.failure);
-		this.discovered = true;
-		cx.notify();
-		await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
-			const old = fromNullishOr(this.lists.get(root));
-			this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
-			cx.notify();
 		});
 	}
 	/** Reads CI again with the next refresh, which `ask` starts. */
 	refreshWithCi(cx, ask) {
 		this.ciAt = none();
 		this.refresh(cx, ask);
+	}
+	/**
+	* Publishes each space's group, on every machine, for the sidebar's labels. Only once
+	* repos are found, so a start doesn't clear the labels, and only when it changed: every
+	* mod renders again on a shared-state change.
+	*/
+	publishGroups() {
+		if (!this.discovered) return;
+		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
+		if (groupsChanged(groups, shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
 	}
 	render(cx) {
 		const style = {
@@ -12700,6 +13801,7 @@ var Worktrunk = class extends View {
 		if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
 		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
 		this.followFocus(cx, shown() && state.show === "current");
+		this.publishGroups();
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,
@@ -12708,6 +13810,11 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			settingsError: this.settingsError,
 			discoverError: this.discoverError,
+			missingFolders: match$5(this.scanned, {
+				onNone: () => [],
+				onSome: (scan) => scan.missing
+			}),
+			machines: this.machineStatus,
 			settingsFile: SETTINGS_FILE,
 			spaces: spaces(),
 			panes: panes(),
@@ -12719,14 +13826,15 @@ var Worktrunk = class extends View {
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
-		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("new", "plus", () => send({
+		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk")).children(toArray(view.spinnerTip).map((tip) => labelled(div().flex_none().child(icon("ring", 13, t.muted).spin(900)), tip))).child(iconButton("new", "plus", () => send({
 			_tag: "NewOrOpen",
 			folder: null
 		}))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
 		return v_flex().id("worktrunk").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(sizes.body).child(header).children(view.banners.map((text) => div().px(12).py(6).bg(t.selected).text_size(sizes.label).text_color(t.blocked).child(text))).child(this.renderControls(style, view)).child(div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(this.renderBody(style, view.body))).children(this.renderFooter(style));
 	}
-	worktreesOf(root) {
-		return match$5(fromNullishOr(this.lists.get(root)), {
+	/** The worktrees of the repo kept under `key` (its `repoKey`). */
+	worktreesOf(key) {
+		return match$5(fromNullishOr(this.lists.get(key)), {
 			onNone: () => [],
 			onSome: (list) => list.worktrees
 		});
@@ -12736,10 +13844,15 @@ var Worktrunk = class extends View {
 		return toArray(this.job).map((title) => h_flex().id("footer").h(36).flex_none().px(12).gap(8).items_center().border_t(1).border_color(t.border).text_size(sizes.label).child(icon("ring", 13, t.working).spin(900)).child(div().min_w(0).truncate().text_color(t.muted).child(`Running: ${title}`)));
 	}
 	openRowMenu(row) {
-		map$3(findWorktree(this.lists, row.key), ({ root, worktree }) => openMenu(row.label, rowMenu(root, worktree, row.click)));
+		map$3(findWorktree(this.lists, row.key), ({ machine, root, worktree }) => openMenu(row.label, rowMenu({
+			machine,
+			root
+		}, worktree, row.click)));
 	}
-	openRepoMenu(root) {
-		openMenu(lastSegment(root), repoMenu(root, this.worktreesOf(root)));
+	/** The menu of the repo kept under `key` (its `repoKey`). */
+	openRepoMenu(key) {
+		const repo = repoOfKey(key);
+		openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
 	}
 	renderOverlay(style, copy) {
 		const p = ownProps();
@@ -12773,7 +13886,7 @@ var Worktrunk = class extends View {
 				cx.notify();
 			} else if (e.key === "enter") choose(items[menu.selected]);
 			else if (e.key === "escape") closeSelf();
-		}).child(div().h(28).px(8).flex().items_center().truncate().text_size(sizes.label).text_color(t.muted).child(title)).children(items.map((item, i) => h_flex().id(`item-${i}`).h(30).flex_none().px(8).items_center().rounded(6).cursor_pointer().text_color(item.danger ? t.ansi1 : t.foreground).when(i === menu.selected, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click(() => choose(item)).child(item.label))));
+		}).child(div().h(28).px(8).flex().items_center().truncate().text_size(sizes.label).text_color(t.muted).child(title)).children(items.map((item, i) => h_flex().id(`item-${i}`).h(30).flex_none().px(8).items_center().rounded(6).cursor_pointer().text_color(item.danger ? t.ansi1 : t.foreground).when(i === menu.selected, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click(() => choose(item)).child(div().flex_1().min_w(0).truncate().child(item.label)).when(item.checked, (el) => el.child(icon("check", 13, t.accent))))));
 	}
 	renderConfirm({ t, sizes }, { confirm, action }) {
 		const go = () => {
@@ -12795,14 +13908,12 @@ var Worktrunk = class extends View {
 		const lines = linesFor(state, dialog.input.value());
 		const at = highlight(state, lines);
 		const picking = isNone(state.repo);
-		const title = match$5(state.repo, {
-			onNone: () => "New or open worktree: pick a repo",
-			onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`
-		});
+		const copy = dialogCopy(state);
+		const title = dialogTitle(state);
 		const describe = (line) => {
 			switch (line._tag) {
-				case "Repo": return [lastSegment(line.root), tildePath(line.root, home())];
-				case "Worktree": return [line.branch, "open worktree"];
+				case "Repo": return [lastSegment(line.repo.root), repoHint(line.repo, home())];
+				case "Worktree": return [line.branch, copy.worktreeHint(line.path)];
 				case "Branch": return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
 				case "Typed": return [line.name, line.shortcut ? "ask wt" : "new branch"];
 			}
@@ -12811,7 +13922,6 @@ var Worktrunk = class extends View {
 			const [label, hint] = describe(line);
 			return h_flex().id(`line-${i}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer().when(i === at, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pickNew(cx, dialog, some(line))).child(line._tag === "Typed" && !line.shortcut ? icon("plus", 12, t.accent) : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree")).child(div().flex_none().max_w(300).truncate().child(label)).child(div().flex_1()).child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint));
 		};
-		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : "Type a branch name to create it.";
 		const baseOption = (key, label) => h_flex().id(`base-${key}`).h(24).px(9).when(key === "default", (el) => el.flex_none()).min_w(0).items_center().rounded(12).cursor_pointer().border_1().border_color(state.base === key ? t.accent : t.border).bg(state.base === key ? t.selected : t.popover).text_size(sizes.label).text_color(state.base === key ? t.foreground : t.muted).on_click((_e, cx) => {
 			if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
 			cx.notify();
@@ -12824,7 +13934,7 @@ var Worktrunk = class extends View {
 			else return;
 			cx.stop_propagation();
 			cx.notify();
-		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
+		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(copy.offersBase, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)));
 	}
 	/**
 	* The Settings dialog: group folders (name, order, remove, add), the scan's depth and
@@ -12846,10 +13956,24 @@ var Worktrunk = class extends View {
 		};
 		const heading = (text, hint) => v_flex().pt(6).gap(2).child(div().font_semibold().child(text)).child(div().text_size(sizes.label).text_color(t.muted).child(hint));
 		const hint = (text) => div().text_size(sizes.small).text_color(t.muted).child(text);
-		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.path)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
-		const hidden = settings.hidden.map((root, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(tildePath(root, home()))).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, root)))));
+		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(locatedLabel({
+			machine: folder.machine,
+			folder: folder.path
+		}))).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
+		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repoHint(repo, home()))).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
+		const others = otherMachines(machines());
+		const machineChips = others.map((machine) => {
+			const on = contains(draft.machine, machine);
+			return h_flex().id(`machine-${machine}`).h(24).px(9).flex_none().items_center().rounded(12).cursor_pointer().border_1().border_color(on ? t.accent : t.border).bg(on ? t.selected : t.input).text_size(sizes.label).text_color(on ? t.foreground : t.muted).hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
+				draft.machine = some(machine);
+				cx.notify();
+			}).child(machine);
+		});
 		const check = div().size(16).flex_none().rounded(4).border_1().border_color(settings.noWrapper ? t.accent : t.border).bg(settings.noWrapper ? t.accent : t.input);
-		const body = v_flex().gap(8).pr(6).child(heading("Groups", "Each folder is scanned for repos and names a group, in this order.")).children(folders).when(folders.length === 0, (el) => el.child(hint("No group folders yet."))).child(h_flex().child(button(t, "add-folder", "Add folder…", "plain", (_e, cx) => this.pickGroupFolder(cx, draft)))).child(heading("Scan", "How deep to look for repos, and folder names never to enter.")).child(h_flex().gap(6).items_center().child(div().w(150).flex_none().child("Depth")).child(small("depth-less", "−", edit((s) => ({
+		const body = v_flex().gap(8).pr(6).child(heading("Groups", "Each folder is scanned for repos and names a group, in this order.")).children(folders).when(folders.length === 0, (el) => el.child(hint("No group folders yet."))).child(h_flex().child(button(t, "add-folder", "Add folder on this machine…", "plain", (_e, cx) => this.pickGroupFolder(cx, draft)))).when(others.length > 0, (el) => el.child(hint("Or pick another machine, type the folder's path there (~ is its home) and add it.")).child(h_flex().gap(6).flex_wrap().children(machineChips)).child(h_flex().gap(6).items_center().child(field(draft.typed, none())).child(match$5(draft.machine, {
+			onNone: () => hint("Pick a machine first"),
+			onSome: (machine) => button(t, "add-typed", draft.checking ? `Checking on ${machine}…` : `Add on ${machine}`, "plain", (_e, cx) => this.addTypedFolder(cx, draft, machine))
+		})))).child(heading("Scan", "How deep to look for repos, and folder names never to enter.")).child(h_flex().gap(6).items_center().child(div().w(150).flex_none().child("Depth")).child(small("depth-less", "−", edit((s) => ({
 			...s,
 			depth: Math.max(1, s.depth - 1)
 		})))).child(div().w(20).flex_none().text_center().child(String(settings.depth))).child(small("depth-more", "+", edit((s) => ({
@@ -12879,12 +14003,15 @@ var Worktrunk = class extends View {
 		})));
 		return h_flex().id("titlebar").size_full().px(12).gap(8).items_center().bg(t.chrome).border_b(1).border_color(t.border).text_size(sizes.label).child(icon("git", 14, t.accent)).child(div().flex_1().min_w(0).truncate().font_semibold().child(title)).child(div().text_color(t.dim).child("drag to move")).child(div().id("stop").px(10).py(3).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(addr, stop)).child("Stop"));
 	}
-	/** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
+	/**
+	* The machine and group dropdowns on one row (the machine one only with more than one
+	* machine), the view picker, the search box and the All repos / With worktrees toggle.
+	*/
 	renderControls({ t, sizes }, view) {
-		const chip = (id, label, on, onClick) => h_flex().id(id).h(24).px(9).flex_none().items_center().rounded(12).cursor_pointer().border_1().border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).hover((s) => s.text_color(t.foreground)).on_click(onClick).child(label);
+		const dropdown = (id, title, items) => h_flex().id(id).flex_1().min_w(0).h(26).px(9).gap(6).items_center().rounded(6).cursor_pointer().border_1().border_color(t.border).bg(t.chrome).text_size(sizes.label).text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click(() => openMenu(title, items)).child(div().flex_1().min_w(0).truncate().child(filterButton(items))).child(icon("chevron-down", 12, t.muted));
 		const segment = (id, options, onPick) => h_flex().id(id).w_full().p(2).gap(2).rounded(8).bg(t.chrome).border_1().border_color(t.border).children(options.map(({ key, label, on }) => h_flex().id(`${id}-${key}`).flex_1().min_w(0).h(24).justify_center().items_center().rounded(6).bg(on ? t.raised : t.chrome).text_size(sizes.label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => onPick(key)).child(div().truncate().child(label))));
 		const search = h_flex().flex_1().min_w(0).h(28).px(8).gap(6).items_center().rounded(6).border_1().border_color(t.border).bg(t.chrome).child(icon("search", 13, t.muted)).children(toArray(this.searchBox).map((box) => Input.new(box).flex_1().min_w(0).h_full().text_size(sizes.small).text_color(t.foreground)));
-		return v_flex().flex_none().px(12).py(8).gap(7).border_b(1).border_color(t.border).child(h_flex().flex_wrap().gap(5).items_center().children(view.chips.map((c) => chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group }))))).child(segment("show", view.views.map((v) => ({
+		return v_flex().flex_none().px(12).py(8).gap(7).border_b(1).border_color(t.border).child(h_flex().gap(6).items_center().when(view.machineFilter.length > 0, (el) => el.child(dropdown("machine", "Machine", machineMenu(view.machineFilter)))).child(dropdown("group", "Group", groupMenu(view.chips)))).child(segment("show", view.views.map((v) => ({
 			key: v.show,
 			label: v.label,
 			on: v.selected
@@ -12904,18 +14031,18 @@ var Worktrunk = class extends View {
 			case "Message": return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
 			case "NotInRepo": return v_flex().child(div().px(14).pt(12).text_size(sizes.small).font_semibold().text_color(t.muted).child(body.text)).child(this.renderBody(style, body.open));
 			case "Tree": return v_flex().pb(16).children(body.repos.map((repo) => this.renderRepo(style, repo)));
-			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${action.paths.length}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
+			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${cleanupCount(action)}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
 		}
 	}
 	/** The tab-bar button: shows and hides the panel's block. */
 	renderToggle({ t, sizes }) {
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
 		const on = exists(block, (b) => !b.hidden);
-		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("worktrunk"));
+		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("Worktrunk"));
 	}
 	renderRepo({ t, sizes }, repo) {
-		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
-			root: repo.key,
+		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.machine).map((machine) => div().flex_none().px(6).rounded(4).border(1).border_color(t.border).text_size(sizes.label - 1).text_color(t.muted).child(machine))).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
+			...repoOfKey(repo.key),
 			worktrees: this.worktreesOf(repo.key)
 		}])).map((action) => div().id(`cleanup-${repo.key}`).flex_none().px(6).rounded(4).text_size(sizes.label).text_color(t.done).hover((s) => s.bg(t.raised)).on_click((_event, cx) => {
 			cx.stop_propagation();
@@ -12939,11 +14066,17 @@ var Worktrunk = class extends View {
 		return v_flex().child(h_flex().id(`group-${section.key}`).min_h(26).pl(18).pr(10).pt(6).gap(6).items_center().cursor_pointer().on_click(() => toggleFold(section.key)).child(icon(section.folded ? "chevron-right" : "chevron-down", 12, color)).child(div().flex_1().text_size(sizes.label).font_semibold().text_color(color).child(`${section.label} · ${section.count}`))).children(section.rows.map((row) => this.renderRow(style, row)));
 	}
 	renderRow({ t, sizes }, row) {
-		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(dot(toneColor(t, row.tone), 8, row.hollow)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).when(row.dirty, (el) => el.child(dot(t.blocked, 6, false)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(row.ci).map((badge) => {
+		return h_flex().id(`row-${row.key}`).min_h(40).mx(6).pl(22).pr(8).py(4).gap(9).items_center().rounded(7).cursor_pointer().when(row.current, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click(() => onClickRow(row.click)).on_mouse_down("right", () => this.openRowMenu(row)).child(labelled(dot(toneColor(t, row.tone), 8, row.hollow), row.tips.dot)).child(v_flex().flex_1().min_w(0).child(h_flex().gap(6).items_center().child(div().min_w(0).truncate().font_medium().child(row.label)).children(toArray(row.badge).map((word) => {
+			const badge = div().flex_none().px(5).rounded(4).bg(t.hover).text_size(sizes.label).text_color(t.working).child(word);
+			return match$5(row.tips.badge, {
+				onNone: () => badge,
+				onSome: (tip) => labelled(badge, tip)
+			});
+		})).children(toArray(row.tips.dirty).map((tip) => labelled(dot(t.blocked, 6, false), tip)))).child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline))).children(toArray(zipWith(row.ci, row.tips.ci, (badge, tip) => [badge, tip])).map(([badge, tip]) => {
 			const [name, color] = ciIcon(t, badge);
 			const drawn = icon(name, 13, badge.stale ? t.dim : color);
-			return badge.status === "running" ? drawn.spin(1200) : drawn;
-		})).when(row.open, (el) => el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")));
+			return labelled(div().flex_none().child(badge.status === "running" ? drawn.spin(1200) : drawn), tip);
+		})).children(toArray(row.tips.open).map((tip) => labelled(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open"), tip)));
 	}
 };
 

@@ -2,6 +2,7 @@
 // imports. The folder scan and the open spaces' repos are found by shell scripts; this
 // module reads their output.
 import { Option } from "effect";
+import { repoKey, type Homes, type Machine, type RepoId } from "./machines.ts";
 import { expandHome, lastSegment, type GroupFolder } from "./settings.ts";
 
 export { expandHome };
@@ -13,10 +14,31 @@ export const isUnder = (path: string, root: string): boolean =>
 /** The group of a repo inside no group folder. */
 export const OTHER = "Other";
 
-/** The repo's group: the deepest group folder that holds it, else Other. */
-export const groupOf = (root: string, folders: readonly GroupFolder[], home: string): string =>
+/**
+ * The folder `folder` names on its machine: `~` is that machine's home in `homes`. None
+ * for a `~` folder whose machine's home isn't known.
+ */
+export const folderOn = (folder: GroupFolder, homes: Homes): Option.Option<string> =>
+  folder.path === "~" || folder.path.startsWith("~/")
+    ? Option.map(Option.fromNullishOr(homes.get(folder.machine)), (home) =>
+        expandHome(folder.path, home),
+      )
+    : Option.some(folder.path);
+
+/**
+ * The repo's group: the deepest group folder that holds it, else Other. A folder's `~` is
+ * its machine's home in `homes`.
+ */
+export const groupOf = (
+  { machine, root }: RepoId,
+  folders: readonly GroupFolder[],
+  homes: Homes,
+): string =>
   folders
-    .map((folder) => ({ name: folder.name, path: expandHome(folder.path, home) }))
+    .filter((folder) => folder.machine === machine)
+    .flatMap((folder) =>
+      Option.toArray(folderOn(folder, homes)).map((path) => ({ name: folder.name, path })),
+    )
     .filter((folder) => isUnder(root, folder.path))
     .reduce<Option.Option<{ readonly name: string; readonly path: string }>>(
       (best, folder) =>
@@ -30,9 +52,8 @@ export const groupOf = (root: string, folders: readonly GroupFolder[], home: str
       Option.getOrElse(() => OTHER),
     );
 
-export interface FoundRepo {
-  /** The main checkout's folder. */
-  readonly root: string;
+/** A repo found on a machine; `root` is its main checkout's folder there. */
+export interface FoundRepo extends RepoId {
   /** How many worktrees it has, the main checkout included. */
   readonly count: number;
 }
@@ -42,44 +63,68 @@ const count = (text: string | undefined): number => {
   return Number.isInteger(n) && n > 0 ? n : 1;
 };
 
-/** The folder scan's output: one `group folder<TAB>repo<TAB>count` line per repo. */
-export const parseScan = (stdout: string): readonly FoundRepo[] =>
+/**
+ * The folder scan's output, from the scan run on `machine`: one
+ * `group folder<TAB>repo<TAB>count` line per repo.
+ */
+export const parseScan = (stdout: string, machine: Machine): readonly FoundRepo[] =>
   stdout.split("\n").flatMap((line) => {
     const [, root, n] = line.split("\t");
-    return root ? [{ root, count: count(n) }] : [];
+    return root ? [{ machine, root, count: count(n) }] : [];
   });
 
-/** The open spaces' repos: one `repo<TAB>count` line per repo. */
-export const parseOwners = (stdout: string): readonly FoundRepo[] =>
+/** What a folder scan found: its repos, and the group folders that don't exist. */
+export interface Scan {
+  readonly repos: readonly FoundRepo[];
+  readonly missing: readonly string[];
+}
+
+/** The group folders the scan found missing: each printed alone on its line. */
+export const missingFolders = (stdout: string): readonly string[] =>
+  stdout.split("\n").filter((line) => line !== "" && !line.includes("\t"));
+
+/** The open spaces' repos, from the lookup run on `machine`: one `repo<TAB>count` line per repo. */
+export const parseOwners = (stdout: string, machine: Machine): readonly FoundRepo[] =>
   stdout.split("\n").flatMap((line) => {
     const [root, n] = line.split("\t");
-    return root && line.includes("\t") ? [{ root, count: count(n) }] : [];
+    return root && line.includes("\t") ? [{ machine, root, count: count(n) }] : [];
   });
 
-/** The Current repo: the repo the owners script names for the focused folder, if any. */
-export const currentRepo = (stdout: string): Option.Option<FoundRepo> =>
-  Option.fromNullishOr(parseOwners(stdout)[0]);
+/**
+ * The Current repo: the repo the owners script, run on `machine`, names for the focused
+ * folder, if any.
+ */
+export const currentRepo = (stdout: string, machine: Machine): Option.Option<FoundRepo> =>
+  Option.fromNullishOr(parseOwners(stdout, machine)[0]);
 
 export interface Repo extends FoundRepo {
   readonly group: string;
 }
 
 /**
- * Every repo once, scanned or from an open space, with its group, by folder name.
- * An open space's count is fresher than the scan's, so it wins.
+ * Every repo once (by machine and folder), scanned or from an open space, with its group,
+ * by folder name. An open space's count is fresher than the scan's, so it wins.
  */
 export const reposFrom = (
   scanned: readonly FoundRepo[],
   owners: readonly FoundRepo[],
   folders: readonly GroupFolder[],
-  home: string,
+  homes: Homes,
 ): readonly Repo[] =>
-  Array.from(new Map([...scanned, ...owners].map((repo) => [repo.root, repo.count])))
-    .map(([root, n]) => ({ root, count: n, group: groupOf(root, folders, home) }))
+  Array.from(new Map([...scanned, ...owners].map((repo) => [repoKey(repo), repo])).values())
+    .map(({ machine, root, count: n }) => ({
+      machine,
+      root,
+      count: n,
+      group: groupOf({ machine, root }, folders, homes),
+    }))
     .sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
 
-/** `repos` without the hidden ones (by main checkout folder), in their order. */
+/** `repos` without the hidden ones (by machine and main checkout folder), in their order. */
 export const withoutHidden = <R extends FoundRepo>(
   repos: readonly R[],
-  hidden: readonly string[],
-): readonly R[] => repos.filter((repo) => !hidden.includes(repo.root));
+  hidden: readonly RepoId[],
+): readonly R[] => {
+  const keys = new Set(hidden.map(repoKey));
+  return repos.filter((repo) => !keys.has(repoKey(repo)));
+};

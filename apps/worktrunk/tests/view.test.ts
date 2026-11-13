@@ -1,11 +1,13 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
+import { repoKey, THIS_MACHINE } from "../src/machines.ts";
 import type { CiRead, RepoList } from "../src/reads.ts";
 import type { Repo } from "../src/repos.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import type { SpaceLike } from "../src/spaces.ts";
 import {
   buildView,
+  ciTooltip,
   DEFAULT_VIEW_STATE,
   reposToRead,
   type RepoView,
@@ -40,6 +42,7 @@ const wt = (
 const MAIN: WorktreeState = { _tag: "Main" };
 const ACTIVE: WorktreeState = { _tag: "Active" };
 const CONFLICT: WorktreeState = { _tag: "Conflict" };
+const NEW: WorktreeState = { _tag: "New" };
 const merged = (reason: string | null): WorktreeState => ({
   _tag: "Merged",
   reason: Option.fromNullishOr(reason),
@@ -60,8 +63,10 @@ const space = (id: string, folder: string, extra: Partial<SpaceLike> = {}): Spac
   ...extra,
 });
 
-const API: Repo = { root: "/w/api", count: 4, group: "Work" };
-const WEB: Repo = { root: "/p/web", count: 1, group: "Other" };
+const API: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 4, group: "Work" };
+const WEB: Repo = { machine: THIS_MACHINE, root: "/p/web", count: 1, group: "Other" };
+/** The same folder as API, on another machine: another repo. */
+const API_LINUX: Repo = { ...API, machine: "linux" };
 
 const API_WORKTREES = [
   wt("/w/api", "main", MAIN),
@@ -75,12 +80,14 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   discovered: true,
   loading: false,
   lists: new Map([
-    [API.root, read(API_WORKTREES)],
-    [WEB.root, read([wt("/p/web", "main", MAIN)])],
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(WEB), read([wt("/p/web", "main", MAIN)])],
   ]),
-  settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w" }] },
+  settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w", machine: THIS_MACHINE }] },
   settingsError: Option.none(),
   discoverError: Option.none(),
+  missingFolders: [],
+  machines: new Map(),
   settingsFile: "iangregsondev-worktrunk.json",
   spaces: [],
   panes: [],
@@ -135,15 +142,15 @@ describe("buildView: the Repos tree", () => {
         { ...WEB, count: 3 },
       ],
       lists: new Map([
-        [API.root, read(API_WORKTREES)],
-        [WEB.root, read([])],
+        [repoKey(API), read(API_WORKTREES)],
+        [repoKey(WEB), read([])],
       ]),
     });
     expect(tree(s).map((r) => r.count)).toEqual([Option.some(4), Option.some(3)]);
   });
 
   test("before its first read a repo is Reading, with no count; once read it is Ok", () => {
-    const s = snapshot({ lists: new Map([[WEB.root, read([wt("/p/web", "main", MAIN)])]]) });
+    const s = snapshot({ lists: new Map([[repoKey(WEB), read([wt("/p/web", "main", MAIN)])]]) });
     expect(tree(s).map((r) => [r.status, r.count])).toEqual([
       [{ _tag: "Reading" }, Option.none()],
       [{ _tag: "Ok" }, Option.some(1)],
@@ -151,7 +158,7 @@ describe("buildView: the Repos tree", () => {
   });
 
   test("a failed read shows its error", () => {
-    const s = snapshot({ lists: new Map([[API.root, read(API_WORKTREES, "wt: not a repo")]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), read(API_WORKTREES, "wt: not a repo")]]) });
     expect(repo(s, "api").status).toEqual({ _tag: "Error", text: "wt: not a repo" });
   });
 
@@ -165,6 +172,20 @@ describe("buildView: the Repos tree", () => {
     ]);
   });
 
+  test("a New worktree counts with Active: In progress, an active dot, the Active view", () => {
+    const list = read([
+      wt("/w/api", "main", MAIN),
+      wt("/w/api.wip", "wip", ACTIVE, { committedAt: Option.some(NOW - 2 * HOUR) }),
+      wt("/w/api.fresh", "fresh", NEW),
+    ]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(repo(s, "api").sections.map((x) => [x.kind, x.count])).toEqual([["active", 2]]);
+    expect(row(s, "/w/api.fresh").tone).toBe("active");
+    const active = buildView({ ...s, view: { ...s.view, show: "active" } }).body;
+    if (active._tag !== "Flat") expect.fail(`expected a flat list, got ${active._tag}`);
+    expect(active.rows.map((r) => r.label)).toEqual(["fresh", "wip"]);
+  });
+
   test("empty sections are left out", () => {
     expect(repo(snapshot(), "web").sections).toEqual([]);
   });
@@ -176,7 +197,7 @@ describe("buildView: the Repos tree", () => {
       wt("/w/api.a", "older", ACTIVE, { committedAt: Option.some(NOW - 5 * HOUR) }),
       wt("/w/api.b", "newer", ACTIVE, { committedAt: Option.some(NOW - HOUR) }),
     ]);
-    const api = repo(snapshot({ lists: new Map([[API.root, list]]) }), "api");
+    const api = repo(snapshot({ lists: new Map([[repoKey(API), list]]) }), "api");
     expect(api.sections[0]?.rows.map((r) => r.label)).toEqual(["newer", "older", "unborn"]);
   });
 
@@ -200,7 +221,7 @@ describe("buildView: the Repos tree", () => {
   });
 
   test("a failed read keeps the rows it had", () => {
-    const s = snapshot({ lists: new Map([[API.root, read(API_WORKTREES, "wt: not a repo")]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), read(API_WORKTREES, "wt: not a repo")]]) });
     expect(allRows(repo(s, "api"))).toHaveLength(4);
   });
 });
@@ -217,11 +238,16 @@ describe("buildView: rows", () => {
   test("hollow and not open when no space sits on it; a click opens a new space there", () => {
     const r = row(snapshot(), "/w/api.new");
     expect(r).toMatchObject({ hollow: true, open: false, current: false });
-    expect(r.click).toEqual({ _tag: "New", name: "new", folder: "/w/api.new" });
+    expect(r.click).toEqual({ _tag: "New", name: "new", folder: "/w/api.new", machine: null });
   });
 
   test("a new space on the main checkout is named after the repo", () => {
-    expect(row(snapshot(), "/w/api").click).toEqual({ _tag: "New", name: "api", folder: "/w/api" });
+    expect(row(snapshot(), "/w/api").click).toEqual({
+      _tag: "New",
+      name: "api",
+      folder: "/w/api",
+      machine: null,
+    });
   });
 
   test("a space on it: solid, open, and a click switches to that space", () => {
@@ -244,7 +270,7 @@ describe("buildView: rows", () => {
     expect(row(s, "/w/api").current).toBe(true);
   });
 
-  test("a space on another machine doesn't count as open", () => {
+  test("a space at the same folder on another machine doesn't count as open", () => {
     const s = snapshot({ spaces: [space("s1", "/w/api", { machine: "vps" })] });
     expect(row(s, "/w/api").open).toBe(false);
   });
@@ -259,21 +285,30 @@ describe("buildView: rows", () => {
 
   test("a detached worktree is labelled (detached), and its new space named by folder", () => {
     const list = read([wt("/w/api", "main", MAIN), wt("/w/api.d", null, ACTIVE)]);
-    const r = row(snapshot({ lists: new Map([[API.root, list]]) }), "/w/api.d");
+    const r = row(snapshot({ lists: new Map([[repoKey(API), list]]) }), "/w/api.d");
     expect(r.label).toBe("(detached)");
-    expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d" });
+    expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d", machine: null });
+  });
+
+  test("a New worktree carries a new badge; no other row has one", () => {
+    const list = read([...API_WORKTREES, wt("/w/api.fresh", "fresh", NEW)]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(row(s, "/w/api.fresh").badge).toEqual(Option.some("new"));
+    for (const path of ["/w/api", "/w/api.old", "/w/api.new", "/w/api.fight"]) {
+      expect(row(s, path).badge).toEqual(Option.none());
+    }
   });
 
   test("uncommitted changes show as dirty", () => {
     const list = read([wt("/w/api", "main", MAIN, { dirty: true }), wt("/w/api.x", "x", ACTIVE)]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect([row(s, "/w/api").dirty, row(s, "/w/api.x").dirty]).toEqual([true, false]);
   });
 });
 
 describe("buildView: sublines", () => {
   const sub = (w: Worktree) =>
-    row(snapshot({ lists: new Map([[API.root, read([w])]]) }), w.path).subline;
+    row(snapshot({ lists: new Map([[repoKey(API), read([w])]]) }), w.path).subline;
   const NO_COMMIT = { committedAt: Option.none() };
 
   test("a main checkout in step with its remote says so", () => {
@@ -337,11 +372,6 @@ describe("buildView: sublines", () => {
 });
 
 describe("buildView: header, banners and empty states", () => {
-  test("the spinner shows while loading", () => {
-    expect(buildView(snapshot({ loading: true })).loading).toBe(true);
-    expect(buildView(snapshot()).loading).toBe(false);
-  });
-
   test("a settings error shows as a banner saying defaults are in use", () => {
     expect(buildView(snapshot()).banners).toEqual([]);
     const s = snapshot({ settingsError: Option.some("iangregsondev-worktrunk.json: bad") });
@@ -359,6 +389,52 @@ describe("buildView: header, banners and empty states", () => {
       "iangregsondev-worktrunk.json: bad — using defaults until it's fixed.",
       "Couldn't look for repos: git: command not found",
     ]);
+  });
+
+  test("each missing group folder shows as a banner, after a failed search", () => {
+    const s = snapshot({
+      discoverError: Option.some("git: command not found"),
+      missingFolders: ["/h/gone", "/h/also"],
+    });
+    expect(buildView(s).banners).toEqual([
+      "Couldn't look for repos: git: command not found",
+      "Group folder /h/gone doesn't exist, so it lists no repos.",
+      "Group folder /h/also doesn't exist, so it lists no repos.",
+    ]);
+  });
+
+  test("a machine still connecting shows one connecting line, after the missing folders", () => {
+    const s = snapshot({
+      missingFolders: ["/h/gone"],
+      machines: new Map([["linux", { _tag: "Connecting" }]]),
+    });
+    expect(buildView(s).banners).toEqual([
+      "Group folder /h/gone doesn't exist, so it lists no repos.",
+      "linux: connecting…",
+    ]);
+  });
+
+  test("a machine that can't be read shows one line naming it and the error", () => {
+    const s = snapshot({
+      machines: new Map([
+        ["linux", { _tag: "Down", reason: "ssh: connect to host linux: timed out" }],
+      ]),
+    });
+    expect(buildView(s).banners).toEqual([
+      "Can't reach linux: ssh: connect to host linux: timed out",
+    ]);
+  });
+
+  test("a machine that can't be read lists none of its repos, not even from an older read", () => {
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists: new Map([
+        [repoKey(API), read(API_WORKTREES)],
+        [repoKey(API_LINUX), read(API_WORKTREES)],
+      ]),
+      machines: new Map([["linux", { _tag: "Down", reason: "timed out" }]]),
+    });
+    expect(tree(s).map((r) => [r.name, r.machine])).toEqual([["api", Option.none()]]);
   });
 
   test("before the first scan: looking for repos", () => {
@@ -382,8 +458,8 @@ describe("buildView: header, banners and empty states", () => {
   });
 });
 
-const PERSONAL: Repo = { root: "/p/blog", count: 2, group: "Personal" };
-const STRAY: Repo = { root: "/x/tool", count: 2, group: "Lab" };
+const PERSONAL: Repo = { machine: THIS_MACHINE, root: "/p/blog", count: 2, group: "Personal" };
+const STRAY: Repo = { machine: THIS_MACHINE, root: "/x/tool", count: 2, group: "Lab" };
 const withView = (view: Partial<Snapshot["view"]>, more: Partial<Snapshot> = {}) =>
   snapshot({ view: { ...DEFAULT_VIEW_STATE, only: false, ...view }, ...more });
 const names = (s: Snapshot) => tree(s).map((r) => r.name);
@@ -392,16 +468,16 @@ describe("buildView: group chips", () => {
   const settings = {
     ...DEFAULT_SETTINGS,
     folders: [
-      { name: "Work", path: "/w" },
-      { name: "Personal", path: "/p" },
+      { name: "Work", path: "/w", machine: THIS_MACHINE },
+      { name: "Personal", path: "/p", machine: THIS_MACHINE },
     ],
   };
   const repos = [API, WEB, PERSONAL, STRAY];
   const lists = new Map([
-    [API.root, read(API_WORKTREES)],
-    [WEB.root, read([wt("/p/web", "main", MAIN)])],
-    [PERSONAL.root, read([wt("/p/blog", "main", MAIN), wt("/p/blog.x", "x", ACTIVE)])],
-    [STRAY.root, read([wt("/x/tool", "main", MAIN), wt("/x/tool.y", "y", ACTIVE)])],
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(WEB), read([wt("/p/web", "main", MAIN)])],
+    [repoKey(PERSONAL), read([wt("/p/blog", "main", MAIN), wt("/p/blog.x", "x", ACTIVE)])],
+    [repoKey(STRAY), read([wt("/x/tool", "main", MAIN), wt("/x/tool.y", "y", ACTIVE)])],
   ]);
   const chipsOf = (s: Snapshot) => buildView(s).chips.map((c) => [c.label, c.selected]);
 
@@ -470,8 +546,8 @@ describe("buildView: views", () => {
     snapshot({
       repos: [API, PERSONAL],
       lists: new Map([
-        [API.root, read(API_WORKTREES)],
-        [PERSONAL.root, blogList],
+        [repoKey(API), read(API_WORKTREES)],
+        [repoKey(PERSONAL), blogList],
       ]),
       ...more,
     });
@@ -483,14 +559,14 @@ describe("buildView: views", () => {
   const show = (view: Snapshot["view"]["show"], more: Partial<Snapshot> = {}) =>
     both({ view: { ...DEFAULT_VIEW_STATE, only: false, show: view }, ...more });
 
-  test("the view picker lists every view, the selected one marked", () => {
+  test("the view picker lists every view, Current first, the selected one marked", () => {
     expect(buildView(show("active")).views).toEqual([
+      { show: "current", label: "Current", selected: false },
       { show: "repos", label: "Repos", selected: false },
       { show: "merged", label: "Clean up", selected: false },
       { show: "active", label: "Active", selected: true },
       { show: "conflict", label: "Conflicts", selected: false },
       { show: "open", label: "Open", selected: false },
-      { show: "current", label: "Current", selected: false },
     ]);
   });
 
@@ -543,7 +619,7 @@ describe("buildView: views", () => {
   test("an empty flat view says so", () => {
     const webOnly = {
       repos: [WEB],
-      lists: new Map([[WEB.root, read([wt("/p/web", "main", MAIN)])]]),
+      lists: new Map([[repoKey(WEB), read([wt("/p/web", "main", MAIN)])]]),
     };
     expect(buildView(show("conflict", { repos: [PERSONAL] })).body).toEqual({
       _tag: "Message",
@@ -586,8 +662,8 @@ describe("buildView: the All repos / With worktrees toggle", () => {
   test("the count read from wt list wins over the scan's", () => {
     const grown = read([wt("/p/web", "main", MAIN), wt("/p/web.x", "x", ACTIVE)]);
     const lists = new Map([
-      [API.root, read(API_WORKTREES)],
-      [WEB.root, grown],
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(WEB), grown],
     ]);
     expect(names(withView({ only: true }, { lists }))).toEqual(["api", "web"]);
   });
@@ -664,7 +740,7 @@ describe("buildView: search", () => {
     const nested = read([wt("/w/api", "main", MAIN), wt("/w/api/.wt/feat", "feat", ACTIVE)]);
     const s = snapshot({
       repos: [API],
-      lists: new Map([[API.root, nested]]),
+      lists: new Map([[repoKey(API), nested]]),
       spaces: [space("s1", "/w/api/.wt/feat/src")],
       search: "main",
     });
@@ -683,7 +759,7 @@ describe("buildView: CI", () => {
     return read;
   };
   const withCi = (byPath: readonly (readonly [string, Ci])[], error: string | null = null) =>
-    snapshot({ ci: new Map([[API.root, ciRead(byPath, error)]]) });
+    snapshot({ ci: new Map([[repoKey(API), ciRead(byPath, error)]]) });
 
   test("each row shows its CI from the last CI read", () => {
     const s = withCi([
@@ -713,7 +789,7 @@ describe("buildView: CI", () => {
 
   test("CI that came with the list itself counts when there's no CI read", () => {
     const list = read([wt("/w/api", "main", MAIN, { ci: checks("passed") })]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect(row(s, "/w/api").ci).toEqual(Option.some({ status: "passed", stale: false }));
   });
 
@@ -729,7 +805,7 @@ describe("buildView: CI", () => {
   test("flat rows carry CI too", () => {
     const s = snapshot({
       view: { ...DEFAULT_VIEW_STATE, show: "active" },
-      ci: new Map([[API.root, ciRead([["/w/api.new", checks("failed")]])]]),
+      ci: new Map([[repoKey(API), ciRead([["/w/api.new", checks("failed")]])]]),
     });
     const body = buildView(s).body;
     expect(body._tag === "Flat" && body.rows[0]?.ci).toEqual(
@@ -779,7 +855,7 @@ describe("buildView: the Current view", () => {
   test("ignores the group chips and the With worktrees toggle", () => {
     const s = current({
       current: inRepo(WEB),
-      view: { group: Option.some("Work"), show: "current", only: true },
+      view: { ...DEFAULT_VIEW_STATE, group: Option.some("Work"), show: "current", only: true },
     });
     expect(tree(s).map((r) => r.name)).toEqual(["web"]);
     expect(buildView(s).toggle).toEqual(Option.none());
@@ -856,5 +932,321 @@ describe("reposToRead", () => {
   test("every other view reads the selected chip's repos", () => {
     const s = scope({ show: "repos", group: Option.some("Work") }, { _tag: "InRepo", repo: WEB });
     expect(reposToRead(s)).toEqual([API]);
+  });
+  test("no repo on a machine that can't be read is read, in any view", () => {
+    const down = new Map([["linux", { _tag: "Connecting" } as const]]);
+    const s = snapshot({ repos: [API, API_LINUX, WEB], machines: down });
+    expect(reposToRead(s)).toEqual([API, WEB]);
+    const current = { ...s, view: { ...s.view, show: "current" as const } };
+    expect(reposToRead(current)).toEqual([API, WEB]);
+  });
+});
+
+describe("buildView: the same folder on two machines", () => {
+  const both = (more: Partial<Snapshot> = {}) =>
+    tree(snapshot({ repos: [API, API_LINUX], ...more }));
+
+  test("each repo reads its own list, by machine and folder", () => {
+    const [here, linux] = both({ lists: new Map([[repoKey(API), read(API_WORKTREES)]]) });
+    expect([here?.status, linux?.status]).toEqual([{ _tag: "Ok" }, { _tag: "Reading" }]);
+  });
+
+  test("folding one folds it alone, its sections too", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const linuxKey = repoKey(API_LINUX);
+    const [here, linux] = both({ lists, folded: { [linuxKey]: true } });
+    expect([here?.folded, linux?.folded]).toEqual([false, true]);
+    const sections = both({ lists, folded: { [`${linuxKey}|merged`]: true } }).map(
+      (r) => r.sections.find((x) => x.kind === "merged")?.folded,
+    );
+    expect(sections).toEqual([false, true]);
+  });
+
+  test("Clean up counts them as two repos", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      view: { ...DEFAULT_VIEW_STATE, show: "merged" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.summary).toEqual(Option.some("2 merged in 2 repos"));
+  });
+
+  test("each row's key names its machine, so the same folder's rows never share one", () => {
+    const lists = new Map([
+      [repoKey(API), read([wt("/w/api", "main", MAIN)])],
+      [repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])],
+    ]);
+    expect(both({ lists }).map((r) => r.main[0]?.key)).toEqual([
+      "/w/api",
+      repoKey({ machine: "linux", root: "/w/api" }),
+    ]);
+  });
+
+  test("each repo shows its own CI", () => {
+    const lists = new Map([
+      [repoKey(API), read([wt("/w/api", "main", MAIN)])],
+      [repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])],
+    ]);
+    const ci: CiRead = {
+      byPath: new Map([["/w/api", { _tag: "Checks", status: "failed", stale: false }]]),
+      error: Option.some("timed out"),
+    };
+    const repos = both({ lists, ci: new Map([[repoKey(API_LINUX), ci]]) });
+    expect(repos.map((r) => r.main[0]?.ci)).toEqual([
+      Option.none(),
+      Option.some({ status: "failed", stale: false }),
+    ]);
+    expect(repos.map((r) => Option.isSome(r.ciNote))).toEqual([false, true]);
+  });
+});
+
+describe("buildView: spaces on other machines", () => {
+  const lists = new Map([
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(API_LINUX), read(API_WORKTREES)],
+  ]);
+  const onLinux = space("s1", "/w/api.new", { machine: "linux" });
+
+  test("a space opens the worktree on its own machine, not the same folder here", () => {
+    const [here, linux] = tree(snapshot({ repos: [API, API_LINUX], lists, spaces: [onLinux] }));
+    const openOf = (r: RepoView | undefined) =>
+      r
+        ? allRows(r)
+            .filter((x) => x.open)
+            .map((x) => x.label)
+        : [];
+    expect([openOf(here), openOf(linux)]).toEqual([[], ["new"]]);
+  });
+
+  test("a worktree with no space opens a new one on its repo's machine", () => {
+    const [, linux] = tree(snapshot({ repos: [API, API_LINUX], lists }));
+    const fight = linux ? allRows(linux).find((x) => x.label === "fight") : undefined;
+    expect(fight?.click).toEqual({
+      _tag: "New",
+      name: "fight",
+      folder: "/w/api.fight",
+      machine: "linux",
+    });
+  });
+
+  test("the Open view lists a worktree whose space is on another machine", () => {
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      spaces: [onLinux],
+      view: { ...DEFAULT_VIEW_STATE, show: "open" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => [r.label, r.open])).toEqual([
+      ["new", true],
+    ]);
+  });
+});
+
+describe("buildView: machine labels", () => {
+  test("with repos on more than one machine, a flat row names its machine before its repo", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      spaces: [space("s1", "/w/api"), space("s2", "/w/api.new", { machine: "linux" })],
+      view: { ...DEFAULT_VIEW_STATE, show: "open" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => r.subline.split(" · ")[0])).toEqual([
+      "linux: api",
+      "this machine: api",
+    ]);
+  });
+
+  test("with repos on more than one machine, each repo names its machine", () => {
+    const repos = tree(snapshot({ repos: [API, API_LINUX] }));
+    expect(repos.map((r) => r.machine)).toEqual([
+      Option.some("this machine"),
+      Option.some("linux"),
+    ]);
+  });
+
+  test("with every repo on one machine, no repo names it", () => {
+    expect(tree(snapshot()).map((r) => r.machine)).toEqual([Option.none(), Option.none()]);
+  });
+});
+
+describe("buildView: the machine filter", () => {
+  const choices = (s: Snapshot) =>
+    buildView(s).machineFilter.map((c) => [c.label, c.machine, c.selected]);
+
+  test("offers All, then this machine, then each other machine by name, starting at All", () => {
+    const API_MAC: Repo = { ...API, machine: "mac" };
+    expect(choices(snapshot({ repos: [API_LINUX, WEB, API_MAC] }))).toEqual([
+      ["All", Option.none(), true],
+      ["this machine", Option.some(null), false],
+      ["linux", Option.some("linux"), false],
+      ["mac", Option.some("mac"), false],
+    ]);
+  });
+
+  test("with every repo and folder on one machine there is nothing to filter, so no choices", () => {
+    expect(buildView(snapshot()).machineFilter).toEqual([]);
+  });
+
+  test("offers a machine a group folder names before any repo is found on it", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect(choices(snapshot({ repos: [API], settings })).map(([label]) => label)).toEqual([
+      "All",
+      "this machine",
+      "linux",
+    ]);
+  });
+
+  const LINUX_WEB: Repo = { ...WEB, machine: "linux" };
+  const onMachines = (machine: Option.Option<string | null>) =>
+    withView({ machine }, { repos: [API, API_LINUX, WEB, LINUX_WEB] });
+
+  test("picking a machine lists only that machine's repos", () => {
+    expect(tree(onMachines(Option.some("linux"))).map((r) => r.key)).toEqual([
+      repoKey(API_LINUX),
+      repoKey(LINUX_WEB),
+    ]);
+    expect(tree(onMachines(Option.some(null))).map((r) => r.key)).toEqual([
+      repoKey(API),
+      repoKey(WEB),
+    ]);
+  });
+
+  test("only the filtered machine's repos are read, in the Current view outside a repo too", () => {
+    const linux = onMachines(Option.some("linux"));
+    expect(reposToRead(linux)).toEqual([API_LINUX, LINUX_WEB]);
+    const current = { ...linux, view: { ...linux.view, show: "current" as const } };
+    expect(reposToRead(current)).toEqual([API_LINUX, LINUX_WEB]);
+  });
+
+  test("a filtered machine no repo or folder is on any more falls back to All", () => {
+    const s = withView({ machine: Option.some("mac") }, { repos: [API, API_LINUX] });
+    expect(tree(s).map((r) => r.key)).toEqual([repoKey(API), repoKey(API_LINUX)]);
+    expect(choices(s)[0]).toEqual(["All", Option.none(), true]);
+    expect(reposToRead(s)).toEqual([API, API_LINUX]);
+  });
+
+  test("before the first scan a filtered machine stays, so a saved filter never flashes All", () => {
+    const s = withView({ machine: Option.some("mac") }, { repos: [API_LINUX], discovered: false });
+    expect(choices(s).find(([, , selected]) => selected)).toBeUndefined();
+    expect(reposToRead(s)).toEqual([]);
+  });
+
+  test("machine labels follow the filter: none while one machine is in view", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const linux = withView({ machine: Option.some("linux") }, { repos: [API, API_LINUX], lists });
+    expect(tree(linux).map((r) => r.machine)).toEqual([Option.none()]);
+    const open = { ...linux, view: { ...linux.view, show: "merged" as const } };
+    const body = buildView(open).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => r.subline.split(" · ")[0])).toEqual([
+      "api",
+    ]);
+    const all = { ...linux, view: { ...linux.view, machine: Option.none() } };
+    expect(tree(all).map((r) => r.machine)).toEqual([
+      Option.some("this machine"),
+      Option.some("linux"),
+    ]);
+  });
+});
+
+describe("tooltips", () => {
+  test("a CI badge says what its status means", () => {
+    expect(ciTooltip({ status: "passed", stale: false })).toBe("CI passed");
+    expect(ciTooltip({ status: "running", stale: false })).toBe("CI is running");
+    expect(ciTooltip({ status: "failed", stale: false })).toBe("CI failed");
+    expect(ciTooltip({ status: "conflicts", stale: false })).toBe("Conflicts with main");
+    expect(ciTooltip({ status: "unknown", stale: false })).toBe("No CI status");
+  });
+
+  test("a stale CI badge says the checks ran on an older commit than the one pushed", () => {
+    expect(ciTooltip({ status: "failed", stale: true })).toBe(
+      "CI failed on an older commit than the one pushed",
+    );
+    expect(ciTooltip({ status: "passed", stale: true })).toBe(
+      "CI passed on an older commit than the one pushed",
+    );
+  });
+
+  test("the dot says the row's state and whether a space sits on it", () => {
+    const s = snapshot({ spaces: [space("s1", "/w/api.new")] });
+    expect(row(s, "/w/api").tips.dot).toBe("Main checkout · no space open");
+    expect(row(s, "/w/api.old").tips.dot).toBe("Merged · no space open");
+    expect(row(s, "/w/api.new").tips.dot).toBe("In progress · open in a space");
+    expect(row(s, "/w/api.fight").tips.dot).toBe("Conflicts with main · no space open");
+  });
+
+  test("the new badge says nothing has happened in the worktree yet; no other row has one", () => {
+    const list = read([...API_WORKTREES, wt("/w/api.fresh", "fresh", NEW)]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(row(s, "/w/api.fresh").tips.badge).toEqual(Option.some("No commits or changes yet"));
+    expect(row(s, "/w/api.new").tips.badge).toEqual(Option.none());
+  });
+
+  test("the uncommitted-changes dot says so; a clean row has none", () => {
+    const list = read([wt("/w/api", "main", MAIN), wt("/w/api.d", "d", ACTIVE, { dirty: true })]);
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
+    expect(row(s, "/w/api.d").tips.dirty).toEqual(Option.some("Uncommitted changes"));
+    expect(row(s, "/w/api").tips.dirty).toEqual(Option.none());
+  });
+
+  test("the open marker on this machine's row says a space sits on it; a row with none has none", () => {
+    const s = snapshot({ spaces: [space("s1", "/w/api.new")] });
+    expect(row(s, "/w/api.new").tips.open).toEqual(Option.some("Open in a space"));
+    expect(row(s, "/w/api").tips.open).toEqual(Option.none());
+  });
+
+  test("the open marker on another machine's row names the machine", () => {
+    const s = snapshot({
+      repos: [API_LINUX],
+      lists: new Map([[repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])]]),
+      spaces: [space("s1", "/w/api", { machine: "linux" })],
+    });
+    const linux = tree(s)[0]?.main[0];
+    expect(linux?.tips.open).toEqual(Option.some("Open in a space on linux"));
+  });
+
+  test("a row's CI badge carries its label; a row with no badge has none", () => {
+    const ci = new Map([
+      [
+        repoKey(API),
+        {
+          byPath: new Map<string, Ci>([
+            ["/w/api", { _tag: "Checks", status: "failed", stale: true }],
+          ]),
+          error: Option.none(),
+        },
+      ],
+    ]);
+    const s = snapshot({ ci });
+    expect(row(s, "/w/api").tips.ci).toEqual(
+      Option.some("CI failed on an older commit than the one pushed"),
+    );
+    expect(row(s, "/w/api.new").tips.ci).toEqual(Option.none());
+  });
+
+  test("the spinner says a refresh is running; no spinner, no label", () => {
+    expect(buildView(snapshot({ loading: true })).spinnerTip).toEqual(
+      Option.some("Refreshing worktrees"),
+    );
+    expect(buildView(snapshot()).spinnerTip).toEqual(Option.none());
   });
 });

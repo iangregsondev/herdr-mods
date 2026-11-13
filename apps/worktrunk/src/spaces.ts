@@ -1,7 +1,9 @@
 // Which open Herdr space sits on which worktree. Pure: no `herdr` or `gpui` imports, so
 // spaces and panes come in as plain data shaped like `spaces()` and `panes()`.
-import { Option } from "effect";
-import { isUnder } from "./repos.ts";
+import { Option, Predicate } from "effect";
+import { repoKey, THIS_MACHINE, type Located, type Machine } from "./machines.ts";
+import { isUnder, OTHER, type Repo } from "./repos.ts";
+import type { Click } from "./view.ts";
 
 /** The parts of a `SpaceInfo` this module reads. */
 export interface SpaceLike {
@@ -26,24 +28,27 @@ export interface SpaceRef {
 
 export interface Place {
   readonly space: SpaceRef;
-  /** Where the space is now. */
+  /** The machine the space lives on; null for this one. */
+  readonly machine: Machine;
+  /** Where the space is now, on its machine. */
   readonly place: string;
 }
 
 /**
- * Where each space on this machine is now: its first pane's live folder, else the folder
- * it was made in. Spaces on other machines, and spaces with no folder at all, are left out.
+ * Where each space is now, on its machine: its first pane's live folder, else the folder
+ * it was made in. Spaces with no folder at all are left out.
  */
-export const localPlaces = (
+export const spacePlaces = (
   spaces: readonly SpaceLike[],
   panes: readonly PaneLike[],
 ): readonly Place[] =>
   spaces.flatMap((space) => {
-    if (space.machine !== null) return [];
     const tabs = new Set(space.tabs.map((tab) => tab.id));
     const live = panes.find((pane) => tabs.has(pane.tab) && pane.cwd)?.cwd;
     const place = live || space.folder;
-    return place ? [{ space: { id: space.id, active: space.active }, place }] : [];
+    return place
+      ? [{ space: { id: space.id, active: space.active }, machine: space.machine, place }]
+      : [];
   });
 
 /** Where the space `id` is now; none for a space with no place here. */
@@ -51,15 +56,19 @@ export const placeOf = (places: readonly Place[], id: string): Option.Option<str
   Option.fromNullishOr(places.find((p) => p.space.id === id)?.place);
 
 /**
- * The space on each worktree path. A space sits on the longest worktree path that
- * contains its place, so a worktree nested in another's folder still gets its own.
- * When several sit on one worktree, the shown one wins, else the first.
+ * The space on each of the worktree paths on `machine`. Only spaces on that machine
+ * count: a folder of the same path elsewhere is another folder. A space sits on the
+ * longest worktree path that contains its place, so a worktree nested in another's
+ * folder still gets its own. When several sit on one worktree, the shown one wins, else
+ * the first.
  */
 export const spacesOnWorktrees = (
   places: readonly Place[],
+  machine: Machine,
   paths: readonly string[],
 ): ReadonlyMap<string, SpaceRef> =>
   places
+    .filter((place) => place.machine === machine)
     .flatMap(({ space, place }) => {
       const longest = paths
         .filter((path) => isUnder(place, path))
@@ -80,20 +89,22 @@ export const spacesOnWorktrees = (
     }, new Map());
 
 /**
- * The ids of the spaces on this machine whose folder (where the space was made) or
- * place (where its first terminal is now) is one of the `gone` folders, or inside one.
+ * The ids of the spaces on `machine` whose folder (where the space was made) or place
+ * (where its first terminal is now) is one of the `gone` folders there, or inside one. A
+ * space on another machine never matches: the same path there is another folder.
  * Both count because wt moves a removed worktree into a trash folder and a shell inside
  * it moves too, so the place alone can point somewhere that still exists.
  */
 export const spacesInGone = (
   spaces: readonly SpaceLike[],
   panes: readonly PaneLike[],
+  machine: Machine,
   gone: readonly string[],
 ): readonly string[] => {
   const inGone = (path: string) => gone.some((folder) => isUnder(path, folder));
-  const places = new Map(localPlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
+  const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
   return spaces
-    .filter((space) => space.machine === null)
+    .filter((space) => space.machine === machine)
     .filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? ""))
     .map((space) => space.id);
 };
@@ -106,13 +117,125 @@ export interface FocusLike {
 }
 
 /**
- * The folder the person is working in: the focused terminal's, else (a mod pane or the
- * panel itself has focus) where the focused space is, so focusing the panel keeps it.
+ * The folder the person is working in, on the focused space's machine: the focused
+ * terminal's, else (a mod pane or the panel itself has focus) where the focused space
+ * is, so focusing the panel keeps it. A terminal on this machine that has run `ssh`
+ * still counts as this machine: Herdr knows only the space's machine.
  */
 export const focusedFolder = (
   focus: FocusLike | null,
   places: readonly Place[],
-): Option.Option<string> =>
-  Option.orElse(Option.fromNullishOr(focus?.cwd || null), () =>
-    Option.fromNullishOr(places.find((p) => p.space.id === focus?.space)?.place),
+): Option.Option<Located> => {
+  const at = Option.fromNullishOr(places.find((p) => p.space.id === focus?.space));
+  const machine = Option.match(at, { onNone: () => THIS_MACHINE, onSome: (p) => p.machine });
+  return Option.orElse(
+    Option.map(Option.fromNullishOr(focus?.cwd || null), (folder): Located => ({
+      machine,
+      folder,
+    })),
+    () => Option.map(at, (p): Located => ({ machine: p.machine, folder: p.place })),
   );
+};
+
+/**
+ * The focused folder (see `focusedFolder`), or this machine with no folder when nothing
+ * is focused: what the panel looks up when it needs a place to start.
+ */
+export const focusedOrHere = (focus: FocusLike | null, places: readonly Place[]): Located =>
+  Option.getOrElse(focusedFolder(focus, places), (): Located => ({
+    machine: THIS_MACHINE,
+    folder: "",
+  }));
+
+/** A Herdr command (`run`) and its arguments. */
+export interface Command {
+  readonly command: string;
+  readonly args: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The Herdr command a click on a worktree row runs: select its space, or open a new one
+ * on the worktree's machine (Herdr's `space.new` takes no machine for this one).
+ */
+export const clickCommand = (click: Click): Command =>
+  click._tag === "Select"
+    ? { command: "space.select", args: { id: click.space } }
+    : {
+        command: "space.new",
+        args: {
+          name: click.name,
+          folder: click.folder,
+          ...(click.machine === null ? {} : { machine: click.machine }),
+        },
+      };
+
+/** A worktree a space is wanted on: its machine, its folder there, and the name for a new space. */
+export interface Wanted {
+  readonly machine: Machine;
+  readonly folder: string;
+  readonly name: string;
+}
+
+/** The space to go to for `wanted`: the one on it, else a new one there. */
+export const goTo = (places: readonly Place[], wanted: Wanted): Click =>
+  Option.match(
+    Option.fromNullishOr(
+      spacesOnWorktrees(places, wanted.machine, [wanted.folder]).get(wanted.folder),
+    ),
+    {
+      onSome: (on): Click => ({ _tag: "Select", space: on.id }),
+      onNone: (): Click => ({ _tag: "New", ...wanted }),
+    },
+  );
+
+/** The parts of a repo's `wt list` this module reads: its worktrees' folders. */
+export interface ListLike {
+  readonly worktrees: readonly { readonly path: string }[];
+}
+
+/**
+ * Each space's group, by space id, for the sidebar's labels: the group of the repo whose
+ * worktree the space sits on, on the space's machine. As in `spacesOnWorktrees`, the
+ * longest worktree path holding the space's place wins, across every repo there, so a
+ * repo nested in another's folder keeps its own group. A repo whose list isn't read yet
+ * counts its main checkout. Spaces on no repo, or on a repo in Other (which the panel
+ * shows with no group), are left out.
+ */
+export const spaceGroups = (
+  places: readonly Place[],
+  repos: readonly Repo[],
+  lists: ReadonlyMap<string, ListLike>,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    places.flatMap(({ space, machine, place }) =>
+      repos
+        .filter((repo) => repo.machine === machine)
+        .flatMap((repo) =>
+          (lists.get(repoKey(repo))?.worktrees.map((w) => w.path) ?? [repo.root])
+            .filter((path) => isUnder(place, path))
+            .map((path) => ({ path, group: repo.group })),
+        )
+        .reduce<readonly { readonly path: string; readonly group: string }[]>(
+          (best, on) => (best[0] && best[0].path.length >= on.path.length ? best : [on]),
+          [],
+        )
+        .filter((on) => on.group !== OTHER)
+        .map((on) => [space.id, on.group]),
+    ),
+  );
+
+/**
+ * Whether `groups` differ from those `published` in shared state (anything at all, since
+ * any mod can write it): publishing only on a change spares every mod a render.
+ */
+export const groupsChanged = (
+  groups: Readonly<Record<string, string>>,
+  published: unknown,
+): boolean => {
+  const entries = Object.entries(groups);
+  return (
+    !Predicate.isObject(published) ||
+    Object.keys(published).length !== entries.length ||
+    entries.some(([space, group]) => Reflect.get(published, space) !== group)
+  );
+};

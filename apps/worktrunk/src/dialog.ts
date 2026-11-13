@@ -4,6 +4,7 @@
 import { Option, Result } from "effect";
 import { isShortcut } from "./commands.ts";
 import type { Action } from "./menus.ts";
+import { locatedLabel, THIS_MACHINE, type RepoId } from "./machines.ts";
 import { lastSegment } from "./settings.ts";
 import type { Worktree } from "./worktrees.ts";
 
@@ -108,42 +109,51 @@ export type Base = "default" | "current";
 
 /**
  * What Enter asks the panel to run: switch to or create the choice's branch in the repo
- * at `main`. `current` is the branch I'm on; with none, the default branch is the base.
+ * `repo`. `current` is the branch I'm on; with none, the default branch is the base.
  */
 export const enterAction = (
-  main: string,
+  repo: RepoId,
   choice: Choice,
   base: Base,
   current: Option.Option<string>,
 ): Action => ({
   _tag: "Create",
-  main,
+  machine: repo.machine,
+  main: repo.root,
   name: choiceName(choice),
   base: base === "current" ? Option.getOrNull(current) : null,
 });
 
-/** The repos (main checkouts) whose folder name matches the typed text, best first. */
-export const reposFor = (typed: string, repos: readonly string[]): readonly string[] =>
-  ranked(repos, lastSegment, typed.trim().toLowerCase());
+/** The repos whose main checkout's folder name matches the typed text, best first. */
+export const reposFor = (typed: string, repos: readonly RepoId[]): readonly RepoId[] =>
+  ranked(repos, (repo) => lastSegment(repo.root), typed.trim().toLowerCase());
+
+/**
+ * What the dialog is for: `new` switches to or creates a worktree (New or open), `open`
+ * picks one of the repo's worktrees to go to.
+ */
+export type DialogMode = "new" | "open";
 
 /** What the panel opens the dialog with. */
 export interface DialogProps {
-  /** The repo's main checkout; none asks me to pick one from `repos`. */
-  readonly repo: Option.Option<string>;
+  readonly mode: DialogMode;
+  /** The repo; none asks me to pick one from `repos`. */
+  readonly repo: Option.Option<RepoId>;
   /** The branch I'm on in that repo, offered as a base. */
   readonly branch: Option.Option<string>;
-  /** The repos to pick from, by main checkout. */
-  readonly repos: readonly string[];
+  /** The repos to pick from. */
+  readonly repos: readonly RepoId[];
 }
 
 /** The dialog's state, all but what is typed. */
 export interface DialogState {
+  readonly mode: DialogMode;
   /** The repo it works in; none while I pick one. */
-  readonly repo: Option.Option<string>;
+  readonly repo: Option.Option<RepoId>;
   /** The branch offered as a base: the one I'm on, in the repo the dialog opened on. */
   readonly current: Option.Option<string>;
   /** The repos to pick from. */
-  readonly repos: readonly string[];
+  readonly repos: readonly RepoId[];
   readonly worktrees: readonly Worktree[];
   readonly branches: readonly Branch[];
   /** Reading the repo's worktrees and branches. */
@@ -157,6 +167,7 @@ export interface DialogState {
 
 /** The dialog as it opens with `props`: reading its repo, unless it must ask for one. */
 export const openDialog = (props: DialogProps): DialogState => ({
+  mode: props.mode,
   repo: props.repo,
   current: props.branch,
   repos: props.repos,
@@ -169,16 +180,34 @@ export const openDialog = (props: DialogProps): DialogState => ({
 });
 
 /** One line of the dialog: a repo to pick while it asks for one, else a choice. */
-export type Line = { readonly _tag: "Repo"; readonly root: string } | Choice;
+export type Line = { readonly _tag: "Repo"; readonly repo: RepoId } | Choice;
 
 /** The most lines the dialog lists. */
 export const LINE_LIMIT = 50;
 
-/** The dialog's lines for the typed text: repos while it asks for one, else choices. */
+/** The worktrees whose branch matches the typed text, best first, at most `limit`. */
+const worktreesFor = (
+  typed: string,
+  worktrees: readonly Worktree[],
+  limit: number,
+): readonly Choice[] =>
+  ranked(candidates(worktrees, []), choiceName, typed.trim().toLowerCase()).slice(
+    0,
+    Math.max(0, limit),
+  );
+
+/**
+ * The dialog's lines for the typed text: repos while it asks for one, else choices: the
+ * repo's worktrees when picking one to open, else worktrees and branches to switch to or
+ * create.
+ */
 export const linesFor = (state: DialogState, typed: string): readonly Line[] =>
   Option.match(state.repo, {
-    onNone: () => reposFor(typed, state.repos).map((root): Line => ({ _tag: "Repo", root })),
-    onSome: () => choicesFor(typed, state.worktrees, state.branches, LINE_LIMIT),
+    onNone: () => reposFor(typed, state.repos).map((repo): Line => ({ _tag: "Repo", repo })),
+    onSome: () =>
+      state.mode === "open"
+        ? worktreesFor(typed, state.worktrees, LINE_LIMIT)
+        : choicesFor(typed, state.worktrees, state.branches, LINE_LIMIT),
   });
 
 /**
@@ -222,7 +251,7 @@ export const flippedBase = (state: DialogState): DialogState => ({
 /** What taking a line does. */
 export type Picked =
   /** A repo was picked: the dialog goes on in it, and reads it. */
-  | { readonly _tag: "ReadRepo"; readonly state: DialogState; readonly root: string }
+  | { readonly _tag: "ReadRepo"; readonly state: DialogState; readonly repo: RepoId }
   /** A choice was taken: the dialog closes and the panel runs `action`. */
   | { readonly _tag: "Send"; readonly action: Action }
   /** Nothing to take. */
@@ -235,11 +264,11 @@ export const pick = (state: DialogState, line: Option.Option<Line>): Picked => {
   if (taken._tag === "Repo") {
     return {
       _tag: "ReadRepo",
-      root: taken.root,
+      repo: taken.repo,
       // The branch I'm on belongs to the repo the dialog opened on, not a picked one.
       state: {
         ...state,
-        repo: Option.some(taken.root),
+        repo: Option.some(taken.repo),
         current: Option.none(),
         reading: true,
         at: 0,
@@ -248,9 +277,64 @@ export const pick = (state: DialogState, line: Option.Option<Line>): Picked => {
   }
   return Option.match(state.repo, {
     onNone: (): Picked => ({ _tag: "Nothing" }),
-    onSome: (main): Picked => ({
+    onSome: (repo): Picked => ({
       _tag: "Send",
-      action: enterAction(main, taken, state.base, state.current),
+      action:
+        state.mode === "open" && taken._tag === "Worktree"
+          ? { _tag: "GoTo", machine: repo.machine, folder: taken.path, name: taken.branch }
+          : enterAction(repo, taken, state.base, state.current),
     }),
   });
 };
+
+/** The dialog's title: what it is for, and the repo and machine it works in. */
+export const dialogTitle = (state: DialogState): string => {
+  const what = state.mode === "open" ? "Open a worktree" : "New or open worktree";
+  const where = state.mode === "open" ? "of" : "in";
+  return Option.match(state.repo, {
+    onNone: () => `${what}: pick a repo`,
+    onSome: ({ machine, root }) =>
+      `${what} ${where} ${lastSegment(root)}${machine === THIS_MACHINE ? "" : ` on ${machine}`}`,
+  });
+};
+
+/** The dialog's words for where it is: picking a repo, or opening or making a worktree. */
+export interface DialogCopy {
+  /** The input's placeholder. */
+  readonly placeholder: string;
+  /** What the list says when it has no lines. */
+  readonly empty: string;
+  /** The keys line at the bottom. */
+  readonly footer: string;
+  /** It offers the base a new branch starts from. */
+  readonly offersBase: boolean;
+  /** The hint beside a worktree line, the worktree at `path`. */
+  readonly worktreeHint: (path: string) => string;
+}
+
+/** What the dialog says at its step: see `DialogCopy`. */
+export const dialogCopy = (state: DialogState): DialogCopy => ({
+  placeholder: Option.isNone(state.repo)
+    ? "Repo name"
+    : state.mode === "open"
+      ? "Worktree's branch"
+      : "Branch name, pr:123 or a PR link",
+  empty: Option.isNone(state.repo)
+    ? "No repo matches."
+    : state.reading
+      ? "Reading worktrees and branches…"
+      : state.mode === "open"
+        ? "No worktree matches."
+        : "Type a branch name to create it.",
+  footer: Option.isNone(state.repo)
+    ? "↑↓ choose · Enter picks the repo · Esc closes"
+    : state.mode === "open"
+      ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes"
+      : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+  offersBase: Option.isSome(state.repo) && state.mode === "new",
+  worktreeHint: (path) => (state.mode === "open" ? lastSegment(path) : "open worktree"),
+});
+
+/** The hint beside a repo the dialog offers: where it is, and on which machine. */
+export const repoHint = ({ machine, root }: RepoId, home: string): string =>
+  locatedLabel({ machine, folder: root }, { home });

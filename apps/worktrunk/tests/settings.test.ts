@@ -1,10 +1,13 @@
+import { THIS_MACHINE } from "../src/machines.ts";
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   addFolder,
+  addFolderOn,
   DEFAULT_SETTINGS,
   hideRepo,
   moveFolder,
+  otherMachines,
   parseSettings,
   planImport,
   planSave,
@@ -16,6 +19,9 @@ import {
   withFields,
   type Settings,
 } from "../src/settings.ts";
+
+/** A repo on this machine. */
+const here = (root: string) => ({ machine: THIS_MACHINE, root });
 
 const FILE = "iangregsondev-worktrunk.json";
 
@@ -54,7 +60,7 @@ describe("parseSettings", () => {
     });
     expect(parseSettings(text, FILE)).toEqual({
       settings: {
-        folders: [{ name: "Work", path: "~/code/work" }],
+        folders: [{ name: "Work", path: "~/code/work", machine: THIS_MACHINE }],
         depth: 3,
         skip: ["vendor"],
         hidden: [],
@@ -64,14 +70,27 @@ describe("parseSettings", () => {
     });
   });
 
-  test("reads the hidden repos", () => {
+  test("a hidden repo written as a bare folder is on this machine", () => {
     const text = JSON.stringify({ hidden: ["/code/old", "/code/odd"] });
-    expect(parseSettings(text, FILE).settings.hidden).toEqual(["/code/old", "/code/odd"]);
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([
+      { machine: THIS_MACHINE, root: "/code/old" },
+      { machine: THIS_MACHINE, root: "/code/odd" },
+    ]);
+  });
+
+  test("a hidden repo written with its machine is on that machine", () => {
+    const text = JSON.stringify({
+      hidden: ["/code/old", { machine: "linux", path: "/code/old" }],
+    });
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([
+      here("/code/old"),
+      { machine: "linux", root: "/code/old" },
+    ]);
   });
 
   test("blank hidden entries are dropped", () => {
     const text = JSON.stringify({ hidden: ["", "/code/old"] });
-    expect(parseSettings(text, FILE).settings.hidden).toEqual(["/code/old"]);
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([here("/code/old")]);
   });
 
   test("reads the no-wrapper setting", () => {
@@ -91,7 +110,7 @@ describe("parseSettings", () => {
   test("a folder without a name is named after its last segment", () => {
     const text = JSON.stringify({ folders: [{ path: "~/code/Personal/" }] });
     expect(parseSettings(text, FILE).settings.folders).toEqual([
-      { name: "Personal", path: "~/code/Personal" },
+      { name: "Personal", path: "~/code/Personal", machine: THIS_MACHINE },
     ]);
   });
 
@@ -101,7 +120,7 @@ describe("parseSettings", () => {
       skip: [" dist ", ""],
     });
     expect(parseSettings(text, FILE).settings).toMatchObject({
-      folders: [{ name: "Work", path: "~/w" }],
+      folders: [{ name: "Work", path: "~/w", machine: THIS_MACHINE }],
       skip: ["dist"],
     });
   });
@@ -160,10 +179,10 @@ describe("serializeSettings", () => {
   test("stable key order, two-space indent, trailing newline", () => {
     const text = serializeSettings({
       noWrapper: true,
-      hidden: ["/r/old"],
+      hidden: [here("/r/old")],
       skip: ["a"],
       depth: 2,
-      folders: [{ name: "W", path: "~/w" }],
+      folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
     });
     expect(text).toBe(
       '{\n  "folders": [\n    {\n      "name": "W",\n      "path": "~/w"\n    }\n  ],\n  "depth": 2,\n  "skip": [\n    "a"\n  ],\n  "hidden": [\n    "/r/old"\n  ],\n  "noWrapper": true\n}\n',
@@ -172,13 +191,21 @@ describe("serializeSettings", () => {
 
   test("round-trips through parseSettings", () => {
     const settings = {
-      folders: [{ name: "W", path: "~/w" }],
+      folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
       depth: 5,
       skip: [],
-      hidden: ["/r/old"],
+      hidden: [here("/r/old")],
       noWrapper: true,
     };
     expect(parseSettings(serializeSettings(settings), FILE).settings).toEqual(settings);
+  });
+
+  test("a hidden repo on another machine is written with its machine", () => {
+    const text = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      hidden: [here("/r/old"), { machine: "linux", root: "/r/old" }],
+    });
+    expect(JSON.parse(text).hidden).toEqual(["/r/old", { machine: "linux", path: "/r/old" }]);
   });
 });
 
@@ -194,7 +221,7 @@ describe("planImport", () => {
     expect(plan.settled).toBe(true);
     expect(Option.map(plan.write, (text) => parseSettings(text, FILE).settings)).toEqual(
       Option.some({
-        folders: [{ name: "Personal", path: "~/code/personal" }],
+        folders: [{ name: "Personal", path: "~/code/personal", machine: THIS_MACHINE }],
         depth: 4,
         skip: ["node_modules"],
         hidden: [],
@@ -223,35 +250,45 @@ describe("planImport", () => {
 describe("hideRepo", () => {
   const file = serializeSettings({
     ...DEFAULT_SETTINGS,
-    folders: [{ name: "W", path: "~/w" }],
-    hidden: ["/w/old"],
+    folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
+    hidden: [here("/w/old")],
   });
   const settingsOf = (result: Result.Result<string, string>) =>
     Result.map(result, (text) => parseSettings(text, FILE).settings);
 
   test("adds the repo to the file's hidden list and keeps the rest", () => {
-    expect(settingsOf(hideRepo(file, "/w/api", FILE))).toEqual(
+    expect(settingsOf(hideRepo(file, here("/w/api"), FILE))).toEqual(
       Result.succeed({
         ...DEFAULT_SETTINGS,
-        folders: [{ name: "W", path: "~/w" }],
-        hidden: ["/w/old", "/w/api"],
+        folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
+        hidden: [here("/w/old"), here("/w/api")],
+      }),
+    );
+  });
+
+  test("hiding a folder hidden on this machine hides it on another machine too", () => {
+    expect(settingsOf(hideRepo(file, { machine: "linux", root: "/w/old" }, FILE))).toEqual(
+      Result.succeed({
+        ...DEFAULT_SETTINGS,
+        folders: [{ name: "W", path: "~/w", machine: THIS_MACHINE }],
+        hidden: [here("/w/old"), { machine: "linux", root: "/w/old" }],
       }),
     );
   });
 
   test("hiding a hidden repo leaves the file as it is, hand formatting and all", () => {
     const handMade = '{ "hidden": ["/w/old"] }';
-    expect(hideRepo(handMade, "/w/old", FILE)).toEqual(Result.succeed(handMade));
+    expect(hideRepo(handMade, here("/w/old"), FILE)).toEqual(Result.succeed(handMade));
   });
 
   test("with no settings file yet, hiding writes one", () => {
-    expect(settingsOf(hideRepo(null, "/w/api", FILE))).toEqual(
-      Result.succeed({ ...DEFAULT_SETTINGS, hidden: ["/w/api"] }),
+    expect(settingsOf(hideRepo(null, here("/w/api"), FILE))).toEqual(
+      Result.succeed({ ...DEFAULT_SETTINGS, hidden: [here("/w/api")] }),
     );
   });
 
   test("a file that doesn't parse is never replaced: hiding fails with the reason", () => {
-    expect(hideRepo('{"depth": ', "/w/api", FILE)).toEqual(
+    expect(hideRepo('{"depth": ', here("/w/api"), FILE)).toEqual(
       Result.fail(Option.getOrThrow(parseSettings('{"depth": ', FILE).error)),
     );
   });
@@ -307,27 +344,33 @@ describe("editing in the Settings dialog", () => {
   const two = {
     ...DEFAULT_SETTINGS,
     folders: [
-      { name: "Work", path: "~/code/work" },
-      { name: "Personal", path: "~/code/personal" },
+      { name: "Work", path: "~/code/work", machine: THIS_MACHINE },
+      { name: "Personal", path: "~/code/personal", machine: THIS_MACHINE },
     ],
   };
   const names = (settings: Settings) => settings.folders.map((folder) => folder.name);
 
+  test("un-hiding a repo on one machine leaves the same folder on another hidden", () => {
+    const linux = { machine: "linux", root: "/r/a" };
+    const hidden = { ...DEFAULT_SETTINGS, hidden: [here("/r/a"), linux] };
+    expect(unhide(hidden, linux).hidden).toEqual([here("/r/a")]);
+  });
+
   test("un-hiding a repo takes it off the hidden list, the rest stay hidden", () => {
-    const hidden = { ...DEFAULT_SETTINGS, hidden: ["/r/a", "/r/b"] };
-    expect(unhide(hidden, "/r/a").hidden).toEqual(["/r/b"]);
+    const hidden = { ...DEFAULT_SETTINGS, hidden: [here("/r/a"), here("/r/b")] };
+    expect(unhide(hidden, here("/r/a")).hidden).toEqual([here("/r/b")]);
   });
 
   test("a picked folder joins the end, under home written with ~, named after its last segment", () => {
     expect(addFolder(two, "/Users/me/src/oss/", HOME).folders).toEqual([
       ...two.folders,
-      { name: "oss", path: "~/src/oss" },
+      { name: "oss", path: "~/src/oss", machine: THIS_MACHINE },
     ]);
   });
 
   test("a folder outside home keeps its full path", () => {
     expect(addFolder(DEFAULT_SETTINGS, "/Volumes/x", HOME).folders).toEqual([
-      { name: "x", path: "/Volumes/x" },
+      { name: "x", path: "/Volumes/x", machine: THIS_MACHINE },
     ]);
   });
 
@@ -357,7 +400,10 @@ describe("editing in the Settings dialog", () => {
   });
 
   test("removing a folder keeps the others in order", () => {
-    const three = { ...two, folders: [...two.folders, { name: "Oss", path: "~/oss" }] };
+    const three = {
+      ...two,
+      folders: [...two.folders, { name: "Oss", path: "~/oss", machine: THIS_MACHINE }],
+    };
     expect(names(removeFolder(three, 1))).toEqual(["Work", "Oss"]);
   });
 
@@ -368,8 +414,8 @@ describe("editing in the Settings dialog", () => {
   test("the name fields name the folders, trimmed", () => {
     const next = withFields(two, { names: [" Jobs ", "Home"], skip: "", depth: 4 });
     expect(next.folders).toEqual([
-      { name: "Jobs", path: "~/code/work" },
-      { name: "Home", path: "~/code/personal" },
+      { name: "Jobs", path: "~/code/work", machine: THIS_MACHINE },
+      { name: "Home", path: "~/code/personal", machine: THIS_MACHINE },
     ]);
   });
 
@@ -402,8 +448,8 @@ describe("editing in the Settings dialog", () => {
     const opened = serializeSettings(two);
     const edited = withFields(
       unhide(
-        moveFolder(addFolder({ ...two, hidden: ["/r/a"] }, "/Users/me/oss", HOME), 2, -1),
-        "/r/a",
+        moveFolder(addFolder({ ...two, hidden: [here("/r/a")] }, "/Users/me/oss", HOME), 2, -1),
+        here("/r/a"),
       ),
       { names: ["W", "O", "P"], skip: "vendor", depth: 2 },
     );
@@ -411,14 +457,115 @@ describe("editing in the Settings dialog", () => {
     const text = plan._tag === "Write" ? plan.text : "";
     expect(parseSettings(text, FILE).settings).toEqual({
       folders: [
-        { name: "W", path: "~/code/work" },
-        { name: "O", path: "~/oss" },
-        { name: "P", path: "~/code/personal" },
+        { name: "W", path: "~/code/work", machine: THIS_MACHINE },
+        { name: "O", path: "~/oss", machine: THIS_MACHINE },
+        { name: "P", path: "~/code/personal", machine: THIS_MACHINE },
       ],
       depth: 2,
       skip: ["vendor"],
       hidden: [],
       noWrapper: true,
     });
+  });
+});
+
+describe("group folders on machines", () => {
+  test("a folder that names its machine is on that machine", () => {
+    const text = JSON.stringify({ folders: [{ name: "Box", path: "~/code", machine: "linux" }] });
+    expect(parseSettings(text, FILE).settings.folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+    ]);
+  });
+
+  test("a folder that names no machine is on this machine", () => {
+    const text = JSON.stringify({ folders: [{ name: "Work", path: "~/code/work" }] });
+    expect(parseSettings(text, FILE).settings.folders).toEqual([
+      { name: "Work", path: "~/code/work", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("the file keeps a folder's machine, and names none for this machine", () => {
+    const text = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      folders: [
+        { name: "Box", path: "~/code", machine: "linux" },
+        { name: "Work", path: "~/work", machine: THIS_MACHINE },
+      ],
+    });
+    expect(JSON.parse(text).folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+      { name: "Work", path: "~/work" },
+    ]);
+  });
+
+  test("a folder picked in the folder picker is on this machine", () => {
+    expect(addFolder(DEFAULT_SETTINGS, "/Volumes/x", "/Users/me").folders).toEqual([
+      { name: "x", path: "/Volumes/x", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("picking a folder listed only on another machine adds it for this machine", () => {
+    const remote = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "x", path: "/srv/x", machine: "linux" }],
+    };
+    expect(addFolder(remote, "/srv/x", "/Users/me").folders).toEqual([
+      { name: "x", path: "/srv/x", machine: "linux" },
+      { name: "x", path: "/srv/x", machine: THIS_MACHINE },
+    ]);
+  });
+
+  test("naming a folder in the Settings dialog keeps its machine", () => {
+    const remote = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "x", path: "/srv/x", machine: "linux" }],
+    };
+    expect(withFields(remote, { names: ["Box"], skip: "", depth: 4 }).folders).toEqual([
+      { name: "Box", path: "/srv/x", machine: "linux" },
+    ]);
+  });
+});
+
+describe("adding a group folder on another machine", () => {
+  test("offers Herdr's machines other than this one, in Herdr's order", () => {
+    const list = [
+      { name: THIS_MACHINE, layout: "ready" as const },
+      { name: "linux", layout: "ready" as const },
+      { name: "nas", layout: "unavailable" as const },
+    ];
+    expect(otherMachines(list)).toEqual(["linux", "nas"]);
+  });
+
+  test("a typed folder joins the end on its machine, under that machine's home written with ~", () => {
+    const work = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Work", path: "~/work", machine: THIS_MACHINE }],
+    };
+    expect(addFolderOn(work, "linux", " /home/me/code/oss/ ", "/home/me").folders).toEqual([
+      { name: "Work", path: "~/work", machine: THIS_MACHINE },
+      { name: "oss", path: "~/code/oss", machine: "linux" },
+    ]);
+  });
+
+  test("a folder already listed on that machine changes nothing, however it is typed", () => {
+    const box = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect([
+      addFolderOn(box, "linux", "/home/me/code", "/home/me"),
+      addFolderOn(box, "linux", "~/code/", "/home/me"),
+    ]).toEqual([box, box]);
+  });
+
+  test("the same folder on another machine is a group of its own", () => {
+    const box = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect(addFolderOn(box, "nas", "~/code", "/home/me").folders).toEqual([
+      { name: "Box", path: "~/code", machine: "linux" },
+      { name: "code", path: "~/code", machine: "nas" },
+    ]);
   });
 });

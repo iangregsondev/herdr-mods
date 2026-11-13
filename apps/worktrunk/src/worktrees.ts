@@ -5,6 +5,11 @@ import { at, finite, parseJson, text } from "worktrunk-mailbox";
 /** Where a worktree stands against the default branch. */
 export type WorktreeState =
   | { readonly _tag: "Main" }
+  /**
+   * At main's tip or the main checkout's commit, with no commits or changes of its own:
+   * nothing to clean up yet.
+   */
+  | { readonly _tag: "New" }
   /** In main already; `reason` is wt's integration reason, such as "patch_id_match". */
   | { readonly _tag: "Merged"; readonly reason: Option.Option<string> }
   | { readonly _tag: "Active" }
@@ -56,12 +61,34 @@ const CHANGE_KINDS = ["staged", "modified", "untracked", "renamed", "deleted", "
 const count = (item: unknown, ...path: readonly string[]): number =>
   Option.getOrElse(finite(at(item, ...path)), () => 0);
 
-const stateOf = (item: unknown): WorktreeState => {
-  if (at(item, "worktree", "main") === true) return { _tag: "Main" };
+const dirtyOf = (item: unknown): boolean =>
+  CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
+
+const isMain = (item: unknown): boolean => at(item, "worktree", "main") === true;
+
+const headOf = (item: unknown): Option.Option<string> => text(at(item, "head", "sha"));
+
+/**
+ * New: no commits or changes of its own, and at main's tip or at the main checkout's commit.
+ * wt compares with the remote's main, so a worktree made from a main checkout that hasn't
+ * pulled reads as integrated "ancestor" although nothing was done in it.
+ */
+const isNew = (item: unknown, mainHead: Option.Option<string>): boolean => {
+  if (dirtyOf(item) || count(item, "default_branch", "ahead") !== 0) return false;
+  const atTip =
+    at(item, "display", "state") === "empty" &&
+    Option.contains(text(at(item, "default_branch", "integration", "reason")), "same_commit");
+  const head = headOf(item);
+  const atMainCheckout = Option.isSome(head) && Option.contains(mainHead, head.value);
+  return atTip || atMainCheckout;
+};
+
+const stateOf = (item: unknown, mainHead: Option.Option<string>): WorktreeState => {
+  if (isMain(item)) return { _tag: "Main" };
+  if (isNew(item, mainHead)) return { _tag: "New" };
   const state = at(item, "display", "state");
-  if (state === "integrated" || state === "empty") {
-    return { _tag: "Merged", reason: text(at(item, "default_branch", "integration", "reason")) };
-  }
+  const reason = text(at(item, "default_branch", "integration", "reason"));
+  if (state === "integrated" || state === "empty") return { _tag: "Merged", reason };
   if (state === "would_conflict") return { _tag: "Conflict" };
   return { _tag: "Active" };
 };
@@ -87,13 +114,17 @@ const ciOf = (item: unknown, asked: boolean): Ci => {
   return { _tag: "Unknown" };
 };
 
-const toWorktree = (item: unknown, asked: boolean): Option.Option<Worktree> =>
+const toWorktree = (
+  item: unknown,
+  asked: boolean,
+  mainHead: Option.Option<string>,
+): Option.Option<Worktree> =>
   Option.map(text(at(item, "worktree", "path")), (path) => {
     const upstream = at(item, "upstream");
     return {
       branch: text(at(item, "branch")),
       path,
-      state: stateOf(item),
+      state: stateOf(item, mainHead),
       ahead: count(item, "default_branch", "ahead"),
       behind: count(item, "default_branch", "behind"),
       added: count(item, "default_branch", "diff", "added"),
@@ -101,7 +132,7 @@ const toWorktree = (item: unknown, asked: boolean): Option.Option<Worktree> =>
       upstream: Predicate.isObject(upstream)
         ? Option.some({ ahead: count(upstream, "ahead"), behind: count(upstream, "behind") })
         : Option.none(),
-      dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+      dirty: dirtyOf(item),
       ci: ciOf(item, asked),
       committedAt: committedAt(item),
     };
@@ -122,7 +153,51 @@ export const parseList = (output: string): Result.Result<readonly Worktree[], st
       Result.map(itemsOf(list), (items) => {
         // Only `--full` collects CI; the bare-array shape never says, so it counts as not asked.
         const asked = at(list, "collected", "ci") === true;
-        return items.flatMap((item) => Option.toArray(toWorktree(item, asked)));
+        const mainHead = Option.flatMap(Option.fromNullishOr(items.find(isMain)), headOf);
+        return items.flatMap((item) => Option.toArray(toWorktree(item, asked, mainHead)));
       }),
     ),
   );
+
+/** The last line of `text` that has anything on it; empty when none does. */
+export const lastLine = (text: string): string =>
+  text.trim().split("\n").filter(Boolean).at(-1) ?? "";
+
+/** Starts each repo's record in the batched read's output (ASCII record separator). */
+export const RECORD_START = "\u001e";
+
+/** One record: `<exit code><TAB><folder>`, then on the next lines what `wt list` printed. */
+const parseRecord = (
+  record: string,
+): readonly (readonly [string, Result.Result<readonly Worktree[], string>])[] => {
+  const newline = record.indexOf("\n");
+  const head = newline < 0 ? record : record.slice(0, newline);
+  const body = newline < 0 ? "" : record.slice(newline + 1);
+  const tab = head.indexOf("\t");
+  if (tab < 0) return [];
+  const code = head.slice(0, tab);
+  const root = head.slice(tab + 1);
+  return [
+    [
+      root,
+      code === "0"
+        ? parseList(body)
+        : Result.fail(lastLine(body) || `wt list failed (exit ${code})`),
+    ],
+  ];
+};
+
+/**
+ * Each repo's `wt list` from the batched read's output, by its folder: its worktrees, or
+ * the failed read's last error line.
+ */
+export const parseLists = (
+  stdout: string,
+  roots: readonly string[],
+): ReadonlyMap<string, Result.Result<readonly Worktree[], string>> => {
+  const read = new Map(stdout.split(RECORD_START).flatMap(parseRecord));
+  const unanswered: Result.Result<readonly Worktree[], string> = Result.fail(
+    "wt list gave no answer for it",
+  );
+  return new Map(roots.map((root) => [root, read.get(root) ?? unanswered]));
+};

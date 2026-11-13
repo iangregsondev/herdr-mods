@@ -1,7 +1,8 @@
 import { Option } from "effect";
+import { THIS_MACHINE } from "../src/machines.ts";
 import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_VIEW_STATE } from "../src/view.ts";
-import { confirmFor, repoMenu, rowMenu } from "../src/menus.ts";
+import { confirmFor, groupMenu, machineMenu, repoMenu, rowMenu } from "../src/menus.ts";
 import { roleOf, SPACE_ACTS } from "worktrunk-mailbox";
 import {
   confirmProps,
@@ -67,12 +68,22 @@ describe("readFolded", () => {
 });
 
 describe("view state", () => {
-  test("defaults: All, the Repos view, only repos with worktrees", () => {
-    expect(DEFAULT_VIEW_STATE).toEqual({ group: Option.none(), show: "repos", only: true });
+  test("defaults: All groups, the Repos view, only repos with worktrees, All machines", () => {
+    expect(DEFAULT_VIEW_STATE).toEqual({
+      group: Option.none(),
+      show: "repos",
+      only: true,
+      machine: Option.none(),
+    });
   });
 
   test("survives a round trip through shared state", () => {
-    const state = { group: Option.some("Work"), show: "merged", only: false } as const;
+    const state = {
+      group: Option.some("Work"),
+      show: "merged",
+      only: false,
+      machine: Option.none(),
+    } as const;
     const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
     expect(readViewState(stored)).toEqual(state);
     const defaults: unknown = JSON.parse(JSON.stringify(writeViewState(DEFAULT_VIEW_STATE)));
@@ -84,10 +95,21 @@ describe("view state", () => {
     expect(readViewState("repos")).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState({ group: 3, show: "nope", only: "yes" })).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState({ show: "open" })).toEqual({ ...DEFAULT_VIEW_STATE, show: "open" });
+    expect(readViewState({ machine: { name: 3 } })).toEqual(DEFAULT_VIEW_STATE);
+  });
+
+  test("a machine filter survives a round trip, this machine and another alike", () => {
+    const roundTrip = (machine: Option.Option<string | null>) => {
+      const state = { ...DEFAULT_VIEW_STATE, machine };
+      const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
+      return readViewState(stored).machine;
+    };
+    expect(roundTrip(Option.some("linux"))).toEqual(Option.some("linux"));
+    expect(roundTrip(Option.some(null))).toEqual(Option.some(null));
   });
 
   test("the Current view is remembered like the others", () => {
-    const state = { group: Option.none(), show: "current", only: true } as const;
+    const state = { ...DEFAULT_VIEW_STATE, show: "current" } as const;
     const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
     expect(readViewState(stored)).toEqual(state);
   });
@@ -95,22 +117,80 @@ describe("view state", () => {
 
 describe("readAction", () => {
   test.each([
-    ...actionsOf(rowMenu("/r/app", FEAT, { _tag: "New", name: "feat", folder: "/r/app.feat" })),
-    ...actionsOf(rowMenu("/r/app", DETACHED, { _tag: "Select", space: "s1" })),
+    ...actionsOf(
+      rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+        _tag: "New",
+        name: "feat",
+        folder: "/r/app.feat",
+        machine: THIS_MACHINE,
+      }),
+    ),
+    ...actionsOf(
+      rowMenu({ machine: "linux", root: "/r/app" }, FEAT, {
+        _tag: "New",
+        name: "feat",
+        folder: "/r/app.feat",
+        machine: "linux",
+      }),
+    ),
+    ...actionsOf(
+      rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, DETACHED, { _tag: "Select", space: "s1" }),
+    ),
   ])("reads back the row menu's $_tag action as it was sent", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test("a Merge or Remove target that names no machine is on this machine", () => {
+    const target = { main: "/r/app", path: "/r/app.feat", branch: "feat" };
+    expect(readAction({ _tag: "Remove", target, dirty: false })).toEqual(
+      Option.some({ _tag: "Remove", target: { ...target, machine: THIS_MACHINE }, dirty: false }),
+    );
+  });
+
   test.each([
-    { _tag: "Create", main: "/r/app", name: "feat", base: null },
-    { _tag: "Create", main: "/r/app", name: "feat", base: "main" },
-  ] as const)("reads back a Create with base $base", (action) => {
+    { _tag: "Create", main: "/r/app", name: "feat", base: null, machine: THIS_MACHINE },
+    { _tag: "Create", main: "/r/app", name: "feat", base: "main", machine: THIS_MACHINE },
+    { _tag: "Create", main: "/srv/app", name: "feat", base: null, machine: "linux" },
+  ] as const)("reads back a Create with base $base on machine $machine", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test.each([
+    { _tag: "GoTo", machine: THIS_MACHINE, folder: "/r/app.feat", name: "feat" },
+    { _tag: "GoTo", machine: "linux", folder: "/srv/app.feat", name: "feat" },
+  ] as const)(
+    "reads back a GoTo on machine $machine, as the worktree picker sends it",
+    (action) => {
+      expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+    },
+  );
+
+  test("a Create that names no machine is on this machine", () => {
+    expect(readAction({ _tag: "Create", main: "/r/app", name: "feat", base: null })).toEqual(
+      Option.some({
+        _tag: "Create",
+        main: "/r/app",
+        name: "feat",
+        base: null,
+        machine: THIS_MACHINE,
+      }),
+    );
   });
 
   test("reads back a Settings action, as the header's settings button sends it", () => {
     const action = { _tag: "Settings" } as const;
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test("reads back the filter menus' picks: a machine, this machine, a group, or All", () => {
+    const picks = [
+      { _tag: "PickMachine", machine: { name: "box" } },
+      { _tag: "PickMachine", machine: { name: THIS_MACHINE } },
+      { _tag: "PickMachine", machine: null },
+      { _tag: "PickGroup", group: "Work" },
+      { _tag: "PickGroup", group: null },
+    ];
+    expect(picks.map((pick) => readAction(overTheWire(pick)))).toEqual(picks.map(Option.some));
   });
 
   test("reads back a Focus action, as the toggle copy hands on the focus key", () => {
@@ -122,6 +202,13 @@ describe("readAction", () => {
     { _tag: "NewOrOpen", folder: "/r/app" },
     { _tag: "NewOrOpen", folder: null },
   ] as const)("reads back a NewOrOpen for the folder $folder", (action) => {
+    expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+  });
+
+  test.each([
+    { _tag: "Hide", machine: null, root: "/r/app" },
+    { _tag: "Hide", machine: "linux", root: "/r/app" },
+  ] as const)("reads back a Hide of the repo on machine $machine", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
@@ -146,10 +233,7 @@ describe("readAction", () => {
       "a remove that doesn't say if it is dirty",
       { _tag: "Remove", target: { main: "/r", path: "/r.f", branch: "f" } },
     ],
-    [
-      "a clean up with a bad batch",
-      { _tag: "Cleanup", batches: [{ main: 1 }], paths: [], dirty: 0 },
-    ],
+    ["a clean up with a bad batch", { _tag: "Cleanup", batches: [{ main: 1 }], dirty: 0 }],
     ["an open with a bad click", { _tag: "Open", click: { _tag: "Select" } }],
     ["a create whose base isn't text or null", { _tag: "Create", main: "/r", name: "f", base: 1 }],
     ["a hide with no repo", { _tag: "Hide" }],
@@ -165,7 +249,7 @@ describe("readAction", () => {
     expect(readAction(value)).toEqual(Option.none());
   });
 
-  test.each(actionsOf(repoMenu("/r/app", [MAIN, FEAT, DONE])))(
+  test.each(actionsOf(repoMenu({ machine: THIS_MACHINE, root: "/r/app" }, [MAIN, FEAT, DONE])))(
     "reads back the repo menu's $_tag action as it was sent",
     (action) => {
       expect(readAction(overTheWire(action))).toEqual(Option.some(action));
@@ -197,15 +281,36 @@ describe("overlayOf", () => {
 
 describe("readMenuProps", () => {
   test("reads a menu as the panel opens it", () => {
-    const items = rowMenu("/r/app", FEAT, { _tag: "Select", space: "s1" });
+    const items = rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+      _tag: "Select",
+      space: "s1",
+    });
     expect(readMenuProps(overTheWire({ role: "menu", title: "feat", items }))).toEqual({
       title: "feat",
       items,
     });
   });
 
+  test("reads the filter menus back, the checked choice and what each picks", () => {
+    const machines = machineMenu([
+      { label: "All", machine: Option.none(), selected: false },
+      { label: "this machine", machine: Option.some(THIS_MACHINE), selected: true },
+      { label: "box", machine: Option.some("box"), selected: false },
+    ]);
+    const groups = groupMenu([
+      { label: "All", group: Option.none(), selected: false },
+      { label: "Work", group: Option.some("Work"), selected: true },
+    ]);
+    for (const items of [machines, groups]) {
+      expect(readMenuProps(overTheWire(menuProps("Filter", items)))).toEqual({
+        title: "Filter",
+        items,
+      });
+    }
+  });
+
   test("leaves out items it can't read, and has no title when none is given", () => {
-    const good = { label: "Refresh", danger: false, action: { _tag: "Refresh" } };
+    const good = { label: "Refresh", danger: false, checked: false, action: { _tag: "Refresh" } };
     expect(readMenuProps({ items: [good, { label: "Bad", action: { _tag: "?" } }, 3] })).toEqual({
       title: "",
       items: [good],
@@ -215,7 +320,10 @@ describe("readMenuProps", () => {
 });
 
 describe("readConfirmProps", () => {
-  const remove = rowMenu("/r/app", FEAT, { _tag: "Select", space: "s1" })[3]?.action;
+  const remove = rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+    _tag: "Select",
+    space: "s1",
+  })[3]?.action;
 
   test("asks what confirmFor asks of the action in the props", () => {
     expect(readConfirmProps(overTheWire({ role: "confirm", action: remove }))).toEqual(
@@ -243,19 +351,26 @@ describe("readTitlebarProps", () => {
   });
 
   test("falls back to the mod's name and no terminal", () => {
-    expect(readTitlebarProps({})).toEqual({ title: "worktrunk", addr: Option.none() });
+    expect(readTitlebarProps({})).toEqual({ title: "Worktrunk", addr: Option.none() });
   });
 });
 
 describe("readDialogProps", () => {
-  test("the repo, the branch I'm on and the repos to pick from; a repo that isn't text is left out", () => {
+  test("the repo, the branch I'm on and the repos to pick from; a repo with no folder is left out", () => {
+    const app = { machine: THIS_MACHINE, root: "/r/app" };
     expect(
-      readDialogProps({ role: "new", repo: "/r/app", branch: "feat/a", repos: ["/r/app", 3] }),
-    ).toEqual({ repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: ["/r/app"] });
+      readDialogProps({ role: "new", repo: app, branch: "feat/a", repos: [app, { root: 3 }] }),
+    ).toEqual({
+      mode: "new",
+      repo: Option.some(app),
+      branch: Option.some("feat/a"),
+      repos: [app],
+    });
   });
 
   test("anything missing or of the wrong type reads as none", () => {
-    expect(readDialogProps({ repo: null, branch: 7, repos: "/r/app" })).toEqual({
+    expect(readDialogProps({ mode: "edit", repo: null, branch: 7, repos: "/r/app" })).toEqual({
+      mode: "new",
       repo: Option.none(),
       branch: Option.none(),
       repos: [],
@@ -274,7 +389,7 @@ describe("readSettingsText", () => {
 });
 
 describe("overlay props writers", () => {
-  const items = repoMenu("/r/app", [MAIN, DONE]);
+  const items = repoMenu({ machine: THIS_MACHINE, root: "/r/app" }, [MAIN, DONE]);
   const remove = Option.getOrThrow(Option.fromNullishOr(items[1]?.action));
 
   test("each names its overlay's role, and its reader reads back what it wrote", () => {
@@ -293,7 +408,12 @@ describe("overlay props writers", () => {
       Option.some("titlebar"),
       { title: "Merge feat", addr: Option.some("t1") },
     ]);
-    const opened = { repo: Option.some("/r/app"), branch: Option.none(), repos: ["/r/app"] };
+    const opened = {
+      mode: "new" as const,
+      repo: Option.some({ machine: THIS_MACHINE, root: "/r/app" }),
+      branch: Option.none(),
+      repos: [{ machine: THIS_MACHINE, root: "/r/app" }],
+    };
     const dialog = overTheWire(dialogProps(opened));
     expect([roleOf(dialog), readDialogProps(dialog)]).toEqual([Option.some("new"), opened]);
     const settings = overTheWire(settingsProps('{ "depth": 3 }'));

@@ -1,7 +1,7 @@
 // The row and repo menus, the confirm dialog's text and what each action asks for.
 // Pure: no `herdr` or `gpui` imports. The shell (main.ts) draws these and runs the actions.
 import { Option, Result } from "effect";
-import type { MenuRequest } from "worktrunk-mailbox";
+import type { MenuRequest, SpaceAct } from "worktrunk-mailbox";
 import {
   cleanupScript,
   mergeScript,
@@ -11,10 +11,21 @@ import {
   type MergeMode,
   type WtOptions,
 } from "./commands.ts";
+import {
+  machineName,
+  repoKey,
+  repoOfKey,
+  type RepoKey,
+  THIS_MACHINE,
+  type Located,
+  type Machine,
+  type RepoId,
+} from "./machines.ts";
 import type { RepoList } from "./reads.ts";
 import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
-import type { Click } from "./view.ts";
+import type { Place } from "./spaces.ts";
+import type { Chip, Click, MachineChoice } from "./view.ts";
 import type { Worktree } from "./worktrees.ts";
 
 /**
@@ -34,8 +45,6 @@ export type Action =
   | {
       readonly _tag: "Cleanup";
       readonly batches: readonly Batch[];
-      /** The worktrees' folders, to close their spaces once they are gone. */
-      readonly paths: readonly string[];
       /** How many of them have uncommitted changes. */
       readonly dirty: number;
     }
@@ -46,9 +55,25 @@ export type Action =
    * Other mods post these too (`worktrunk-mailbox`).
    */
   | MenuRequest
-  /** Switch to or create the worktree for `name`; `base` null for wt's default branch. */
+  /** Open the New-or-open worktree dialog for the repo `at` is in, on its machine. */
+  | { readonly _tag: "NewOrOpenAt"; readonly at: Located }
+  /**
+   * Go to the worktree at `folder` on `machine`: select the space on it, else open a new
+   * space named `name` there.
+   */
+  | {
+      readonly _tag: "GoTo";
+      readonly machine: Machine;
+      readonly folder: string;
+      readonly name: string;
+    }
+  /**
+   * Switch to or create the worktree for `name` in the repo at `main` on `machine`;
+   * `base` null for wt's default branch.
+   */
   | {
       readonly _tag: "Create";
+      readonly machine: Machine;
       readonly main: string;
       readonly name: string;
       readonly base: string | null;
@@ -56,39 +81,65 @@ export type Action =
   | { readonly _tag: "CopyPath"; readonly path: string }
   | { readonly _tag: "Reveal"; readonly path: string }
   | { readonly _tag: "Refresh" }
-  | { readonly _tag: "Hide"; readonly root: string }
+  | { readonly _tag: "Hide"; readonly machine: Machine; readonly root: string }
   /** Open the Settings dialog. */
   | { readonly _tag: "Settings" }
+  /** Keep one machine in view (`{ name }`, null for this machine), or every one (null). */
+  | { readonly _tag: "PickMachine"; readonly machine: { readonly name: Machine } | null }
+  /** List one group's repos, or every group's (null). */
+  | { readonly _tag: "PickGroup"; readonly group: string | null }
 
   /** Give the panel the keyboard, in its search box. */
   | { readonly _tag: "Focus" };
 
 export type CleanupAction = Extract<Action, { readonly _tag: "Cleanup" }>;
 
+export type CreateAction = Extract<Action, { readonly _tag: "Create" }>;
+
+/** How many worktrees `batches` remove. */
+const removedBy = (batches: readonly Batch[]): number =>
+  batches.reduce((n, batch) => n + batch.paths.length, 0);
+
+/** How many worktrees a clean up removes. */
+export const cleanupCount = (action: CleanupAction): number => removedBy(action.batches);
+
 export interface MenuItem {
   readonly label: string;
   /** Drawn in the theme's red: the action removes something. */
   readonly danger: boolean;
+  /** Marked as the current choice. */
+  readonly checked: boolean;
   readonly action: Action;
 }
 
 const item = (label: string, action: Action, danger = false): MenuItem => ({
   label,
   danger,
+  checked: false,
   action,
 });
 
-const mergeOf = (root: string, worktree: Worktree, branch: string, mode: MergeMode): Action => ({
+/** "Reveal in Finder" for a folder on `machine`: only this machine's Finder can show it. */
+const revealOn = (machine: Machine, path: string): readonly MenuItem[] =>
+  machine === THIS_MACHINE ? [item("Reveal in Finder", { _tag: "Reveal", path })] : [];
+
+const mergeOf = (
+  { machine, root }: RepoId,
+  worktree: Worktree,
+  branch: string,
+  mode: MergeMode,
+): Action => ({
   _tag: "Merge",
-  target: { main: root, path: worktree.path, branch },
+  target: { machine, main: root, path: worktree.path, branch },
   mode,
   dirty: worktree.dirty,
 });
 
 /** Removing a linked worktree: by its branch, or by its folder when it has none. */
-const removeOf = (root: string, worktree: Worktree): Action => ({
+const removeOf = ({ machine, root }: RepoId, worktree: Worktree): Action => ({
   _tag: "Remove",
   target: {
+    machine,
     main: root,
     path: worktree.path,
     branch: Option.getOrElse(worktree.branch, () => worktree.path),
@@ -96,17 +147,17 @@ const removeOf = (root: string, worktree: Worktree): Action => ({
   dirty: worktree.dirty,
 });
 
-/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
-export const rowMenu = (root: string, worktree: Worktree, click: Click): readonly MenuItem[] => {
-  const remove = item("Remove…", removeOf(root, worktree), true);
+/** The right-click menu of a worktree of `repo`. */
+export const rowMenu = (repo: RepoId, worktree: Worktree, click: Click): readonly MenuItem[] => {
+  const remove = item("Remove…", removeOf(repo, worktree), true);
   const linked =
     worktree.state._tag === "Main"
       ? []
       : Option.match(worktree.branch, {
           onNone: () => [remove],
           onSome: (branch) => [
-            item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
-            item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
+            item("Merge into main (squash)", mergeOf(repo, worktree, branch, "squash")),
+            item("Merge, keeping every commit", mergeOf(repo, worktree, branch, "keep")),
             remove,
           ],
         });
@@ -114,21 +165,23 @@ export const rowMenu = (root: string, worktree: Worktree, click: Click): readonl
     item("Open", { _tag: "Open", click }),
     ...linked,
     item("Copy path", { _tag: "CopyPath", path: worktree.path }),
-    item("Reveal in Finder", { _tag: "Reveal", path: worktree.path }),
+    ...revealOn(repo.machine, worktree.path),
   ];
 };
 
 /**
- * Merging (squashed) or removing the worktree of the repo at `root` that holds `folder`,
- * as a space's menu asks: the deepest of `worktrees` containing it. Fails, saying why,
- * for the main checkout, a detached worktree's merge, or a folder in none of them.
+ * Merging (squashed) or removing the worktree of `repo` that holds `folder` (on the
+ * repo's machine), as a space's menu asks: the deepest of `worktrees` containing it.
+ * Fails, saying why, for the main checkout, a detached worktree's merge, or a folder in
+ * none of them.
  */
 export const spaceWorktreeAction = (
   act: "Merge" | "Remove",
-  root: string,
+  repo: RepoId,
   worktrees: readonly Worktree[],
   folder: string,
 ): Result.Result<Action, string> => {
+  const root = repo.root;
   const holder = worktrees
     .filter((w) => isUnder(folder, w.path))
     .reduce<Worktree | undefined>(
@@ -141,10 +194,10 @@ export const spaceWorktreeAction = (
   if (holder.state._tag === "Main") {
     return Result.fail(`${lastSegment(root)}'s main checkout can't be merged or removed.`);
   }
-  if (act === "Remove") return Result.succeed(removeOf(root, holder));
+  if (act === "Remove") return Result.succeed(removeOf(repo, holder));
   return Option.match(holder.branch, {
     onNone: () => Result.fail(`${lastSegment(holder.path)} has no branch to merge.`),
-    onSome: (branch) => Result.succeed(mergeOf(root, holder, branch, "squash")),
+    onSome: (branch) => Result.succeed(mergeOf(repo, holder, branch, "squash")),
   });
 };
 
@@ -157,72 +210,87 @@ export const MENU_CHROME = 40;
 export const menuHeight = (items: number): number => MENU_CHROME + items * ITEM_HEIGHT;
 
 /** One repo's worktrees, as the clean-up reads them. */
-export interface RepoWorktrees {
-  readonly root: string;
+export interface RepoWorktrees extends RepoId {
   readonly worktrees: readonly Worktree[];
 }
 
 /** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
 export const cleanupAction = (repos: readonly RepoWorktrees[]): Option.Option<CleanupAction> => {
-  const found = repos.flatMap(({ root, worktrees }) => {
+  const found = repos.flatMap(({ machine, root, worktrees }) => {
     const merged = worktrees.filter((w) => w.state._tag === "Merged");
-    return merged.length === 0 ? [] : [{ root, merged }];
+    return merged.length === 0 ? [] : [{ machine, root, merged }];
   });
   if (found.length === 0) return Option.none();
   const all = found.flatMap(({ merged }) => merged);
   return Option.some({
     _tag: "Cleanup",
-    batches: found.map(({ root, merged }) => ({
+    batches: found.map(({ machine, root, merged }) => ({
+      machine,
       main: root,
       branches: merged.map((w) => Option.getOrElse(w.branch, () => w.path)),
+      paths: merged.map((w) => w.path),
     })),
-    paths: all.map((w) => w.path),
     dirty: all.filter((w) => w.dirty).length,
   });
 };
 
-/** The right-click menu of the repo whose main checkout is `root`. */
-export const repoMenu = (root: string, worktrees: readonly Worktree[]): readonly MenuItem[] => [
-  item("New or open worktree…", { _tag: "NewOrOpen", folder: root }),
-  ...Option.toArray(cleanupAction([{ root, worktrees }])).map((action) =>
-    item(`Clean up ${action.paths.length} merged…`, action, true),
+/** The right-click menu of `repo`. */
+export const repoMenu = (
+  { machine, root }: RepoId,
+  worktrees: readonly Worktree[],
+): readonly MenuItem[] => [
+  item("New or open worktree…", { _tag: "NewOrOpenAt", at: { machine, folder: root } }),
+  ...Option.toArray(cleanupAction([{ machine, root, worktrees }])).map((action) =>
+    item(`Clean up ${cleanupCount(action)} merged…`, action, true),
   ),
   item("Refresh", { _tag: "Refresh" }),
-  item("Reveal in Finder", { _tag: "Reveal", path: root }),
-  item("Hide this repo", { _tag: "Hide", root }),
+  ...revealOn(machine, root),
+  item("Hide this repo", { _tag: "Hide", machine, root }),
 ];
 
-/** A worktree found in the panel's lists, with its repo's main checkout. */
-export interface FoundWorktree {
-  readonly root: string;
+/** A worktree found in the panel's lists, with its repo's machine and main checkout. */
+export interface FoundWorktree extends RepoId {
   readonly worktree: Worktree;
 }
 
-/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
+/**
+ * The worktree a row's key names (its machine and path, as `repoKey` keys a folder) in
+ * any list of a repo on that machine (`lists`, by `repoKey`).
+ */
 export const findWorktree = (
-  lists: ReadonlyMap<string, RepoList>,
-  path: string,
-): Option.Option<FoundWorktree> =>
-  Option.fromNullishOr(
-    Array.from(lists).flatMap(([root, list]) =>
-      list.worktrees.filter((w) => w.path === path).map((worktree) => ({ root, worktree })),
-    )[0],
+  lists: ReadonlyMap<RepoKey, RepoList>,
+  key: RepoKey,
+): Option.Option<FoundWorktree> => {
+  const { machine, root: path } = repoOfKey(key);
+  return Option.fromNullishOr(
+    Array.from(lists)
+      .map(([listKey, list]) => ({ repo: repoOfKey(listKey), list }))
+      .filter(({ repo }) => repo.machine === machine)
+      .flatMap(({ repo, list }) =>
+        list.worktrees.filter((w) => w.path === path).map((worktree) => ({ ...repo, worktree })),
+      )[0],
   );
+};
 
 /**
- * Removing the merged worktrees among those at `paths`, batched by repo in the order
- * their repos first appear; none when none of them is merged.
+ * Removing the merged worktrees among those the row `keys` name (see `findWorktree`),
+ * batched by repo (machine and folder) in the order their repos first appear; none when
+ * none of them is merged.
  */
 export const cleanupFor = (
-  lists: ReadonlyMap<string, RepoList>,
-  paths: readonly string[],
+  lists: ReadonlyMap<RepoKey, RepoList>,
+  keys: readonly RepoKey[],
 ): Option.Option<CleanupAction> => {
-  const found = paths.flatMap((path) => Option.toArray(findWorktree(lists, path)));
-  const roots = Array.from(new Set(found.map(({ root }) => root)));
+  const found = keys.flatMap((key) => Option.toArray(findWorktree(lists, key)));
+  const repos = Array.from(
+    new Map(
+      found.map((f): [RepoKey, RepoId] => [repoKey(f), { machine: f.machine, root: f.root }]),
+    ),
+  );
   return cleanupAction(
-    roots.map((root) => ({
-      root,
-      worktrees: found.filter((f) => f.root === root).map((f) => f.worktree),
+    repos.map(([key, repo]) => ({
+      ...repo,
+      worktrees: found.filter((f) => repoKey(f) === key).map((f) => f.worktree),
     })),
   );
 };
@@ -272,7 +340,7 @@ export const confirmFor = (action: Action): Option.Option<Confirm> => {
         danger: true,
       });
     case "Cleanup": {
-      const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
+      const count = cleanupCount(action);
       return Option.some({
         title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
         lines: [
@@ -303,34 +371,70 @@ export interface JobSpec {
   readonly body: string;
   /** Folders the job removes: spaces left on them are closed once they are gone. */
   readonly gone: readonly string[];
+  /** The machine it runs on: its repo's. `cwd` and `gone` are folders there. */
+  readonly on: Machine;
 }
 
-/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
-export const jobFor = (action: Action, options: WtOptions): Option.Option<JobSpec> => {
+/** The clean up of `batches`, all on `machine`, as one job; none for no batches. */
+const cleanupJob = (
+  batches: readonly Batch[],
+  machine: Machine,
+  title: string,
+  options: WtOptions,
+): readonly JobSpec[] =>
+  Option.toArray(
+    Option.map(Option.fromNullishOr(batches[0]), (first) => ({
+      title,
+      cwd: first.main,
+      body: cleanupScript(batches, options),
+      gone: batches.flatMap((batch) => batch.paths),
+      on: machine,
+    })),
+  );
+
+/**
+ * The jobs for `action`, in the order they run; none for actions that aren't jobs
+ * (Create is built with its temp file). Each job runs on its repo's machine. A job runs
+ * on one machine, so a clean up is one job per machine its repos are on, in the order the
+ * machines first appear, each named after its machine when there are several.
+ */
+export const jobsFor = (action: Action, options: WtOptions): readonly JobSpec[] => {
   switch (action._tag) {
     case "Merge":
-      return Option.some({
-        title: `Merge ${action.target.branch} into main`,
-        cwd: action.target.main,
-        body: mergeScript(action.target, action.mode, options),
-        gone: [action.target.path],
-      });
+      return [
+        {
+          title: `Merge ${action.target.branch} into main`,
+          cwd: action.target.main,
+          body: mergeScript(action.target, action.mode, options),
+          gone: [action.target.path],
+          on: action.target.machine,
+        },
+      ];
     case "Remove":
-      return Option.some({
-        title: `Remove ${action.target.branch}`,
-        cwd: action.target.main,
-        body: removeScript(action.target.main, [action.target.branch], options),
-        gone: [action.target.path],
+      return [
+        {
+          title: `Remove ${action.target.branch}`,
+          cwd: action.target.main,
+          body: removeScript(action.target.main, [action.target.branch], options),
+          gone: [action.target.path],
+          on: action.target.machine,
+        },
+      ];
+    case "Cleanup": {
+      const machines = Array.from(new Set(action.batches.map((batch) => batch.machine)));
+      return machines.flatMap((machine) => {
+        const batches = action.batches.filter((batch) => batch.machine === machine);
+        const where = machines.length > 1 ? ` on ${machineName(machine)}` : "";
+        return cleanupJob(
+          batches,
+          machine,
+          `Clean up ${removedBy(batches)} merged${where}`,
+          options,
+        );
       });
-    case "Cleanup":
-      return Option.map(Option.fromNullishOr(action.batches[0]), (first) => ({
-        title: `Clean up ${action.paths.length} merged`,
-        cwd: first.main,
-        body: cleanupScript(action.batches, options),
-        gone: action.paths,
-      }));
+    }
     default:
-      return Option.none();
+      return [];
   }
 };
 
@@ -345,3 +449,56 @@ export const busyNotice = (running: string): Notice => ({
   title: "worktrunk is busy",
   body: `Wait for "${running}" to finish.`,
 });
+
+/** What the panel does for a space menu's request, once it knows where the space is. */
+export type SpaceStep =
+  /** The space has no folder anywhere: nothing to act on. */
+  | { readonly _tag: "NoFolder" }
+  /** Open the New-or-open dialog (`new`) or the worktree picker (`open`) for `at`'s repo. */
+  | { readonly _tag: "Dialog"; readonly mode: "new" | "open"; readonly at: Located }
+  /** Merge or remove the worktree holding `at`, found through its repo on its machine. */
+  | { readonly _tag: "Act"; readonly act: "Merge" | "Remove"; readonly at: Located };
+
+/** The step for `act` on the space `space`, from where every space is now (`places`). */
+export const spaceStep = (places: readonly Place[], space: string, act: SpaceAct): SpaceStep =>
+  Option.match(Option.fromNullishOr(places.find((p) => p.space.id === space)), {
+    onNone: (): SpaceStep => ({ _tag: "NoFolder" }),
+    onSome: ({ machine, place }): SpaceStep => {
+      const at: Located = { machine, folder: place };
+      switch (act) {
+        case "NewOrOpen":
+          return { _tag: "Dialog", mode: "new", at };
+        case "Open":
+          return { _tag: "Dialog", mode: "open", at };
+        default:
+          return { _tag: "Act", act, at };
+      }
+    },
+  });
+
+/** The machine filter's menu: All machines, then each machine, the current one checked. */
+export const machineMenu = (choices: readonly MachineChoice[]): readonly MenuItem[] =>
+  choices.map((choice) => ({
+    ...item(Option.isNone(choice.machine) ? "All machines" : choice.label, {
+      _tag: "PickMachine",
+      machine: Option.match(choice.machine, { onNone: () => null, onSome: (name) => ({ name }) }),
+    }),
+    checked: choice.selected,
+  }));
+
+/** The group filter's menu: All groups, then each group, the current one checked. */
+export const groupMenu = (chips: readonly Chip[]): readonly MenuItem[] =>
+  chips.map((chip) => ({
+    ...item(Option.isNone(chip.group) ? "All groups" : chip.label, {
+      _tag: "PickGroup",
+      group: Option.getOrNull(chip.group),
+    }),
+    checked: chip.selected,
+  }));
+
+/**
+ * A filter dropdown's button text: its menu's checked item, else the first (a saved group
+ * the first scan hasn't found yet is in no item).
+ */
+export const filterButton = (items: readonly MenuItem[]): string =>
+  (items.find((i) => i.checked) ?? items[0])?.label ?? "";

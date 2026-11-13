@@ -1,6 +1,14 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
+import {
+  repoKey,
+  type Homes,
+  type Located,
+  type Machine,
+  type MachineStatus,
+  type RepoKey,
+} from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -24,6 +32,38 @@ export const foldList = (
       _tag: "Read",
       worktrees: Option.match(old, { onNone: () => [], onSome: (list) => list.worktrees }),
       error: Option.some(error),
+    }),
+  });
+
+/** A machine's batched list read: each repo's list by its `repoKey`, or why the machine couldn't be read. */
+export type MachineLists = Result.Result<
+  ReadonlyMap<RepoKey, Result.Result<readonly Worktree[], string>>,
+  MachineStatus
+>;
+
+/** The repos' lists and the machines that can't be read, as the panel keeps them. */
+export interface KeptLists {
+  readonly lists: ReadonlyMap<RepoKey, RepoList>;
+  readonly machines: ReadonlyMap<Machine, MachineStatus>;
+}
+
+/** What the panel keeps after `machine`'s batched list read answers. */
+export const keepLists = (kept: KeptLists, machine: Machine, answer: MachineLists): KeptLists =>
+  Result.match(answer, {
+    onFailure: (status): KeptLists => ({
+      ...kept,
+      machines: new Map([...kept.machines, [machine, status]]),
+    }),
+    onSuccess: (read): KeptLists => ({
+      ...kept,
+      lists: new Map([
+        ...kept.lists,
+        ...Array.from(
+          read,
+          ([key, list]) =>
+            [key, foldList(Option.fromNullishOr(kept.lists.get(key)), list)] as const,
+        ),
+      ]),
     }),
   });
 
@@ -171,14 +211,14 @@ export type CurrentRepo =
   | { readonly _tag: "Failed"; readonly reason: string };
 
 /**
- * The Current repo from its lookup: the listed repo, or one the panel doesn't list (a
- * hidden one, say), grouped by the group folders.
+ * The Current repo from its lookup: the listed repo (same machine and folder), or one the
+ * panel doesn't list (a hidden one, say), grouped by the group folders.
  */
 export const currentRepoOf = (
   found: CurrentLookup,
   repos: readonly Repo[],
   folders: readonly GroupFolder[],
-  home: string,
+  homes: Homes,
 ): CurrentRepo =>
   Option.match(found, {
     onNone: (): CurrentRepo => ({ _tag: "Looking" }),
@@ -188,9 +228,9 @@ export const currentRepoOf = (
         onNone: (): CurrentRepo => ({ _tag: "NotInRepo" }),
         onSome: (repo): CurrentRepo => ({
           _tag: "InRepo",
-          repo: repos.find((listed) => listed.root === repo.root) ?? {
+          repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
             ...repo,
-            group: groupOf(repo.root, folders, home),
+            group: groupOf(repo, folders, homes),
           },
         }),
       }),
@@ -199,8 +239,11 @@ export const currentRepoOf = (
 
 /** The Current view following focus. */
 export interface Follow {
-  /** The focused folder last looked up ("" for none); none while the view isn't shown. */
-  readonly folder: Option.Option<string>;
+  /**
+   * The focused folder last looked up, on its machine ("" for none); none while the view
+   * isn't shown.
+   */
+  readonly folder: Option.Option<Located>;
   readonly found: CurrentLookup;
 }
 
@@ -208,13 +251,13 @@ export const NOT_FOLLOWING: Follow = { folder: Option.none(), found: Option.none
 
 /**
  * What a render looks up: while the Current view shows (`following`), the focused
- * folder, when it isn't the one last looked up. Herdr renders on every focus change,
- * so this never polls.
+ * folder, when it isn't the one last looked up (the same path on another machine is
+ * another folder). Herdr renders on every focus change, so this never polls.
  */
 export const followFocus = (
   follow: Follow,
-  { following, folder }: { readonly following: boolean; readonly folder: string },
-): { readonly follow: Follow; readonly lookUp: Option.Option<string> } =>
+  { following, folder }: { readonly following: boolean; readonly folder: Located },
+): { readonly follow: Follow; readonly lookUp: Option.Option<Located> } =>
   !following
     ? { follow: { ...follow, folder: Option.none() }, lookUp: Option.none() }
     : Option.contains(follow.folder, folder)
@@ -228,7 +271,7 @@ export const followFocus = (
  */
 export const takeLookup = (
   follow: Follow,
-  folder: string,
+  folder: Located,
   answer: Result.Result<Option.Option<FoundRepo>, string>,
 ): { readonly follow: Follow; readonly refresh: boolean } =>
   Option.contains(follow.folder, folder)
@@ -236,14 +279,14 @@ export const takeLookup = (
         follow: { ...follow, found: Option.some(answer) },
         refresh: Option.match(follow.found, {
           onNone: () => true,
-          onSome: (before) => rootOf(before) !== rootOf(answer),
+          onSome: (before) => keyOf(before) !== keyOf(answer),
         }),
       }
     : { follow, refresh: false };
 
-/** The repo root an answer names; undefined for none or a failed lookup. */
-const rootOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>
+/** The `repoKey` of the repo an answer names; undefined for none or a failed lookup. */
+const keyOf = (answer: Result.Result<Option.Option<FoundRepo>, string>): string | undefined =>
   Result.match(answer, {
     onFailure: () => undefined,
-    onSuccess: (found) => Option.getOrUndefined(found)?.root,
+    onSuccess: (found) => Option.getOrUndefined(Option.map(found, repoKey)),
   });

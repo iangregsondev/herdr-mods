@@ -11,6 +11,7 @@ import {
   CI_SCRIPT,
   GONE_SCRIPT,
   JOB_SCRIPT,
+  LISTS_SCRIPT,
   LIST_SCRIPT,
   OWNERS_SCRIPT,
   SCAN_SCRIPT,
@@ -21,6 +22,7 @@ import {
   removeScript,
   shArgs,
 } from "../apps/worktrunk/src/commands.ts";
+import { THIS_MACHINE } from "../apps/worktrunk/src/machines.ts";
 import { currentRepo } from "../apps/worktrunk/src/repos.ts";
 import {
   fakeBin,
@@ -33,16 +35,46 @@ import {
   writeFile,
 } from "./test-support.ts";
 
-/** `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. */
-const scriptFile = (body: string): string =>
-  writeFile(tempDir(), "script.sh", shArgs(body, [])[1] ?? "");
+/**
+ * `body` exactly as the panel runs it, as a file: `shArgs` puts the script second. Its
+ * login shell is `shell`; by default one that keeps the PATH the test gives, so a test's
+ * stand-in commands are found.
+ */
+const scriptFile = (body: string, shell: string = keepPathShell()): string =>
+  writeFile(tempDir(), "script.sh", `SHELL=${quote(shell)}\n${shArgs(body, [])[1] ?? ""}`);
+
+/** A login shell whose PATH is the one it was started with. */
+const keepPathShell = (): string => {
+  const bin = join(tempDir(), "bin");
+  fakeBin(bin, "loginsh", 'exec /bin/sh -c "$3"');
+  return join(bin, "loginsh");
+};
 
 describe("shArgs's script", () => {
-  test("appends the folders wt and git are usually installed in to PATH", () => {
-    const run = runSh(scriptFile('printf %s "$PATH"'), {
-      env: { PATH: "/usr/bin:/bin", HOME: "/home/me" },
+  test("runs with the PATH of the person's login shell, whatever its profile prints", () => {
+    const bin = join(tempDir(), "bin");
+    fakeBin(
+      bin,
+      "loginsh",
+      [
+        '[ "$1" = -l ] || { printf "not a login shell"; exit 1; }',
+        "printf 'welcome\\n'",
+        'PATH=/login/bin exec /bin/sh -c "$3"',
+      ].join("\n"),
+    );
+    const run = runSh(scriptFile('printf %s "$PATH"', join(bin, "loginsh")), {
+      env: { PATH: "/usr/bin:/bin" },
     });
-    expect(run.stdout).toBe("/usr/bin:/bin:/home/me/.local/bin:/opt/homebrew/bin:/usr/local/bin");
+    expect(run.stdout).toBe("/login/bin");
+  });
+
+  test("with no login shell in $SHELL, runs nothing and fails saying why", () => {
+    const run = runSh(scriptFile("printf ran", ""), { env: { PATH: "/usr/bin:/bin" } });
+    expect([run.code, run.stdout, run.stderr]).toEqual([
+      127,
+      "",
+      "worktrunk: $SHELL is empty, so the login shell's PATH is unknown\n",
+    ]);
   });
 });
 
@@ -108,8 +140,15 @@ describe("SCAN_SCRIPT", () => {
     );
   });
 
-  test("a group folder that doesn't exist finds nothing, and the scan still succeeds", () => {
-    expect(scan(4, "", [join(tempDir(), "missing")])).toEqual({ code: 0, stdout: "", stderr: "" });
+  test("a group folder that doesn't exist is printed alone on its line; the scan goes on", () => {
+    const root = tempDir();
+    folders(root, ["work/api/.git"]);
+    const missing = join(root, "missing");
+    expect(scan(4, "", [missing, join(root, "work")])).toEqual({
+      code: 0,
+      stdout: `${missing}\n${join(root, "work")}\t${join(root, "work/api")}\t1\n`,
+      stderr: "",
+    });
   });
 });
 
@@ -153,16 +192,23 @@ describe("OWNERS_SCRIPT", () => {
 describe("the Current repo's lookup: currentRepo over OWNERS_SCRIPT", () => {
   /** The Current repo of `folder`, as the panel looks it up: the script, then its reading. */
   const lookUp = (folder: string) =>
-    currentRepo(runSh(scriptFile(OWNERS_SCRIPT), { args: [folder], env: isolatedGitEnv() }).stdout);
+    currentRepo(
+      runSh(scriptFile(OWNERS_SCRIPT), { args: [folder], env: isolatedGitEnv() }).stdout,
+      THIS_MACHINE,
+    );
 
   test("a folder in the main checkout belongs to that repo", () => {
     const { repo } = repoWithWorktree();
-    expect(lookUp(join(repo, "src"))).toEqual(Option.some({ root: repo, count: 2 }));
+    expect(lookUp(join(repo, "src"))).toEqual(
+      Option.some({ machine: THIS_MACHINE, root: repo, count: 2 }),
+    );
   });
 
   test("a linked worktree belongs to its repo, through the shared git folder", () => {
     const { root, repo } = repoWithWorktree();
-    expect(lookUp(join(root, "api.feature"))).toEqual(Option.some({ root: repo, count: 2 }));
+    expect(lookUp(join(root, "api.feature"))).toEqual(
+      Option.some({ machine: THIS_MACHINE, root: repo, count: 2 }),
+    );
   });
 
   test("a folder outside every repo has none", () => {
@@ -180,6 +226,45 @@ describe("LIST_SCRIPT", () => {
       env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` },
     });
     expect(run.stdout).toBe(`${join(root, "api")} list --format=json`);
+  });
+});
+
+describe("LISTS_SCRIPT", () => {
+  /** A temp root with the given repo folders and a `wt` that runs `wt` (a shell body). */
+  const setup = (repos: readonly string[], wt: string) => {
+    const root = realpathSync(tempDir());
+    for (const repo of repos) mkdirSync(join(root, repo));
+    fakeBin(join(root, "bin"), "wt", wt);
+    return { root, env: { PATH: `${join(root, "bin")}:/usr/bin:/bin` } };
+  };
+
+  test("runs wt list --format=json in each repo, each answer in a record of its exit code and folder", () => {
+    const { root, env } = setup(["api", "web"], 'printf "%s %s" "${PWD##*/}" "$*"');
+    const run = runSh(scriptFile(LISTS_SCRIPT), {
+      args: [join(root, "api"), join(root, "web")],
+      env,
+    });
+    expect(run.stdout).toBe(
+      `\u001e0\t${join(root, "api")}\napi list --format=json` +
+        `\u001e0\t${join(root, "web")}\nweb list --format=json`,
+    );
+  });
+
+  test("a repo whose wt list fails gets its exit code and errors; the others still list", () => {
+    const { root, env } = setup(
+      ["bad", "ok"],
+      '[ "${PWD##*/}" = bad ] && { echo noise; echo "wt: broken" >&2; exit 3; }; printf ok',
+    );
+    const run = runSh(scriptFile(LISTS_SCRIPT), {
+      args: [join(root, "bad"), join(root, "missing"), join(root, "ok")],
+      env,
+    });
+    expect(run.stdout.split("\u001e")).toEqual([
+      "",
+      `3\t${join(root, "bad")}\nwt: broken\n`,
+      expect.stringMatching(new RegExp(`^[1-9][0-9]*\\t${join(root, "missing")}\\n.+`)),
+      `0\t${join(root, "ok")}\nok`,
+    ]);
   });
 });
 
@@ -279,7 +364,7 @@ describe("removeScript", () => {
 });
 
 describe("mergeScript", () => {
-  const target = { main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
+  const target = { machine: null, main: "/r/app", path: "/r/app.feat-x", branch: "feat/x" };
 
   test("squash-merges inside the worktree, then removes it from the main checkout", () => {
     expect(runWithWt(mergeScript(target, "squash", WRAPPED)).calls).toEqual([
@@ -308,8 +393,8 @@ describe("mergeScript", () => {
 
 describe("cleanupScript", () => {
   const batches = [
-    { main: "/r/app", branches: ["a", "b"] },
-    { main: "/r/lib", branches: ["c"] },
+    { machine: null, main: "/r/app", branches: ["a", "b"], paths: ["/r/app.a", "/r/app.b"] },
+    { machine: null, main: "/r/lib", branches: ["c"], paths: ["/r/lib.c"] },
   ];
 
   test("removes each repo's merged branches from its main checkout", () => {

@@ -3,27 +3,39 @@
 // spliced into the script text, so no path or name needs quoting.
 import { Option, Predicate, Result } from "effect";
 import { at, finite, parseJson, text } from "worktrunk-mailbox";
-import { expandHome } from "./repos.ts";
+import type { Homes, Machine } from "./machines.ts";
+import { folderOn } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 
-/** The scan's arguments for these settings. */
-export const scanArgs = (settings: Settings, home: string): readonly string[] => [
+/** The scan's arguments for these settings' group folders on `machine`, `~` from `homes`. */
+export const scanArgs = (settings: Settings, machine: Machine, homes: Homes): readonly string[] => [
   String(settings.depth),
   settings.skip.map((name) => `/${name}/`).join(""),
-  ...settings.folders.map((folder) => expandHome(folder.path, home)),
+  ...settings.folders
+    .filter((folder) => folder.machine === machine)
+    .flatMap((folder) => Option.toArray(folderOn(folder, homes))),
 ];
 
 /** argv[0] for `sh -c`: the name the scripts report errors under. */
 export const SCRIPT_NAME = "worktrunk";
 
-// The app's environment may lack the folders wt and git are usually installed in.
-// Appended, so the person's own PATH order still wins.
-const PATH_LINE = 'PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; export PATH';
+// Every script runs with the PATH of the machine's login shell ($SHELL -l), so the
+// person's own tool setup (mise, Homebrew, ~/.local/bin) applies on whichever machine
+// it runs. The PATH is printed last, after a newline, so anything the profile prints
+// first is dropped.
+const LOGIN_PATH = `[ -n "$SHELL" ] || {
+  printf '%s\\n' "worktrunk: \\$SHELL is empty, so the login shell's PATH is unknown" >&2
+  exit 127
+}
+nl='
+'
+login_path=$("$SHELL" -l -c 'printf "\\n%s" "$PATH"') || exit
+PATH=\${login_path##*"$nl"}; export PATH`;
 
 /** `body` as the arguments to `sh`: `-c`, the script, its name, then `args` as $1... */
 export const shArgs = (body: string, args: readonly string[]): readonly string[] => [
   "-c",
-  `${PATH_LINE}\n${body}`,
+  `${LOGIN_PATH}\n${body}`,
   SCRIPT_NAME,
   ...args,
 ];
@@ -33,7 +45,8 @@ export const shArgs = (body: string, args: readonly string[]): readonly string[]
  * wrapped in slashes ("/node_modules//.cache/"); then the group folders. A folder with a
  * `.git` folder is a repo (a linked worktree's `.git` is a file, so it never counts). It
  * never enters a repo, a symlink, a hidden folder or a skipped name. Prints
- * `group folder<TAB>repo<TAB>worktree count` per repo.
+ * `group folder<TAB>repo<TAB>worktree count` per repo, and a group folder that doesn't
+ * exist alone on its line.
  */
 export const SCAN_SCRIPT = `depth=$1; skip=$2; shift 2
 walk() {
@@ -53,7 +66,10 @@ walk() {
     walk "$child" $((level + 1))
   done
 }
-for top in "$@"; do top=\${top%/}; walk "$top" 0; done
+for top in "$@"; do
+  top=\${top%/}
+  if [ -d "$top" ]; then walk "$top" 0; else printf '%s\\n' "$top"; fi
+done
 exit 0`;
 
 /**
@@ -73,6 +89,34 @@ done | sort -u`;
 
 /** Lists the worktrees of the repo at $1. */
 export const LIST_SCRIPT = 'cd "$1" && wt list --format=json';
+
+/** How many repos the batched list reads at once. */
+const LISTS_AT_ONCE = 4;
+
+/**
+ * Lists the worktrees of every repo in the arguments, in one run: a few repos at a time,
+ * each answer kept in a private temp folder, then printed in the arguments' order. Each
+ * repo's record starts with the ASCII record separator, then `<exit code><TAB><folder>`
+ * on its own line, then what \`wt list --format=json\` printed: its JSON, or its errors
+ * when it failed.
+ */
+export const LISTS_SCRIPT = `tmp=$(mktemp -d) || exit
+trap 'rm -rf "$tmp"' EXIT
+i=0
+for repo in "$@"; do
+  i=$((i + 1))
+  { (cd "$repo" && wt list --format=json) >"$tmp/$i.out" 2>"$tmp/$i.err"; echo $? >"$tmp/$i.code"; } &
+  [ $((i % ${LISTS_AT_ONCE})) -eq 0 ] && wait
+done
+wait
+i=0
+rs=$(printf '\\036')
+for repo in "$@"; do
+  i=$((i + 1))
+  code=$(cat "$tmp/$i.code" 2>/dev/null) || code=127
+  printf '%s%s\\t%s\\n' "$rs" "$code" "$repo"
+  if [ "$code" = 0 ]; then cat "$tmp/$i.out"; else cat "$tmp/$i.err"; fi
+done`;
 
 /** Lists the worktrees of the repo at $1 with their CI. */
 export const CI_SCRIPT = `${LIST_SCRIPT} --full`;
@@ -108,6 +152,8 @@ export const removeScript = (
 
 /** A worktree other than the main checkout, with the repo it belongs to. */
 export interface Linked {
+  /** The machine the repo lives on; its folders are there. */
+  readonly machine: Machine;
   /** The repo's main checkout. */
   readonly main: string;
   /** The worktree's folder. */
@@ -133,8 +179,12 @@ export const mergeScript = (target: Linked, mode: MergeMode, options: WtOptions)
 
 /** One repo's worktrees to remove. */
 export interface Batch {
+  /** The machine the repo lives on. */
+  readonly machine: Machine;
   readonly main: string;
   readonly branches: readonly string[];
+  /** The worktrees' folders, to close their spaces once they are gone. */
+  readonly paths: readonly string[];
 }
 
 /**
@@ -217,14 +267,20 @@ export interface Job {
   readonly shell: string;
   /** The script to run in it. */
   readonly body: string;
+  /** The machine it runs on: the folder and the shell are that machine's. */
+  readonly on: Machine;
 }
 
-/** `hc` arguments that start `job` as a background terminal, printing its address as JSON. */
-export const jobArgs = ({ cwd, shell, body }: Job): readonly string[] => [
+/**
+ * `hc` arguments that start `job` as a background terminal, printing its address as
+ * JSON. A job on another machine starts there (`--on`); this machine's needs no flag.
+ */
+export const jobArgs = ({ cwd, shell, body, on }: Job): readonly string[] => [
   "run",
   "--json",
   "--bg",
   "--no-parent",
+  ...(on === null ? [] : ["--on", on]),
   "--cwd",
   cwd,
   "--",

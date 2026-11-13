@@ -21,6 +21,7 @@ import {
   hc,
   home,
   layout,
+  machines,
   nextCommand,
   notify,
   openOverlay,
@@ -38,23 +39,27 @@ import {
   writeTextFile,
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import { scanArgs } from "./commands.ts";
 import {
   flippedBase,
   highlight,
+  dialogCopy,
+  dialogTitle,
   linesFor,
   moved,
   openDialog,
+  repoHint,
   pick,
   retyped,
   withRead,
   type Base,
+  type DialogMode,
   type DialogState,
   type Line,
 } from "./dialog.ts";
 import {
   Files,
   findModBlock,
+  groupsKey,
   requestKey,
   roleOf,
   type Role,
@@ -62,8 +67,14 @@ import {
 } from "worktrunk-mailbox";
 import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
 import {
+  addGroupFolderOn,
   dialogFor,
-  findRepos,
+  foundOf,
+  landSearch,
+  machinesOf,
+  refreshMachines,
+  type MachinesAsk,
+  type Searches,
   hideInSettings,
   loadSettings,
   lookUpCurrent,
@@ -72,28 +83,36 @@ import {
   readCi,
   readDialogRepo,
   readEach,
-  readList,
+  defectAsReason,
   runJob,
   saveSettings,
+  scanKey,
   settingsText,
   spaceWorktree,
   syncToast,
   type JobOutcome,
   type LoadedSettings,
+  type Scanned,
 } from "./load.ts";
 import {
   ITEM_HEIGHT,
   busyNotice,
   cleanupAction,
+  cleanupCount,
   cleanupFor,
   confirmFor,
   dialogHeight,
+  filterButton,
   findWorktree,
-  jobFor,
+  groupMenu,
+  jobsFor,
+  machineMenu,
+  spaceStep,
   menuHeight,
   repoMenu,
   rowMenu,
   type Action,
+  type CreateAction,
   type JobSpec,
   type MenuItem,
 } from "./menus.ts";
@@ -102,7 +121,7 @@ import {
   ciDue,
   currentRepoOf,
   foldCi,
-  foldList,
+  keepLists,
   followFocus,
   IDLE,
   NO_READS,
@@ -119,12 +138,26 @@ import {
   type RefreshAsk,
   type RepoList,
 } from "./reads.ts";
-import type { FoundRepo, Repo } from "./repos.ts";
+import {
+  locatedLabel,
+  repoKey,
+  repoOfKey,
+  type RepoKey,
+  THIS_MACHINE,
+  type Homes,
+  machineStates,
+  type Located,
+  type Machine,
+  type MachineStatus,
+  type RepoId,
+} from "./machines.ts";
+import type { Repo } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
   addFolder,
   lastSegment,
   moveFolder,
+  otherMachines,
   parseSettings,
   removeFolder,
   skipText,
@@ -134,7 +167,15 @@ import {
   type Settings,
 } from "./settings.ts";
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
-import { focusedFolder, localPlaces, placeOf, spacesInGone, spacesOnWorktrees } from "./spaces.ts";
+import {
+  clickCommand,
+  focusedOrHere,
+  groupsChanged,
+  goTo,
+  spaceGroups,
+  spacePlaces,
+  spacesInGone,
+} from "./spaces.ts";
 import {
   buildView,
   reposToRead,
@@ -180,7 +221,7 @@ const LEGACY_FILE = "worktrunk.json";
 const IMPORTED_KEY = `${__MOD_ID__}.imported.v1`;
 /** Folded repos and groups, remembered across restarts. */
 const FOLDED_KEY = `${__MOD_ID__}.folded.v1`;
-/** The selected group chip, view and toggle, remembered across restarts. */
+/** The machine filter, group filter, view and toggle, remembered across restarts. */
 const VIEW_KEY = `${__MOD_ID__}.view.v1`;
 /** The record `vp run herdr:sync` writes in Herdr's folder: the Herdr version it built from. */
 const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
@@ -188,6 +229,8 @@ const SYNC_RECORD = `${__NAMESPACE__}-sync.json`;
 const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 /** The mailbox: overlays (menus, dialogs) post an Action here for the panel to run. */
 const REQUEST_KEY = requestKey(__MOD_ID__);
+/** Each space's group, by space id, for the menus mod's sidebar labels. */
+const GROUPS_KEY = groupsKey(__MOD_ID__);
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `${__MOD_ID__}-job`;
 
@@ -195,16 +238,16 @@ const LIST_EVERY = 20_000;
 const SCAN_EVERY = 10 * 60_000;
 const CI_EVERY = 5 * 60_000;
 /**
- * How many repos' lists, and CI, are read at once. Each read spawns processes, and Herdr
- * runs out of open files when every repo's start together.
+ * How many repos' CI is read at once. Each read spawns processes, and Herdr runs out of
+ * open files when every repo's start together. Lists need no limit: each machine's are
+ * read in one batched run.
  */
-const LIST_LIMIT = 6;
 const CI_LIMIT = 3;
 
 /** Herdr's API, as the services call it. */
 const services = Layer.mergeAll(
   Shell.layer({ exec, hc }),
-  Files.layer({ readTextFile, writeTextFile, pickFolder }),
+  Files.layer({ readTextFile, writeTextFile, pickFolder, exec }),
 );
 
 /**
@@ -236,6 +279,9 @@ interface Style {
 
 const icon = (name: string, size: number, color: Hex): Element =>
   svg(`mods/${__MOD_ID__}/${name}.svg`).size(size).flex_none().text_color(color);
+
+/** `el` with a hover label, announced the same way to a screen reader. */
+const labelled = (el: Element, text: string): Element => el.tooltip(text).accessibility_label(text);
 
 const dot = (color: Hex, size: number, hollow: boolean): Element =>
   hollow
@@ -278,8 +324,8 @@ const toneColor = (t: Colors, tone: Tone): Hex =>
   ({ main: t.accent, merged: t.done, active: t.working, conflict: t.blocked })[tone];
 
 const onClickRow = (click: Click) => {
-  if (click._tag === "Select") run("space.select", { id: click.space });
-  else run("space.new", { name: click.name, folder: click.folder });
+  const { command, args } = clickCommand(click);
+  run(command, args);
 };
 
 const toggleFold = (key: string) => {
@@ -287,29 +333,31 @@ const toggleFold = (key: string) => {
   setShared(FOLDED_KEY, { ...folded, [key]: !folded[key] });
 };
 
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = <A>(
-  read: Effect.Effect<Result.Result<A, string>, never, Shell | Files>,
-): Effect.Effect<Result.Result<A, string>, never, Shell | Files> =>
-  Effect.exit(read).pipe(
-    Effect.map(
-      Exit.match({
-        onSuccess: (answer) => answer,
-        onFailure: (cause) => Result.fail(Cause.pretty(cause)),
-      }),
-    ),
-  );
+/**
+ * Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+ * code that keeps the answers), as a toast: the read never stops silently.
+ */
+const showDefect = (what: string) => (body: string) =>
+  notify({ title: `Couldn't read ${what}`, body, level: "error" });
 
-/** Reads `read` for every root, a few at a time, handing each answer to `keep`. */
+/**
+ * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
+ * under the repo's `repoKey`.
+ */
 const readAll = (
-  roots: readonly string[],
+  repos: readonly RepoId[],
   limit: number,
-  read: (root: string) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
-  keep: (root: string, answer: Result.Result<readonly Worktree[], string>) => void,
+  read: (repo: RepoId) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
+  keep: (key: RepoKey, answer: Result.Result<readonly Worktree[], string>) => void,
 ): Promise<void> =>
   runEdge(
-    readEach(roots, limit, (root) => defectAsFailure(read(root)), keep),
-    () => undefined,
+    readEach(
+      repos,
+      limit,
+      (repo) => defectAsReason(read(repo)),
+      (repo, answer) => keep(repoKey(repo), answer),
+    ),
+    showDefect("CI"),
   );
 
 const viewState = (): ViewState => readViewState(shared(VIEW_KEY));
@@ -332,6 +380,10 @@ const ciIcon = (t: Colors, badge: CiBadge): readonly [string, Hex] => {
   }
 };
 
+/** One warning toast for each thing that went wrong around the job `title`. */
+const jobProblems = (title: string, problems: readonly string[]) =>
+  problems.forEach((body) => notify({ title, body, level: "warning" }));
+
 /** Defers work out of `render`, which may not notify. */
 const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
   cx.spawn(async (cx) => {
@@ -339,17 +391,22 @@ const later = (cx: Context, fn: (cx: AsyncContext) => void) =>
     fn(cx);
   });
 
-/** Shows one toast when Herdr has moved past the version the sync record names. */
+/**
+ * Shows one toast when Herdr has moved past the version the sync record names, or says
+ * the record couldn't be read (not marked as told, so a readable record still toasts).
+ */
 const checkSync = async () => {
   const installed = updates().app.version;
-  // A defect here is a bug in the check, not something to tell you about: no toast.
   const toast = await runEdge(
     syncToast(`${appHome()}/${SYNC_RECORD}`, installed, shared(SYNC_TOLD_KEY)),
-    () => Option.none(),
+    Result.fail,
   );
-  Option.map(toast, (notice) => {
-    setShared(SYNC_TOLD_KEY, installed);
-    notify({ ...notice, level: "warning" });
+  Result.match(toast, {
+    onFailure: (body) => notify({ title: "Couldn't check for herdr:sync", body, level: "warning" }),
+    onSuccess: Option.map((notice) => {
+      setShared(SYNC_TOLD_KEY, installed);
+      notify({ ...notice, level: "warning" });
+    }),
   });
 };
 
@@ -415,7 +472,13 @@ interface SettingsDraft {
   /** One name field per group folder, in the folders' order. */
   names: InputState[];
   readonly skip: InputState;
-  /** A save or a folder pick that didn't happen, and why. */
+  /** The other machine a typed group folder is added on; none until one is picked. */
+  machine: Option.Option<string>;
+  /** The folder's path on that machine, as typed. */
+  readonly typed: InputState;
+  /** A typed folder's check is running on its machine. */
+  checking: boolean;
+  /** A save, a folder pick or a typed folder that didn't happen, and why. */
   note: string;
 }
 
@@ -464,16 +527,22 @@ export default class Worktrunk extends View {
   copy: Copy = { _tag: "Panel" };
   settings: Settings = DEFAULT_SETTINGS;
   settingsError: Option.Option<string> = Option.none();
-  /** The last folder scan's repos, and what and when it scanned. */
-  scanned: Option.Option<readonly FoundRepo[]> = Option.none();
+  /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
+  scanned: Option.Option<Scanned> = Option.none();
+  /** Each machine's latest search, which the repos are found from. */
+  searches: Searches = new Map();
+  /** The machines whose refresh is still running: a new refresh runs nothing there. */
+  refreshing: ReadonlySet<Machine> = new Set();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
   discoverError: Option.Option<string> = Option.none();
-  lists: ReadonlyMap<string, RepoList> = new Map();
+  lists: ReadonlyMap<RepoKey, RepoList> = new Map();
+  /** The machines that can't be read now, and why; their repos aren't listed or read. */
+  machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
   reads = NO_READS;
-  ci: ReadonlyMap<string, CiRead> = new Map();
+  ci: ReadonlyMap<RepoKey, CiRead> = new Map();
   /** When the last CI read started; none makes the next refresh read CI too. */
   ciAt: Option.Option<number> = Option.none();
   checking = false;
@@ -546,16 +615,16 @@ export default class Worktrunk extends View {
   }
 
   /**
-   * Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
-   * offering the branch that folder is on as a base. Outside every repo, the dialog asks
-   * for one of the repos the panel lists.
+   * Opens the worktree dialog in `mode` for the repo `folder` is in, on its machine (none:
+   * the focused folder), offering the branch that folder is on as a base. Outside every
+   * repo, the dialog asks for one of the repos the panel lists, on any machine.
    */
-  openNewOrOpen(cx: AsyncContext, folder: string | null) {
-    const places = localPlaces(spaces(), panes());
-    const at = folder ?? Option.getOrElse(focusedFolder(focused(), places), () => "");
-    const listed = this.repos.map((repo) => repo.root);
+  openNewOrOpen(cx: AsyncContext, folder: Option.Option<Located>, mode: DialogMode = "new") {
+    const places = spacePlaces(spaces(), panes());
+    const at = Option.getOrElse(folder, () => focusedOrHere(focused(), places));
+    const listed = this.repos.map(({ machine, root }): RepoId => ({ machine, root }));
     cx.spawn(async () => {
-      const opened = await runEdge(dialogFor(at, listed), Result.fail);
+      const opened = await runEdge(dialogFor(at, listed, mode), Result.fail);
       Result.match(opened, {
         onSuccess: (props) =>
           Option.match(props, {
@@ -611,7 +680,7 @@ export default class Worktrunk extends View {
   /** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
   newInput(dialog: () => NewDialog, state: DialogState): InputState {
     const input = InputState.new({
-      placeholder: Option.isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link",
+      placeholder: dialogCopy(state).placeholder,
     });
     input.on("change", (_event, cx) => {
       dialog().state = retyped(dialog().state);
@@ -627,7 +696,7 @@ export default class Worktrunk extends View {
   }
 
   /** Reads the worktrees and branches of `repo` into the dialog's list. */
-  readDialogRepo(cx: AsyncContext | Context, dialog: NewDialog, repo: string) {
+  readDialogRepo(cx: AsyncContext | Context, dialog: NewDialog, repo: RepoId) {
     cx.spawn(async (cx) => {
       const read = await runEdge(readDialogRepo(repo), (defect) => ({
         list: Result.fail(defect),
@@ -645,7 +714,7 @@ export default class Worktrunk extends View {
       case "ReadRepo":
         dialog.state = picked.state;
         dialog.input = this.newInput(() => dialog, picked.state);
-        this.readDialogRepo(cx, dialog, picked.root);
+        this.readDialogRepo(cx, dialog, picked.repo);
         cx.notify();
         return;
       case "Send":
@@ -669,6 +738,9 @@ export default class Worktrunk extends View {
       broken: parsed.error,
       names: [],
       skip,
+      machine: Option.none(),
+      typed: InputState.new({ placeholder: "~/code" }),
+      checking: false,
       note: "",
     };
     this.nameFields(draft);
@@ -718,10 +790,40 @@ export default class Worktrunk extends View {
   }
 
   /**
+   * Adds the typed folder on the picked machine once a check there finds it. A folder
+   * that isn't there, or a check that can't run, is the dialog's note; nothing is added.
+   */
+  addTypedFolder(cx: Context, draft: SettingsDraft, machine: string) {
+    if (draft.checking) return;
+    draft.checking = true;
+    draft.note = "";
+    const settings = this.drafted(draft);
+    cx.spawn(async (cx) => {
+      const added = await runEdge(
+        addGroupFolderOn(settings, machine, draft.typed.value()),
+        Result.fail,
+      );
+      draft.checking = false;
+      Result.match(added, {
+        onSuccess: (next) => {
+          this.editDraft(draft, () => next);
+          draft.typed.set_value("");
+        },
+        onFailure: (reason) => {
+          draft.note = reason;
+        },
+      });
+      cx.notify();
+    });
+  }
+
+  /**
    * Saves the draft, never over a hand edit made since the dialog opened; then the panel
    * reads everything again and the dialog closes. A save that didn't happen says why.
    */
   saveSettings(cx: Context, draft: SettingsDraft) {
+    // A typed folder still being checked would be lost: it joins the draft only once found.
+    if (draft.checking) return;
     const settings = this.drafted(draft);
     cx.spawn(async (cx) => {
       const saved = await runEdge(
@@ -770,7 +872,10 @@ export default class Worktrunk extends View {
         return this.refreshWithCi(cx, { scan: true });
       case "Hide":
         cx.spawn(async (cx) => {
-          const hid = await runEdge(hideInSettings(settingsFile(), action.root), Result.fail);
+          const hid = await runEdge(
+            hideInSettings(settingsFile(), { machine: action.machine, root: action.root }),
+            Result.fail,
+          );
           Result.match(hid, {
             onSuccess: () => undefined,
             onFailure: (body) =>
@@ -780,14 +885,30 @@ export default class Worktrunk extends View {
         });
         return;
       case "NewOrOpen":
-        return this.openNewOrOpen(cx, action.folder);
+        return this.openNewOrOpen(
+          cx,
+          Option.map(Option.fromNullishOr(action.folder), (folder): Located => ({
+            machine: THIS_MACHINE,
+            folder,
+          })),
+        );
+      case "GoTo":
+        return onClickRow(goTo(spacePlaces(spaces(), panes()), action));
+      case "NewOrOpenAt":
+        return this.openNewOrOpen(cx, Option.some(action.at));
       case "SpaceWorktree":
         return this.forSpace(cx, action.space, action.act);
       case "Focus":
         Option.map(this.searchBox, (box) => box.focus());
         return;
+      case "PickMachine":
+        return setView({
+          machine: Option.map(Option.fromNullishOr(action.machine), ({ name }) => name),
+        });
+      case "PickGroup":
+        return setView({ group: Option.fromNullishOr(action.group) });
       case "Create":
-        return this.createWorktree(cx, action.main, action.name, action.base);
+        return this.createWorktree(cx, action);
       case "Settings":
         cx.spawn(async () => {
           const text = await runEdge(settingsText(settingsFile()), Result.fail);
@@ -807,7 +928,7 @@ export default class Worktrunk extends View {
         });
         return;
       default:
-        Option.map(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
+        this.runJobs(cx, jobsFor(action, this.settings));
     }
   }
 
@@ -818,14 +939,18 @@ export default class Worktrunk extends View {
   forSpace(cx: AsyncContext, space: string, act: SpaceAct) {
     const warn = (body: string) =>
       notify({ title: "No worktree to act on", body, level: "warning" });
-    const found = placeOf(localPlaces(spaces(), panes()), space);
-    if (Option.isNone(found)) return warn("That space has no folder on this machine.");
-    const place = found.value;
-    if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
-    cx.spawn(async () => {
-      const asked = await runEdge(spaceWorktree(act, place), Result.fail);
-      Result.match(asked, { onSuccess: ask, onFailure: warn });
-    });
+    const step = spaceStep(spacePlaces(spaces(), panes()), space, act);
+    switch (step._tag) {
+      case "NoFolder":
+        return warn("That space has no folder.");
+      case "Dialog":
+        return this.openNewOrOpen(cx, Option.some(step.at), step.mode);
+      case "Act":
+        cx.spawn(async () => {
+          const asked = await runEdge(spaceWorktree(step.act, step.at), Result.fail);
+          Result.match(asked, { onSuccess: ask, onFailure: warn });
+        });
+    }
   }
 
   /** Busy with another job: says so and gives true. */
@@ -839,82 +964,111 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** What every job does once it has ended: say why it never started, or close spaces. */
-  jobEnded(cx: AsyncContext, title: string, outcome: JobOutcome) {
+  /**
+   * What every job does once it has ended: say why it never started, or close the spaces
+   * on its removed folders (on its machine) and say what went wrong around it.
+   */
+  jobEnded(title: string, machine: Machine, outcome: JobOutcome) {
     if (outcome._tag === "NotStarted") {
       notify({ title: `Couldn't start: ${title}`, body: outcome.reason, level: "error" });
     } else {
-      spacesInGone(spaces(), panes(), outcome.gone).forEach((id) =>
+      spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) =>
         run("space.close", { id, confirmed: true }),
       );
+      jobProblems(title, outcome.problems);
     }
+  }
+
+  /** No job runs any more: the panel says so and reads the list again. */
+  jobsDone(cx: AsyncContext) {
     this.job = Option.none();
     cx.notify();
     this.refresh(cx, { scan: false });
   }
 
   /**
-   * Runs `spec` as a terminal job in a floating window, one job at a time. The window
-   * closes when the job ends; a failed job waits for Enter first, so it stays open with
-   * its exit code. Then spaces on removed folders close and the list is read again.
+   * Runs `specs` one after another as terminal jobs, each in a floating window on its
+   * machine, one job at a time. A window closes when its job ends; a failed job waits
+   * for Enter first, so it stays open with its exit code. After each, spaces on its
+   * removed folders close; after the last, the list is read again.
    */
-  runJob(cx: AsyncContext, spec: JobSpec) {
-    if (this.busy()) return;
-    this.job = Option.some(spec.title);
+  runJobs(cx: AsyncContext, specs: readonly JobSpec[]) {
+    const [first] = specs;
+    if (first === undefined || this.busy()) return;
+    // Busy at once, so a request that comes before the first job starts waits its turn.
+    this.job = Option.some(first.title);
     cx.notify();
     cx.spawn(async (cx) => {
-      const outcome = await runEdge(
-        runJob(spec, (addr) => openJobWindow(spec.title, addr)),
-        (defect): JobOutcome => ({ _tag: "NotStarted", reason: defect }),
-      );
-      this.jobEnded(cx, spec.title, outcome);
+      for (const spec of specs) {
+        this.job = Option.some(spec.title);
+        cx.notify();
+        const outcome = await runEdge(
+          runJob(spec, (addr) => openJobWindow(spec.title, addr)),
+          (defect): JobOutcome => ({ _tag: "NotStarted", reason: defect }),
+        );
+        this.jobEnded(spec.title, spec.on, outcome);
+      }
+      this.jobsDone(cx);
     });
   }
 
   /**
-   * Switches to or creates the worktree for `name` as a job, then opens a space on it, or
-   * selects the one already there.
+   * Switches to or creates the worktree `create` asks for as a job on its repo's machine,
+   * then opens a space on it there, or selects the one already there.
    */
-  createWorktree(cx: AsyncContext, main: string, name: string, base: string | null) {
+  createWorktree(cx: AsyncContext, create: CreateAction) {
     if (this.busy()) return;
-    const title = `Open or create ${name}`;
+    const title = `Open or create ${create.name}`;
     this.job = Option.some(title);
     cx.notify();
     cx.spawn(async (cx) => {
       const made = await runEdge(
-        newWorktree({ main, name, base }, (addr) => openJobWindow(title, addr)),
+        newWorktree(create, (addr) => openJobWindow(title, addr)),
         (defect) => ({
           outcome: { _tag: "NotStarted", reason: defect } satisfies JobOutcome,
           switched: Option.none(),
+          problems: [],
         }),
       );
+      jobProblems(title, made.problems);
+      // The job ran on the repo's machine, so the worktree it switched to is there.
       Option.map(made.switched, ({ branch, path }) =>
-        Option.match(
-          Option.fromNullishOr(spacesOnWorktrees(localPlaces(spaces(), panes()), [path]).get(path)),
-          {
-            onSome: (on) => run("space.select", { id: on.id }),
-            onNone: () => run("space.new", { name: branch, folder: path }),
-          },
+        onClickRow(
+          goTo(spacePlaces(spaces(), panes()), {
+            machine: create.machine,
+            folder: path,
+            name: branch,
+          }),
         ),
       );
-      this.jobEnded(cx, title, made.outcome);
+      this.jobEnded(title, create.machine, made.outcome);
+      this.jobsDone(cx);
     });
   }
 
   /** The repos the view shows: the only ones worth reading. */
-  reposToRead(): readonly string[] {
+  reposToRead(): readonly RepoId[] {
     return reposToRead({
       repos: this.repos,
       discovered: this.discovered,
       settings: this.settings,
       view: viewState(),
       current: this.currentRepo(),
-    }).map((repo) => repo.root);
+      machines: this.machineStatus,
+    });
   }
 
   /** The Current repo, with its group; Looking while it is first being looked up. */
   currentRepo(): CurrentRepo {
-    return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+    return currentRepoOf(
+      this.follow.found,
+      this.repos,
+      this.settings.folders,
+      Option.match(this.scanned, {
+        onNone: (): Homes => new Map([[THIS_MACHINE, home()]]),
+        onSome: (scanned) => scanned.homes,
+      }),
+    );
   }
 
   /**
@@ -922,15 +1076,15 @@ export default class Worktrunk extends View {
    * changes. Herdr renders on every focus change, so this never polls.
    */
   followFocus(cx: Context, following: boolean) {
-    const places = localPlaces(spaces(), panes());
-    const folder = Option.getOrElse(focusedFolder(focused(), places), () => "");
+    const places = spacePlaces(spaces(), panes());
+    const folder = focusedOrHere(focused(), places);
     const step = followFocus(this.follow, { following, folder });
     this.follow = step.follow;
     Option.map(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
   }
 
-  /** Looks up the repo of `folder`; a new Current repo is read at once. */
-  lookUpCurrent(cx: AsyncContext, folder: string) {
+  /** Looks up the repo of `folder`, on its machine; a new Current repo is read at once. */
+  lookUpCurrent(cx: AsyncContext, folder: Located) {
     cx.spawn(async (cx) => {
       const answer = await runEdge(lookUpCurrent(folder), Result.fail);
       const taken = takeLookup(this.follow, folder, answer);
@@ -946,9 +1100,9 @@ export default class Worktrunk extends View {
     this.checking = true;
     this.ciAt = Option.some(Date.now());
     cx.spawn(async (cx) => {
-      await readAll(this.reposToRead(), CI_LIMIT, readCi, (root, read) => {
-        const old = Option.fromNullishOr(this.ci.get(root));
-        this.ci = new Map([...this.ci, [root, foldCi(old, read)]]);
+      await readAll(this.reposToRead(), CI_LIMIT, readCi, (key, read) => {
+        const old = Option.fromNullishOr(this.ci.get(key));
+        this.ci = new Map([...this.ci, [key, foldCi(old, read)]]);
         cx.notify();
       });
       this.checking = false;
@@ -971,7 +1125,10 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+  /**
+   * One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+   * the machines side by side. It ends when this machine's part does.
+   */
   async load(cx: AsyncContext, { scan }: RefreshAsk) {
     const settled = shared(IMPORTED_KEY) === true;
     const loaded = await runEdge(
@@ -986,43 +1143,91 @@ export default class Worktrunk extends View {
       (defect): LoadedSettings => ({
         parsed: { settings: DEFAULT_SETTINGS, error: Option.some(`${SETTINGS_FILE}: ${defect}`) },
         settled,
+        leftover: Option.none(),
       }),
     );
     if (loaded.settled && !settled) setShared(IMPORTED_KEY, true);
+    // The import happens once, so this toast shows once.
+    Option.map(loaded.leftover, (body) =>
+      notify({ title: "Old settings file left behind", body, level: "warning" }),
+    );
     this.settings = loaded.parsed.settings;
     this.settingsError = loaded.parsed.error;
 
     const now = Date.now();
-    const key = JSON.stringify(scanArgs(this.settings, home()));
+    const key = scanKey(this.settings);
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
-    const places = localPlaces(spaces(), panes()).map((p) => p.place);
-    const found = await runEdge(
-      findRepos(
-        this.settings,
-        home(),
-        places,
-        due ? Option.none() : this.scanned,
-        // The Current repo is listed even when no open space is in it.
-        Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess)),
-      ),
-      Result.fail,
+    const places = spacePlaces(spaces(), panes()).map((p): Located => ({
+      machine: p.machine,
+      folder: p.place,
+    }));
+    const current = Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess));
+    const ask: MachinesAsk = {
+      settings: this.settings,
+      home: home(),
+      places,
+      last: this.searches,
+      rescan: due,
+      states: machineStates(machines()),
+      busy: this.refreshing,
+    };
+    const started = machinesOf(this.settings, places).filter(
+      (machine) => !this.refreshing.has(machine),
     );
-    if (Result.isSuccess(found)) {
-      this.repos = found.success.repos;
-      this.scanned = Option.some(found.success.scanned);
-      if (due) this.lastScan = Option.some({ key, at: now });
-      this.discoverError = Option.none();
-    } else {
-      // The repos from the last search that worked stay listed.
-      this.discoverError = Option.some(found.failure);
-    }
-    this.discovered = true;
-    cx.notify();
-
-    await readAll(this.reposToRead(), LIST_LIMIT, readList, (root, read) => {
-      const old = Option.fromNullishOr(this.lists.get(root));
-      this.lists = new Map([...this.lists, [root, foldList(old, read)]]);
-      cx.notify();
+    this.refreshing = new Set([...this.refreshing, ...started]);
+    // The refresh is done once this machine's part is: another machine's carries on alone,
+    // so this machine's next refresh never waits on it.
+    await new Promise<void>((done) => {
+      if (!started.includes(THIS_MACHINE)) done();
+      cx.spawn(async (cx) => {
+        await runEdge(
+          refreshMachines(
+            ask,
+            (machine, search) => {
+              const landed = landSearch(
+                {
+                  searches: this.searches,
+                  error: this.discoverError,
+                  statuses: this.machineStatus,
+                },
+                machine,
+                search,
+              );
+              this.searches = landed.searches;
+              this.discoverError = landed.error;
+              this.machineStatus = landed.statuses;
+              if (due && machine === THIS_MACHINE && Result.isSuccess(search)) {
+                this.lastScan = Option.some({ key, at: now });
+              }
+              // The Current repo is listed even when no open space is in it.
+              const found = foundOf(this.settings, ask.home, places, this.searches, current);
+              this.repos = found.repos;
+              this.scanned = Option.some(found.scanned);
+              this.discovered = true;
+              cx.notify();
+              return this.reposToRead();
+            },
+            (machine, answer) => {
+              const kept = keepLists(
+                { lists: this.lists, machines: this.machineStatus },
+                machine,
+                answer,
+              );
+              this.lists = kept.lists;
+              this.machineStatus = kept.machines;
+              cx.notify();
+            },
+            (machine) => {
+              this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+              if (machine === THIS_MACHINE) done();
+            },
+          ),
+          showDefect("the repos"),
+        );
+        this.discovered = true;
+        cx.notify();
+        done();
+      });
     });
   }
 
@@ -1030,6 +1235,19 @@ export default class Worktrunk extends View {
   refreshWithCi(cx: AsyncContext, ask: RefreshAsk) {
     this.ciAt = Option.none();
     this.refresh(cx, ask);
+  }
+
+  /**
+   * Publishes each space's group, on every machine, for the sidebar's labels. Only once
+   * repos are found, so a start doesn't clear the labels, and only when it changed: every
+   * mod renders again on a shared-state change.
+   */
+  publishGroups() {
+    if (!this.discovered) return;
+    const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
+    if (groupsChanged(groups, shared(GROUPS_KEY))) {
+      setShared(GROUPS_KEY, groups);
+    }
   }
 
   render(cx: Context) {
@@ -1053,11 +1271,12 @@ export default class Worktrunk extends View {
     const rendered = onRender(this.reads, { shown: shown(), group });
     this.reads = rendered.reads;
     if (rendered.step === "Start") later(cx, (cx) => this.refresh(cx, { scan: false }));
-    // Another group chip: its repos may not have been read yet, CI included.
+    // Another group picked: its repos may not have been read yet, CI included.
     if (rendered.step === "NewGroup") {
       later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
     }
     this.followFocus(cx, shown() && state.show === "current");
+    this.publishGroups();
 
     const view = buildView({
       repos: this.repos,
@@ -1067,6 +1286,11 @@ export default class Worktrunk extends View {
       settings: this.settings,
       settingsError: this.settingsError,
       discoverError: this.discoverError,
+      missingFolders: Option.match(this.scanned, {
+        onNone: () => [],
+        onSome: (scan) => scan.missing,
+      }),
+      machines: this.machineStatus,
       settingsFile: SETTINGS_FILE,
       spaces: spaces(),
       panes: panes(),
@@ -1100,8 +1324,17 @@ export default class Worktrunk extends View {
       .border_b(1)
       .border_color(t.border)
       .child(icon("git", 16, t.accent))
-      .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
-      .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
+      .child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk"))
+      .children(
+        Option.toArray(view.spinnerTip).map((tip) =>
+          labelled(
+            div()
+              .flex_none()
+              .child(icon("ring", 13, t.muted).spin(900)),
+            tip,
+          ),
+        ),
+      )
       .child(iconButton("new", "plus", () => send({ _tag: "NewOrOpen", folder: null })))
       .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
       .child(
@@ -1149,8 +1382,9 @@ export default class Worktrunk extends View {
       .children(this.renderFooter(style));
   }
 
-  worktreesOf(root: string): readonly Worktree[] {
-    return Option.match(Option.fromNullishOr(this.lists.get(root)), {
+  /** The worktrees of the repo kept under `key` (its `repoKey`). */
+  worktreesOf(key: RepoKey): readonly Worktree[] {
+    return Option.match(Option.fromNullishOr(this.lists.get(key)), {
       onNone: () => [],
       onSome: (list) => list.worktrees,
     });
@@ -1175,13 +1409,15 @@ export default class Worktrunk extends View {
   }
 
   openRowMenu(row: RowView) {
-    Option.map(findWorktree(this.lists, row.key), ({ root, worktree }) =>
-      openMenu(row.label, rowMenu(root, worktree, row.click)),
+    Option.map(findWorktree(this.lists, row.key), ({ machine, root, worktree }) =>
+      openMenu(row.label, rowMenu({ machine, root }, worktree, row.click)),
     );
   }
 
-  openRepoMenu(root: string) {
-    openMenu(lastSegment(root), repoMenu(root, this.worktreesOf(root)));
+  /** The menu of the repo kept under `key` (its `repoKey`). */
+  openRepoMenu(key: RepoKey) {
+    const repo = repoOfKey(key);
+    openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
   }
 
   renderOverlay(style: Style, copy: OverlayCopy): Element {
@@ -1259,7 +1495,8 @@ export default class Worktrunk extends View {
               .when(i === menu.selected, (el) => el.bg(t.hover))
               .hover((s) => s.bg(t.hover))
               .on_click(() => choose(item))
-              .child(item.label),
+              .child(div().flex_1().min_w(0).truncate().child(item.label))
+              .when(item.checked, (el) => el.child(icon("check", 13, t.accent))),
           ),
         ),
     );
@@ -1312,16 +1549,14 @@ export default class Worktrunk extends View {
     const lines = linesFor(state, dialog.input.value());
     const at = highlight(state, lines);
     const picking = Option.isNone(state.repo);
-    const title = Option.match(state.repo, {
-      onNone: () => "New or open worktree: pick a repo",
-      onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`,
-    });
+    const copy = dialogCopy(state);
+    const title = dialogTitle(state);
     const describe = (line: Line): readonly [string, string] => {
       switch (line._tag) {
         case "Repo":
-          return [lastSegment(line.root), tildePath(line.root, home())];
+          return [lastSegment(line.repo.root), repoHint(line.repo, home())];
         case "Worktree":
-          return [line.branch, "open worktree"];
+          return [line.branch, copy.worktreeHint(line.path)];
         case "Branch":
           return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
         case "Typed":
@@ -1354,11 +1589,6 @@ export default class Worktrunk extends View {
           .child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint))
       );
     };
-    const empty = picking
-      ? "No repo matches."
-      : state.reading
-        ? "Reading worktrees and branches…"
-        : "Type a branch name to create it.";
     const baseOption = (key: Base, label: string) =>
       h_flex()
         .id(`base-${key}`)
@@ -1425,7 +1655,7 @@ export default class Worktrunk extends View {
             .overflow_y_scrollbar()
             .children(lines.map(row))
             .when(lines.length === 0, (el) =>
-              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)),
+              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)),
             ),
         )
         .children(
@@ -1433,7 +1663,7 @@ export default class Worktrunk extends View {
             div().text_size(sizes.label).text_color(t.ansi1).child(error),
           ),
         )
-        .when(!picking, (el) =>
+        .when(copy.offersBase, (el) =>
           el.child(
             h_flex()
               .w_full()
@@ -1450,16 +1680,7 @@ export default class Worktrunk extends View {
               .children(bases),
           ),
         )
-        .child(
-          div()
-            .text_size(sizes.label)
-            .text_color(t.dim)
-            .child(
-              picking
-                ? "↑↓ choose · Enter picks the repo · Esc closes"
-                : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
-            ),
-        ),
+        .child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)),
     );
   }
 
@@ -1528,7 +1749,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(folder.path),
+            .child(locatedLabel({ machine: folder.machine, folder: folder.path })),
         )
         .child(
           small(
@@ -1552,11 +1773,11 @@ export default class Worktrunk extends View {
           ),
         ),
     );
-    const hidden = settings.hidden.map((root, i) =>
+    const hidden = settings.hidden.map((repo, i) =>
       h_flex()
         .gap(8)
         .items_center()
-        .child(div().flex_none().font_medium().child(lastSegment(root)))
+        .child(div().flex_none().font_medium().child(lastSegment(repo.root)))
         .child(
           div()
             .flex_1()
@@ -1564,7 +1785,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(tildePath(root, home())),
+            .child(repoHint(repo, home())),
         )
         .child(
           button(
@@ -1572,10 +1793,33 @@ export default class Worktrunk extends View {
             `unhide-${i}`,
             "Show again",
             "plain",
-            edit((s) => unhide(s, root)),
+            edit((s) => unhide(s, repo)),
           ),
         ),
     );
+    const others = otherMachines(machines());
+    const machineChips = others.map((machine) => {
+      const on = Option.contains(draft.machine, machine);
+      return h_flex()
+        .id(`machine-${machine}`)
+        .h(24)
+        .px(9)
+        .flex_none()
+        .items_center()
+        .rounded(12)
+        .cursor_pointer()
+        .border_1()
+        .border_color(on ? t.accent : t.border)
+        .bg(on ? t.selected : t.input)
+        .text_size(sizes.label)
+        .text_color(on ? t.foreground : t.muted)
+        .hover((s) => s.text_color(t.foreground))
+        .on_click((_e: unknown, cx: Context) => {
+          draft.machine = Option.some(machine);
+          cx.notify();
+        })
+        .child(machine);
+    });
     const check = div()
       .size(16)
       .flex_none()
@@ -1593,10 +1837,38 @@ export default class Worktrunk extends View {
       .when(folders.length === 0, (el) => el.child(hint("No group folders yet.")))
       .child(
         h_flex().child(
-          button(t, "add-folder", "Add folder…", "plain", (_e, cx) =>
+          button(t, "add-folder", "Add folder on this machine…", "plain", (_e, cx) =>
             this.pickGroupFolder(cx, draft),
           ),
         ),
+      )
+      .when(others.length > 0, (el) =>
+        el
+          .child(
+            hint(
+              "Or pick another machine, type the folder's path there (~ is its home) and add it.",
+            ),
+          )
+          .child(h_flex().gap(6).flex_wrap().children(machineChips))
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(field(draft.typed, Option.none()))
+              .child(
+                Option.match(draft.machine, {
+                  onNone: () => hint("Pick a machine first"),
+                  onSome: (machine) =>
+                    button(
+                      t,
+                      "add-typed",
+                      draft.checking ? `Checking on ${machine}…` : `Add on ${machine}`,
+                      "plain",
+                      (_e, cx) => this.addTypedFolder(cx, draft, machine),
+                    ),
+                }),
+              ),
+          ),
       )
       .child(heading("Scan", "How deep to look for repos, and folder names never to enter."))
       .child(
@@ -1731,26 +2003,31 @@ export default class Worktrunk extends View {
       );
   }
 
-  /** Group chips, the view picker, the search box and the All repos / With worktrees toggle. */
+  /**
+   * The machine and group dropdowns on one row (the machine one only with more than one
+   * machine), the view picker, the search box and the All repos / With worktrees toggle.
+   */
   renderControls({ t, sizes }: Style, view: PanelView): Element {
-    const chip = (id: string, label: string, on: boolean, onClick: () => void) =>
+    const dropdown = (id: string, title: string, items: readonly MenuItem[]) =>
       h_flex()
         .id(id)
-        .h(24)
+        .flex_1()
+        .min_w(0)
+        .h(26)
         .px(9)
-        .flex_none()
+        .gap(6)
         .items_center()
-        .rounded(12)
+        .rounded(6)
         .cursor_pointer()
         .border_1()
-        .border_color(on ? t.accent : t.border)
-        .bg(on ? t.selected : t.background)
+        .border_color(t.border)
+        .bg(t.chrome)
         .text_size(sizes.label)
-        .text_color(on ? t.foreground : t.muted)
-        .when(on, (el) => el.font_semibold())
-        .hover((s) => s.text_color(t.foreground))
-        .on_click(onClick)
-        .child(label);
+        .text_color(t.foreground)
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => openMenu(title, items))
+        .child(div().flex_1().min_w(0).truncate().child(filterButton(items)))
+        .child(icon("chevron-down", 12, t.muted));
     const segment = (
       id: string,
       options: readonly { readonly key: string; readonly label: string; readonly on: boolean }[],
@@ -1811,14 +2088,12 @@ export default class Worktrunk extends View {
       .border_color(t.border)
       .child(
         h_flex()
-          .flex_wrap()
-          .gap(5)
+          .gap(6)
           .items_center()
-          .children(
-            view.chips.map((c) =>
-              chip(`chip-${c.label}`, c.label, c.selected, () => setView({ group: c.group })),
-            ),
-          ),
+          .when(view.machineFilter.length > 0, (el) =>
+            el.child(dropdown("machine", "Machine", machineMenu(view.machineFilter))),
+          )
+          .child(dropdown("group", "Group", groupMenu(view.chips))),
       )
       .child(
         segment(
@@ -1907,7 +2182,7 @@ export default class Worktrunk extends View {
                       .text_color(t.ansi1)
                       .hover((s) => s.bg(t.hover))
                       .on_click(() => ask(action))
-                      .child(`Clean up all ${action.paths.length}`),
+                      .child(`Clean up all ${cleanupCount(action)}`),
                   ),
                 ),
             ),
@@ -1946,7 +2221,7 @@ export default class Worktrunk extends View {
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click(() => Option.map(block, (b) => run("layout.toggle", { id: b.id })))
           .child(icon("git", 14, on ? t.foreground : t.muted))
-          .child("worktrunk"),
+          .child("Worktrunk"),
       );
   }
 
@@ -1968,6 +2243,19 @@ export default class Worktrunk extends View {
       .child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted))
       .child(div().min_w(0).truncate().font_semibold().child(repo.name))
       .children(
+        Option.toArray(repo.machine).map((machine) =>
+          div()
+            .flex_none()
+            .px(6)
+            .rounded(4)
+            .border(1)
+            .border_color(t.border)
+            .text_size(sizes.label - 1)
+            .text_color(t.muted)
+            .child(machine),
+        ),
+      )
+      .children(
         Option.toArray(repo.group).map((group) =>
           div()
             .flex_none()
@@ -1982,7 +2270,7 @@ export default class Worktrunk extends View {
       .child(div().flex_1())
       .children(
         Option.toArray(
-          cleanupAction([{ root: repo.key, worktrees: this.worktreesOf(repo.key) }]),
+          cleanupAction([{ ...repoOfKey(repo.key), worktrees: this.worktreesOf(repo.key) }]),
         ).map((action) =>
           div()
             .id(`cleanup-${repo.key}`)
@@ -2071,7 +2359,7 @@ export default class Worktrunk extends View {
       .hover((s) => s.bg(t.hover))
       .on_click(() => onClickRow(row.click))
       .on_mouse_down("right", () => this.openRowMenu(row))
-      .child(dot(toneColor(t, row.tone), 8, row.hollow))
+      .child(labelled(dot(toneColor(t, row.tone), 8, row.hollow), row.tips.dot))
       .child(
         v_flex()
           .flex_1()
@@ -2081,20 +2369,50 @@ export default class Worktrunk extends View {
               .gap(6)
               .items_center()
               .child(div().min_w(0).truncate().font_medium().child(row.label))
-              .when(row.dirty, (el) => el.child(dot(t.blocked, 6, false))),
+              .children(
+                Option.toArray(row.badge).map((word) => {
+                  const badge = div()
+                    .flex_none()
+                    .px(5)
+                    .rounded(4)
+                    .bg(t.hover)
+                    .text_size(sizes.label)
+                    .text_color(t.working)
+                    .child(word);
+                  return Option.match(row.tips.badge, {
+                    onNone: () => badge,
+                    onSome: (tip) => labelled(badge, tip),
+                  });
+                }),
+              )
+              .children(
+                Option.toArray(row.tips.dirty).map((tip) =>
+                  labelled(dot(t.blocked, 6, false), tip),
+                ),
+              ),
           )
           .child(div().truncate().text_size(sizes.label).text_color(t.muted).child(row.subline)),
       )
       .children(
-        Option.toArray(row.ci).map((badge) => {
+        Option.toArray(
+          Option.zipWith(row.ci, row.tips.ci, (badge, tip) => [badge, tip] as const),
+        ).map(([badge, tip]) => {
           const [name, color] = ciIcon(t, badge);
           // Checks on an older commit than the one pushed: shown, but dimmed.
           const drawn = icon(name, 13, badge.stale ? t.dim : color);
-          return badge.status === "running" ? drawn.spin(1200) : drawn;
+          // An svg carries no hover, so a div around it holds the label.
+          return labelled(
+            div()
+              .flex_none()
+              .child(badge.status === "running" ? drawn.spin(1200) : drawn),
+            tip,
+          );
         }),
       )
-      .when(row.open, (el) =>
-        el.child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open")),
+      .children(
+        Option.toArray(row.tips.open).map((tip) =>
+          labelled(div().flex_none().text_size(sizes.label).text_color(t.muted).child("open"), tip),
+        ),
       );
   }
 }

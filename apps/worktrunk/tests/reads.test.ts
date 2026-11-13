@@ -8,6 +8,7 @@ import {
   foldList,
   followFocus,
   IDLE,
+  keepLists,
   NO_READS,
   NOT_FOLLOWING,
   onRender,
@@ -15,7 +16,8 @@ import {
   scanDue,
   takeLookup,
 } from "../src/reads.ts";
-import type { Repo } from "../src/repos.ts";
+import { repoKey, THIS_MACHINE, type RepoKey } from "../src/machines.ts";
+import type { FoundRepo, Repo } from "../src/repos.ts";
 import type { Worktree } from "../src/worktrees.ts";
 
 const wt = (path: string): Worktree => ({
@@ -56,6 +58,38 @@ describe("foldList", () => {
 
   test("a first read that fails has no worktrees", () => {
     expect(foldList(Option.none(), Result.fail("no repo")).worktrees).toEqual([]);
+  });
+});
+
+describe("keepLists", () => {
+  const OLD = { _tag: "Read", worktrees: [wt("/a.old")], error: Option.none() } as const;
+
+  test("a machine's lists fold into each repo's, a failed repo keeping its old worktrees", () => {
+    const kept = keepLists(
+      { lists: new Map([[repoKey({ machine: "linux", root: "/a" }), OLD]]), machines: new Map() },
+      "linux",
+      Result.succeed(
+        new Map<RepoKey, Result.Result<readonly Worktree[], string>>([
+          [repoKey({ machine: "linux", root: "/a" }), Result.fail("fatal: gone")],
+          [repoKey({ machine: "linux", root: "/b" }), Result.succeed([wt("/b")])],
+        ]),
+      ),
+    );
+    expect(kept.lists).toEqual(
+      new Map([
+        ["linux:/a", foldList(Option.some(OLD), Result.fail("fatal: gone"))],
+        ["linux:/b", foldList(Option.none(), Result.succeed([wt("/b")]))],
+      ]),
+    );
+  });
+
+  test("a machine that can't be read gets its status; the lists are left as they were", () => {
+    const lists = new Map([[repoKey({ machine: "linux", root: "/a" }), OLD]]);
+    const down = { _tag: "Down", reason: "timed out" } as const;
+    expect(keepLists({ lists, machines: new Map() }, "linux", Result.fail(down))).toEqual({
+      lists,
+      machines: new Map([["linux", down]]),
+    });
   });
 });
 
@@ -211,40 +245,56 @@ describe("onRender", () => {
 });
 
 describe("currentRepoOf", () => {
-  const LISTED: Repo = { root: "/w/api", count: 3, group: "Work" };
-  const folders = [{ name: "Work", path: "~/w" }];
-  const answer = (found: Option.Option<{ root: string; count: number }>) =>
-    Option.some(Result.succeed(found));
+  const LISTED: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 3, group: "Work" };
+  const folders = [{ name: "Work", path: "~/w", machine: THIS_MACHINE }];
+  const answer = (found: Option.Option<FoundRepo>) => Option.some(Result.succeed(found));
 
   test("NotInRepo when the focused folder is in none", () => {
-    expect(currentRepoOf(answer(Option.none()), [LISTED], folders, "/home")).toEqual({
+    expect(
+      currentRepoOf(answer(Option.none()), [LISTED], folders, new Map([[THIS_MACHINE, "/home"]])),
+    ).toEqual({
       _tag: "NotInRepo",
     });
   });
 
   test("Looking until the first answer", () => {
-    expect(currentRepoOf(Option.none(), [LISTED], folders, "/home")).toEqual({ _tag: "Looking" });
+    expect(
+      currentRepoOf(Option.none(), [LISTED], folders, new Map([[THIS_MACHINE, "/home"]])),
+    ).toEqual({ _tag: "Looking" });
   });
 
   test("InRepo with the listed repo, group included", () => {
-    const found = answer(Option.some({ root: "/w/api", count: 1 }));
-    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+    const found = answer(Option.some({ machine: THIS_MACHINE, root: "/w/api", count: 1 }));
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
       _tag: "InRepo",
       repo: LISTED,
     });
   });
 
   test("InRepo with a repo the panel doesn't list, grouped by the group folders", () => {
-    const found = answer(Option.some({ root: "/home/w/tool", count: 2 }));
-    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+    const found = answer(Option.some({ machine: THIS_MACHINE, root: "/home/w/tool", count: 2 }));
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
       _tag: "InRepo",
-      repo: { root: "/home/w/tool", count: 2, group: "Work" },
+      repo: { machine: THIS_MACHINE, root: "/home/w/tool", count: 2, group: "Work" },
+    });
+  });
+
+  test("the same folder on another machine is not the listed repo", () => {
+    const found = answer(Option.some({ machine: "linux", root: "/w/api", count: 1 }));
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
+      _tag: "InRepo",
+      repo: { machine: "linux", root: "/w/api", count: 1, group: "Other" },
     });
   });
 
   test("Failed when the lookup failed, with its reason", () => {
     expect(
-      currentRepoOf(Option.some(Result.fail("git: boom")), [LISTED], folders, "/home"),
+      currentRepoOf(
+        Option.some(Result.fail("git: boom")),
+        [LISTED],
+        folders,
+        new Map([[THIS_MACHINE, "/home"]]),
+      ),
     ).toEqual({
       _tag: "Failed",
       reason: "git: boom",
@@ -252,45 +302,56 @@ describe("currentRepoOf", () => {
   });
 });
 
+/** A folder on this machine. */
+const here = (folder: string) => ({ machine: THIS_MACHINE, folder });
+
 describe("followFocus", () => {
   test("showing the Current view, a focused folder not looked up yet is looked up", () => {
-    expect(followFocus(NOT_FOLLOWING, { following: true, folder: "/w/api/src" })).toEqual({
-      follow: { folder: Option.some("/w/api/src"), found: Option.none() },
-      lookUp: Option.some("/w/api/src"),
+    expect(followFocus(NOT_FOLLOWING, { following: true, folder: here("/w/api/src") })).toEqual({
+      follow: { folder: Option.some(here("/w/api/src")), found: Option.none() },
+      lookUp: Option.some(here("/w/api/src")),
     });
   });
 
   test("the folder last looked up looks nothing up again", () => {
-    const follow = { folder: Option.some("/w/api"), found: Option.none() };
-    expect(followFocus(follow, { following: true, folder: "/w/api" })).toEqual({
+    const follow = { folder: Option.some(here("/w/api")), found: Option.none() };
+    expect(followFocus(follow, { following: true, folder: here("/w/api") })).toEqual({
       follow,
       lookUp: Option.none(),
     });
   });
 
+  test("the same folder on another machine is another folder, looked up there", () => {
+    const follow = { folder: Option.some(here("/w/api")), found: Option.none() };
+    const linux = { machine: "linux", folder: "/w/api" };
+    expect(followFocus(follow, { following: true, folder: linux }).lookUp).toEqual(
+      Option.some(linux),
+    );
+  });
+
   test("with the view not shown, nothing is looked up, and showing it looks up again", () => {
-    const follow = { folder: Option.some("/w/api"), found: Option.none() };
-    const hidden = followFocus(follow, { following: false, folder: "/w/api" });
+    const follow = { folder: Option.some(here("/w/api")), found: Option.none() };
+    const hidden = followFocus(follow, { following: false, folder: here("/w/api") });
     expect(hidden).toEqual({ follow: { ...follow, folder: Option.none() }, lookUp: Option.none() });
-    expect(followFocus(hidden.follow, { following: true, folder: "/w/api" }).lookUp).toEqual(
-      Option.some("/w/api"),
+    expect(followFocus(hidden.follow, { following: true, folder: here("/w/api") }).lookUp).toEqual(
+      Option.some(here("/w/api")),
     );
   });
 });
 
 describe("takeLookup", () => {
-  const API = { root: "/w/api", count: 2 };
+  const API: FoundRepo = { machine: THIS_MACHINE, root: "/w/api", count: 2 };
   const following = (
     folder: string,
     found: Option.Option<Result.Result<Option.Option<typeof API>, string>> = Option.none(),
   ) => ({
-    folder: Option.some(folder),
+    folder: Option.some(here(folder)),
     found,
   });
 
   test("the first answer for the focused folder is kept, and refreshes", () => {
     const answer = Result.succeed(Option.some(API));
-    expect(takeLookup(following("/w/api/src"), "/w/api/src", answer)).toEqual({
+    expect(takeLookup(following("/w/api/src"), here("/w/api/src"), answer)).toEqual({
       follow: following("/w/api/src", Option.some(answer)),
       refresh: true,
     });
@@ -298,7 +359,7 @@ describe("takeLookup", () => {
 
   test("an answer for an older focus is dropped", () => {
     const follow = following("/p/web");
-    expect(takeLookup(follow, "/w/api", Result.succeed(Option.some(API)))).toEqual({
+    expect(takeLookup(follow, here("/w/api"), Result.succeed(Option.some(API)))).toEqual({
       follow,
       refresh: false,
     });
@@ -307,15 +368,21 @@ describe("takeLookup", () => {
   test("an answer naming the same repo as before is kept, and refreshes nothing", () => {
     const before = Option.some(Result.succeed(Option.some(API)));
     const answer = Result.succeed(Option.some({ ...API, count: 3 }));
-    expect(takeLookup(following("/w/api.feat", before), "/w/api.feat", answer)).toEqual({
+    expect(takeLookup(following("/w/api.feat", before), here("/w/api.feat"), answer)).toEqual({
       follow: following("/w/api.feat", Option.some(answer)),
       refresh: false,
     });
   });
 
+  test("an answer naming the same folder on another machine refreshes", () => {
+    const before = Option.some(Result.succeed(Option.some(API)));
+    const answer = Result.succeed(Option.some({ ...API, machine: "linux" }));
+    expect(takeLookup(following("/w/api", before), here("/w/api"), answer).refresh).toBe(true);
+  });
+
   test("an answer naming another repo than before refreshes", () => {
     const before = Option.some(Result.succeed(Option.some(API)));
     const answer = Result.succeed(Option.none());
-    expect(takeLookup(following("/tmp", before), "/tmp", answer).refresh).toBe(true);
+    expect(takeLookup(following("/tmp", before), here("/tmp"), answer).refresh).toBe(true);
   });
 });

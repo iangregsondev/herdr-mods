@@ -1,6 +1,6 @@
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { parseList, type Worktree } from "../src/worktrees.ts";
+import { parseList, parseLists, type Worktree } from "../src/worktrees.ts";
 import ciStates from "./fixtures/ci-states.json?raw";
 import ci from "./fixtures/ci.json?raw";
 import reasons from "./fixtures/reasons.json?raw";
@@ -45,10 +45,6 @@ describe("parseList", () => {
       _tag: "Merged",
       reason: Option.some("ancestor"),
     });
-    expect(byBranch("states", "emptynow").state).toEqual({
-      _tag: "Merged",
-      reason: Option.some("same_commit"),
-    });
     expect(byBranch("states", "mergeaddsnothing").state).toEqual({
       _tag: "Merged",
       reason: Option.some("merge_adds_nothing"),
@@ -64,6 +60,92 @@ describe("parseList", () => {
     expect(byBranch("ci", "chore/dev-loop").state).toEqual({
       _tag: "Merged",
       reason: Option.some("patch_id_match"),
+    });
+  });
+
+  test("a worktree at main's tip with no changes of its own is New", () => {
+    expect(byBranch("states", "emptynow").state).toEqual({ _tag: "New" });
+  });
+
+  test("an empty worktree with uncommitted changes is Merged, not New", () => {
+    const item = {
+      branch: "fresh",
+      worktree: { path: "/work/repo.fresh", changes: { modified: true } },
+      display: { state: "empty" },
+      default_branch: { integration: { reason: "same_commit" } },
+    };
+    expect(Result.getOrThrow(parseList(JSON.stringify([item])))[0]?.state).toEqual({
+      _tag: "Merged",
+      reason: Option.some("same_commit"),
+    });
+  });
+
+  test("an empty worktree left behind while main moved on is Merged, not New", () => {
+    const item = {
+      branch: "stale",
+      worktree: { path: "/work/repo.stale" },
+      display: { state: "empty" },
+      default_branch: { behind: 5, integration: { reason: "ancestor" } },
+    };
+    expect(Result.getOrThrow(parseList(JSON.stringify([item])))[0]?.state).toEqual({
+      _tag: "Merged",
+      reason: Option.some("ancestor"),
+    });
+  });
+
+  describe("made from a main checkout that hasn't pulled main's tip", () => {
+    const MAIN_HEAD = "e99e586f0000000000000000000000000000000";
+    const mainCheckout = {
+      branch: "main",
+      head: { sha: MAIN_HEAD },
+      worktree: { path: "/work/repo", main: true },
+      display: { state: "is_main" },
+    };
+    const behind = (sha: string, changes: Record<string, boolean> = {}) => ({
+      branch: "fresh",
+      head: { sha },
+      worktree: { path: "/work/repo.fresh", changes },
+      display: { state: "integrated" },
+      default_branch: { ahead: 0, behind: 7, integration: { reason: "ancestor" } },
+    });
+    const stateIn = (items: readonly unknown[]) =>
+      Result.getOrThrow(parseList(JSON.stringify({ items }))).find(
+        (w) => w.path === "/work/repo.fresh",
+      )?.state;
+
+    test("at the main checkout's commit with no changes, it is New", () => {
+      expect(stateIn([mainCheckout, behind(MAIN_HEAD)])).toEqual({ _tag: "New" });
+    });
+
+    test("with uncommitted changes, it is Merged as before, not New", () => {
+      expect(stateIn([mainCheckout, behind(MAIN_HEAD, { untracked: true })])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
+    });
+
+    test("ahead of main's tip, it has commits of its own and is not New", () => {
+      // The main checkout holds commits not yet pushed, and the worktree shares them.
+      const ahead = {
+        ...behind(MAIN_HEAD),
+        display: { state: "ahead" },
+        default_branch: { ahead: 2, behind: 0 },
+      };
+      expect(stateIn([mainCheckout, ahead])).toEqual({ _tag: "Active" });
+    });
+
+    test("at another commit than the main checkout's, it is Merged: left behind", () => {
+      expect(stateIn([mainCheckout, behind("0123456789abcdef")])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
+    });
+
+    test("with no main checkout in the list, it is Merged as before", () => {
+      expect(stateIn([behind(MAIN_HEAD)])).toEqual({
+        _tag: "Merged",
+        reason: Option.some("ancestor"),
+      });
     });
   });
 
@@ -178,5 +260,34 @@ describe("parseList", () => {
   test("text that isn't wt's JSON is an error", () => {
     expect(Result.isFailure(parseList("not json"))).toBe(true);
     expect(parseList('{"items": 3}')).toEqual(Result.fail("wt list printed no list of worktrees"));
+  });
+});
+
+describe("parseLists", () => {
+  /** One repo's record in the batched read's output: its exit code and folder, then what it printed. */
+  const record = (code: number, root: string, body: string) => `\u001e${code}\t${root}\n${body}`;
+
+  test("each repo's worktrees by its folder, and a failed read as its last error line", () => {
+    const stdout = [
+      record(0, "/work/repo", FIXTURES.states),
+      record(1, "/work/gone", "warning: slow\nfatal: not a git repository\n"),
+    ].join("");
+    expect(parseLists(stdout, ["/work/repo", "/work/gone"])).toEqual(
+      new Map([
+        ["/work/repo", parseList(FIXTURES.states)],
+        ["/work/gone", Result.fail("fatal: not a git repository")],
+      ]),
+    );
+  });
+
+  test("a repo the output has no record for failed: the batch ended before it", () => {
+    expect(
+      parseLists(record(0, "/work/repo", FIXTURES.states), ["/work/repo", "/work/next"]),
+    ).toEqual(
+      new Map([
+        ["/work/repo", parseList(FIXTURES.states)],
+        ["/work/next", Result.fail("wt list gave no answer for it")],
+      ]),
+    );
   });
 });

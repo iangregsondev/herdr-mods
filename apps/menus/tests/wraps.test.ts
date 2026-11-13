@@ -79,7 +79,7 @@ describe("the tab bar's copy", () => {
 });
 
 describe("the sidebar's copy", () => {
-  test("a space's right-click opens our menu, with Herdr's props and room for our items", async () => {
+  test("a space's right-click opens our menu, with Herdr's props and room for our four items", async () => {
     const spaces = await load(patched("spaces", spacesStandIn));
     expect(spaces.spaceMenu({ id: "sp1" })).toEqual({
       mod: SELF,
@@ -88,7 +88,30 @@ describe("the sidebar's copy", () => {
       height: SPACE_MENU_HEIGHT,
       props: { role: "menu", tab: "space", target: { id: "sp1" } },
     });
-    expect(SPACE_MENU_HEIGHT).toBeGreaterThanOrEqual(260 + 3 * 31);
+    expect(SPACE_MENU_HEIGHT).toBeGreaterThanOrEqual(260 + 4 * 31);
+  });
+});
+
+/** Every text an element from a stand-in draws, in order. */
+const texts = (el: unknown): readonly string[] =>
+  typeof el === "string"
+    ? [el]
+    : ((el as { kids?: readonly unknown[] } | undefined)?.kids ?? []).flatMap(texts);
+
+describe("the sidebar's space rows", () => {
+  const T = { foreground: "#ffffff", dim: "#888888", raised: "#222222" };
+
+  test("a space's row shows its group label after its name", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLabelOf((w: { id: string }) => (w.id === "sp1" ? "Work" : null));
+    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app", "Work"]);
+  });
+
+  test("a space with no group, or a copy whose labels aren't set, shows only its name", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app"]);
+    spaces.__wtSetLabelOf(() => null);
+    expect(texts(spaces.row({ id: "sp2", name: "lib" }, T))).toEqual(["lib"]);
   });
 });
 
@@ -115,10 +138,13 @@ describe("the menu's copy", () => {
       p: { tab: "space", target: { id: "sp1" } },
       git: "linked",
     });
-    expect([0, 1, 2, 3, 4, 5].map((i) => (copy.choose(i) as unknown[] | undefined)?.[0])).toEqual([
+    expect(
+      [0, 1, 2, 3, 4, 5, 6].map((i) => (copy.choose(i) as unknown[] | undefined)?.[0]),
+    ).toEqual([
       "Rename",
       "New worktree",
-      "Worktree (wt)…",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
       "Merge into main (wt)…",
       "Remove worktree (wt)…",
       "Close",
@@ -154,9 +180,17 @@ describe("patch points that no longer fit", () => {
   });
 
   test("a sidebar with the space menu call twice is a miss, with its count", () => {
-    expect(missed("spaces", spacesStandIn + spacesStandIn)).toEqual([
+    const call =
+      'openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space",';
+    const twice = spacesStandIn.replace(call, `${call} again: ${call}`);
+    expect(missed("spaces", twice)).toEqual([
       { name: "spaces: space right-click opens menu", found: 2 },
     ]);
+  });
+
+  test("a sidebar whose space row changed shape is a miss, named, so it gets no labels", () => {
+    const moved = spacesStandIn.replace("max_w(150)", "max_w(180)");
+    expect(missed("spaces", moved)).toEqual([{ name: "spaces: space row's name", found: 0 }]);
   });
 
   test("a menu whose item list was renamed is a miss, named", () => {

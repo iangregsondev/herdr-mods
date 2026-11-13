@@ -16,7 +16,8 @@ import {
   type Role,
   type SpaceAct,
 } from "worktrunk-mailbox";
-import type { DialogProps } from "./dialog.ts";
+import type { DialogMode, DialogProps } from "./dialog.ts";
+import type { Located, Machine, RepoId } from "./machines.ts";
 import { confirmFor, type Action, type Confirm, type MenuItem } from "./menus.ts";
 import { DEFAULT_VIEW_STATE, SHOWS, type Click, type Show, type ViewState } from "./view.ts";
 
@@ -25,24 +26,34 @@ export interface StoredViewState {
   readonly group: string | null;
   readonly show: Show;
   readonly only: boolean;
+  /** The machine filter: null for All, else the machine in view (its name null for this one). */
+  readonly machine: { readonly name: Machine } | null;
 }
 
 export const writeViewState = (state: ViewState): StoredViewState => ({
   group: Option.getOrNull(state.group),
   show: state.show,
   only: state.only,
+  machine: Option.match(state.machine, { onNone: () => null, onSome: (name) => ({ name }) }),
 });
 
 const readShow = (value: unknown): Option.Option<Show> =>
   Option.fromNullishOr(SHOWS.find(([show]) => show === value)?.[0]);
 
+/** A stored machine filter; anything but `{ name }` with a text or null name is All. */
+const readMachineFilter = (value: unknown): Option.Option<Machine> => {
+  const { name } = fields(value);
+  return name === null || Predicate.isString(name) ? Option.some(name) : Option.none();
+};
+
 /** The view state kept in shared state; anything missing or unreadable is the default. */
 export const readViewState = (value: unknown): ViewState => {
-  const { group, show, only } = fields(value);
+  const { group, show, only, machine } = fields(value);
   return {
     group: text(group),
     show: Option.getOrElse(readShow(show), () => DEFAULT_VIEW_STATE.show),
     only: Predicate.isBoolean(only) ? only : DEFAULT_VIEW_STATE.only,
+    machine: readMachineFilter(machine),
   };
 };
 
@@ -63,6 +74,26 @@ const readMode = oneOf<MergeMode>(["squash", "keep"]);
 
 const readAct = oneOf<SpaceAct>(SPACE_ACTS);
 
+const readDialogMode = oneOf<DialogMode>(["new", "open"]);
+
+/** The machine a value names; no machine named is this machine. */
+const readMachine = (value: unknown): Machine => Option.getOrNull(text(value));
+
+/** A folder, and the machine it is on. */
+const readLocated = (value: unknown): Option.Option<Located> => {
+  const f = fields(value);
+  return Option.map(text(f.folder), (folder): Located => ({
+    machine: readMachine(f.machine),
+    folder,
+  }));
+};
+
+/** A repo: its main checkout's folder, and the machine it is on. */
+const readRepoId = (value: unknown): Option.Option<RepoId> => {
+  const f = fields(value);
+  return Option.map(text(f.root), (root): RepoId => ({ machine: readMachine(f.machine), root }));
+};
+
 const readClick = (value: unknown): Option.Option<Click> => {
   const f = fields(value);
   switch (f._tag) {
@@ -71,7 +102,8 @@ const readClick = (value: unknown): Option.Option<Click> => {
     case "New":
       return Option.map(
         Option.all({ name: text(f.name), folder: text(f.folder) }),
-        (click): Click => ({ _tag: "New", ...click }),
+        // No machine named is this machine.
+        (click): Click => ({ _tag: "New", ...click, machine: readMachine(f.machine) }),
       );
     default:
       return Option.none();
@@ -80,12 +112,22 @@ const readClick = (value: unknown): Option.Option<Click> => {
 
 const readLinked = (value: unknown): Option.Option<Linked> => {
   const f = fields(value);
-  return Option.all({ main: text(f.main), path: text(f.path), branch: text(f.branch) });
+  return Option.map(
+    Option.all({ main: text(f.main), path: text(f.path), branch: text(f.branch) }),
+    (linked): Linked => ({ machine: readMachine(f.machine), ...linked }),
+  );
 };
 
 const readBatch = (value: unknown): Option.Option<Batch> => {
   const f = fields(value);
-  return Option.all({ main: text(f.main), branches: listOf(f.branches, text) });
+  return Option.map(
+    Option.all({
+      main: text(f.main),
+      branches: listOf(f.branches, text),
+      paths: listOf(f.paths, text),
+    }),
+    (batch): Batch => ({ machine: readMachine(f.machine), ...batch }),
+  );
 };
 
 /** An Action, as `send` posts it or a menu item carries it; none for anything else. */
@@ -108,7 +150,6 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       return Option.map(
         Option.all({
           batches: listOf(f.batches, readBatch),
-          paths: listOf(f.paths, text),
           dirty: finite(f.dirty),
         }),
         (cleanup): Action => ({ _tag: "Cleanup", ...cleanup }),
@@ -120,23 +161,42 @@ export const readAction = (value: unknown): Option.Option<Action> => {
       );
     case "NewOrOpen":
       return Option.map(textOrNull(f.folder), (folder): Action => ({ _tag: "NewOrOpen", folder }));
+    case "GoTo":
+      return Option.map(
+        Option.all({ folder: text(f.folder), name: text(f.name) }),
+        (go): Action => ({ _tag: "GoTo", ...go, machine: readMachine(f.machine) }),
+      );
+    case "NewOrOpenAt":
+      return Option.map(readLocated(f.at), (at): Action => ({ _tag: "NewOrOpenAt", at }));
     case "Create":
       return Option.map(
         Option.all({ main: text(f.main), name: text(f.name), base: textOrNull(f.base) }),
-        (create): Action => ({ _tag: "Create", ...create }),
+        (create): Action => ({ _tag: "Create", ...create, machine: readMachine(f.machine) }),
       );
     case "CopyPath":
       return Option.map(text(f.path), (path): Action => ({ _tag: "CopyPath", path }));
     case "Reveal":
       return Option.map(text(f.path), (path): Action => ({ _tag: "Reveal", path }));
     case "Hide":
-      return Option.map(text(f.root), (root): Action => ({ _tag: "Hide", root }));
+      return Option.map(
+        Option.all({ machine: textOrNull(f.machine), root: text(f.root) }),
+        (repo): Action => ({ _tag: "Hide", ...repo }),
+      );
     case "Refresh":
       return Option.some({ _tag: "Refresh" });
     case "Settings":
       return Option.some({ _tag: "Settings" });
     case "Focus":
       return Option.some({ _tag: "Focus" });
+    case "PickMachine":
+      return f.machine === null
+        ? Option.some({ _tag: "PickMachine", machine: null })
+        : Option.map(readMachineFilter(f.machine), (name): Action => ({
+            _tag: "PickMachine",
+            machine: { name },
+          }));
+    case "PickGroup":
+      return Option.map(textOrNull(f.group), (group): Action => ({ _tag: "PickGroup", group }));
 
     default:
       return Option.none();
@@ -161,7 +221,12 @@ export const overlayOf = (props: unknown): Option.Option<string> => text(fields(
 
 const readMenuItem = (value: unknown): Option.Option<MenuItem> => {
   const f = fields(value);
-  return Option.all({ label: text(f.label), danger: bool(f.danger), action: readAction(f.action) });
+  return Option.all({
+    label: text(f.label),
+    danger: bool(f.danger),
+    checked: bool(f.checked),
+    action: readAction(f.action),
+  });
 };
 
 /** A menu overlay's props (a type, not an interface, so it passes as `openOverlay`'s props). */
@@ -206,16 +271,19 @@ export interface TitlebarProps {
 
 export const readTitlebarProps = (props: unknown): TitlebarProps => {
   const f = fields(props);
-  return { title: Option.getOrElse(text(f.title), () => "worktrunk"), addr: text(f.addr) };
+  return { title: Option.getOrElse(text(f.title), () => "Worktrunk"), addr: text(f.addr) };
 };
 
 /** The New-or-open dialog's props read back; anything missing or mistyped is none. */
 export const readDialogProps = (props: unknown): DialogProps => {
   const f = fields(props);
   return {
-    repo: text(f.repo),
+    mode: Option.getOrElse(readDialogMode(f.mode), (): DialogMode => "new"),
+    repo: readRepoId(f.repo),
     branch: text(f.branch),
-    repos: Array.isArray(f.repos) ? f.repos.filter(Predicate.isString) : [],
+    repos: Array.isArray(f.repos)
+      ? f.repos.flatMap((repo) => Option.toArray(readRepoId(repo)))
+      : [],
   };
 };
 
@@ -246,17 +314,25 @@ export const titlebarProps = (
 
 /** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
 export const dialogProps = ({
+  mode,
   repo,
   branch,
   repos,
 }: DialogProps): PropsOf<
   "new",
   {
-    readonly repo: string | null;
+    readonly mode: DialogMode;
+    readonly repo: RepoId | null;
     readonly branch: string | null;
-    readonly repos: readonly string[];
+    readonly repos: readonly RepoId[];
   }
-> => ({ role: "new", repo: Option.getOrNull(repo), branch: Option.getOrNull(branch), repos });
+> => ({
+  role: "new",
+  mode,
+  repo: Option.getOrNull(repo),
+  branch: Option.getOrNull(branch),
+  repos,
+});
 
 /** The settings file's text the Settings dialog opens on; null when there was no file. */
 export const readSettingsText = (props: unknown): string | null =>

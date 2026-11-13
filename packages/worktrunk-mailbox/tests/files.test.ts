@@ -25,15 +25,29 @@ const failureOf = <A, E>(result: Result.Result<A, E>) =>
 /** The folder picker for fakes of tests that never open it. */
 const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
-/** A Herdr API over `disk` (path to text); writes are refused unless `write` is given. */
+/**
+ * A Herdr API over `disk` (path to text); writes are refused unless `write` is given.
+ * Its `exec` runs only `rm -f -- <path>`, deleting the file from `disk`.
+ */
 const onDisk = (
   disk: Readonly<Record<string, string>>,
   write?: FilesApi["writeTextFile"],
-): FilesApi => ({
-  readTextFile: (path) => Promise.resolve(disk[path] ?? null),
-  writeTextFile: write ?? (() => Promise.reject(new Error("read-only"))),
-  pickFolder: noPicker,
-});
+): FilesApi => {
+  const files: Record<string, string> = { ...disk };
+  return {
+    readTextFile: (path) => Promise.resolve(files[path] ?? null),
+    writeTextFile: write ?? (() => Promise.reject(new Error("read-only"))),
+    pickFolder: noPicker,
+    exec: (command, args = []) => {
+      const [force, end, path] = args;
+      if (command !== "rm" || force !== "-f" || end !== "--" || path === undefined) {
+        return Promise.reject(new Error(`unexpected command: ${command} ${args.join(" ")}`));
+      }
+      delete files[path];
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    },
+  };
+};
 
 describe("Files.read", () => {
   it.effect("the file's text", () =>
@@ -41,6 +55,24 @@ describe("Files.read", () => {
       const files = yield* Files;
       assert.strictEqual(yield* files.read("/a.json"), "{}");
     }).pipe(Effect.provide(Files.layer(onDisk({ "/a.json": "{}" })))),
+  );
+
+  it.effect("a file on another machine is read there", () =>
+    Effect.gen(function* () {
+      const asked: unknown[] = [];
+      const api: FilesApi = {
+        ...onDisk({}),
+        readTextFile: (path, options) => {
+          asked.push([path, options]);
+          return Promise.resolve("{}");
+        },
+      };
+      const text = yield* Effect.gen(function* () {
+        const files = yield* Files;
+        return yield* files.read("/tmp/t1/a.json", "linux");
+      }).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual([text, asked], ["{}", [["/tmp/t1/a.json", { on: "linux" }]]]);
+    }),
   );
 
   it.effect("no file is FileMissing, naming the path", () =>
@@ -188,5 +220,35 @@ describe("Files.pickFolder", () => {
       );
       assert.deepStrictEqual(failureOf(result), Result.fail(["PickerFailed", "no window"]));
     }),
+  );
+});
+
+describe("Files.remove", () => {
+  it.effect("deletes the file, so reading it finds none", () =>
+    Effect.gen(function* () {
+      const files = yield* Files;
+      yield* files.remove("/old.json");
+      const result = yield* Effect.result(files.read("/old.json"));
+      assert.deepStrictEqual(failureOf(result), Result.fail(["FileMissing", "/old.json"]));
+    }).pipe(Effect.provide(Files.layer(onDisk({ "/old.json": "{}" })))),
+  );
+
+  it.effect("an rm that fails is FileError, with the path and rm's message", () =>
+    Effect.gen(function* () {
+      const files = yield* Files;
+      const result = yield* Effect.result(files.remove("/old.json"));
+      assert.deepStrictEqual(
+        failureOf(result),
+        Result.fail(["FileError", "/old.json", "rm: /old.json: Permission denied"]),
+      );
+    }).pipe(
+      Effect.provide(
+        Files.layer({
+          ...onDisk({ "/old.json": "{}" }),
+          exec: () =>
+            Promise.resolve({ code: 1, stdout: "", stderr: "rm: /old.json: Permission denied\n" }),
+        }),
+      ),
+    ),
   );
 });

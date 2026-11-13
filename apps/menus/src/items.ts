@@ -48,7 +48,8 @@ export const withWorktrunkItems = (
       onNone: () => list,
       onSome: (space) => {
         const added = [
-          ours("Worktree (wt)…", space, "NewOrOpen"),
+          ours("New worktree (wt)…", space, "NewOrOpen"),
+          ours("Open worktree (wt)…", space, "Open"),
           ...(git === "linked"
             ? [
                 ours("Merge into main (wt)…", space, "Merge"),
