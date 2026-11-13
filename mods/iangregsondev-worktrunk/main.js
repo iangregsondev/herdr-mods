@@ -6789,6 +6789,8 @@ const onExitUnsafe = (fiber, f) => {
 /** @internal */
 const onExit = /*#__PURE__*/ dual(2, onExitPrimitive);
 /** @internal */
+const ensuring$1 = /*#__PURE__*/ dual(2, (self, finalizer) => onExit(self, (_) => finalizer));
+/** @internal */
 const uninterruptible = (self) => withFiber((fiber) => {
 	if (!fiber.interruptible) return self;
 	fiber.interruptible = false;
@@ -9353,6 +9355,46 @@ const matchEffect = matchEffect$1;
 */
 const provide = provide$1;
 /**
+* Returns an effect that, if this effect _starts_ execution, then the
+* specified `finalizer` is guaranteed to be executed, whether this effect
+* succeeds, fails, or is interrupted.
+*
+* **Details**
+*
+* For use cases that need access to the effect's result, see `onExit`.
+*
+* Finalizers offer very powerful guarantees, but they are low-level, and
+* should generally not be used for releasing resources. For higher-level
+* logic built on `ensuring`, see the `acquireRelease` family of methods.
+*
+* **Example** (Always running cleanup)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* const task = Effect.gen(function*() {
+*   yield* Effect.sync(() => { output.push("Task started") })
+*   yield* Effect.sync(() => { output.push("Task completed") })
+*   return 42
+* })
+*
+* // Ensure cleanup always runs, regardless of success or failure
+* const program = Effect.ensuring(
+*   task,
+*   Effect.sync(() => { output.push("Cleanup: This always runs!") })
+* )
+*
+* void output.push(Effect.runSync(program))
+* output // => ["Task started", "Task completed", "Cleanup: This always runs!", 42]
+* ```
+*
+* @stability stable
+* @category resource management
+* @since 2.0.0
+*/
+const ensuring = ensuring$1;
+/**
 * Runs an effect and returns a `Promise` that resolves to an `Exit`, which
 * represents the outcome (success or failure) of the effect.
 *
@@ -11257,69 +11299,101 @@ const defaultsBecause = (what, failed, settled) => ({
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * Searches `machine`: scans its group folders when `scan` says to (after reading its
-* home there; this machine's is `home`), and looks up the repos its open spaces
-* (`places`) are in.
+* home there; this machine's is `home`), else keeps the scan of its `last` search, and
+* looks up the repos its open spaces (`places`) are in.
 */
-const searchOn = fnUntraced(function* (settings, machine, home, places, scan) {
-	const found = !(scan && settings.folders.some((folder) => folder.machine === machine)) ? none() : some(machine === null ? home : yield* machineHome(machine));
+const searchOn = fnUntraced(function* (settings, machine, home, places, scan, last) {
+	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
+	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
 	return {
 		machine,
 		home: found,
-		scan: isSome(found) ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, found.value]])) : {
-			repos: [],
-			missing: []
-		},
+		scan: scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
+			onNone: () => ({
+				repos: [],
+				missing: []
+			}),
+			onSome: (before) => before.scan
+		}),
 		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
 	};
 });
+/** The machines a search covers: those with group folders, and those with open spaces. */
+const machinesOf$1 = (settings, places) => Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
 /**
 * `machine`'s search, or the status saying why it couldn't run there: its state in
-* `states`, or its failure. This machine's failure fails the search as a whole; another
-* machine's is that machine's alone.
+* `states`, or its failure, a bug included. A machine never scanned (or every machine,
+* when `rescan`) scans its group folders.
 */
-const searchOrStatus = (settings, machine, home, places, scan, states) => {
-	const held = statusOf$1(states, machine);
+const searchMachine = (ask, machine) => {
+	const held = statusOf$1(ask.states, machine);
 	if (isSome(held)) return succeed(fail$2(held.value));
-	const search = searchOn(settings, machine, home, places, scan).pipe(map((found) => succeed$3(found)));
-	return machine === null ? search : search.pipe(catch_((failed) => succeed(fail$2({
+	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
+	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
+	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
+	}))), catchDefect((defect) => succeed(fail$2({
+		_tag: "Down",
+		reason: defectText(defect)
 	}))));
 };
 /**
-* The repos to list: the folder scan's (run again on every machine when `lastScan` is
-* none, else only on the machines it lacks) plus the repos the open spaces are in
-* (`places`, each on its machine) and the Current repo (`current`), less the hidden ones.
-* Each machine is searched on its own, side by side. A machine Herdr's machine list
-* (`states`) says is connecting or unavailable runs nothing, and one whose search fails
-* gives up only its own repos: each gets its status. A failure on this machine is its
-* one-line reason.
+* One refresh of every machine in `ask` not busy, side by side: each machine's search,
+* handed to `onSearch` as it lands, which answers with that machine's repos to read; then
+* those repos' lists in one batched read, handed to `onLists`; then `onDone`, however the
+* machine's refresh ended. No machine waits on another. A machine whose search failed
+* reads no lists; this machine's lists are read even then, from the repos it kept.
 */
-const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none(), states = /* @__PURE__ */ new Map()) {
-	const machines = Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
-	const searched = yield* forEach(machines, (machine) => searchOrStatus(settings, machine, home, places, match$5(lastScan, {
-		onNone: () => true,
-		onSome: (last) => !last.machines.includes(machine)
-	}), states).pipe(map((result) => ({
+const refreshMachines = (ask, onSearch, onLists, onDone = () => void 0) => forEach(machinesOf$1(ask.settings, ask.places).filter((machine) => !ask.busy.has(machine)), (machine) => searchMachine(ask, machine).pipe(flatMap((search) => sync(() => onSearch(machine, search)).pipe(flatMap((repos) => readLists(repos.filter((repo) => repo.machine === machine), machine !== null && isFailure(search) ? /* @__PURE__ */ new Map([[machine, search.failure]]) : /* @__PURE__ */ new Map(), onLists)))), ensuring(sync(() => onDone(machine)))), {
+	concurrency: "unbounded",
+	discard: true
+});
+/**
+* `search` of `machine` landed. Another machine's failure is its status; this machine's
+* is the error, and its last search that worked stays, so its repos stay listed. A
+* search that works clears the machine's status, one a failed list read gave included.
+*/
+const landSearch = (landed, machine, search) => {
+	const here = machine === null;
+	const searches = new Map([...landed.searches, [machine, search]]);
+	return match$4(search, {
+		onSuccess: () => ({
+			searches,
+			error: here ? none() : landed.error,
+			statuses: new Map([...landed.statuses].filter(([at]) => at !== machine))
+		}),
+		onFailure: (status) => here ? {
+			...landed,
+			error: some(status._tag === "Down" ? status.reason : "connecting")
+		} : {
+			...landed,
+			searches,
+			statuses: new Map([...landed.statuses, [machine, status]])
+		}
+	});
+};
+/**
+* The repos to list, from each machine's search in `searches` (only the machines `settings`
+* and `places` cover): the folder scans' plus the repos the open spaces are in and the
+* Current repo (`current`), less the hidden ones. A machine whose search failed gives up
+* its repos.
+*/
+const foundOf = (settings, home, places, searches, current = none()) => {
+	const searched = machinesOf$1(settings, places).flatMap((machine) => toArray(map$3(fromNullishOr(searches.get(machine)), (result) => ({
 		machine,
 		result
-	}))), { concurrency: "unbounded" });
+	}))));
 	const ok = searched.flatMap(({ result }) => toArray(getSuccess(result)));
-	const last = getOrElse$1(lastScan, () => ({
-		repos: [],
-		missing: [],
-		homes: /* @__PURE__ */ new Map([[null, home]]),
-		machines: []
-	}));
 	const scans = ok.flatMap((found) => toArray(map$3(found.home, (at) => ({
 		...found,
 		home: at
 	}))));
 	const scanned = {
-		repos: [...last.repos, ...scans.flatMap((found) => found.scan.repos)],
-		missing: [...last.missing, ...scans.flatMap((found) => found.scan.missing)],
-		homes: new Map([...last.homes, ...scans.map((found) => [found.machine, found.home])]),
-		machines: [...last.machines, ...scans.map((found) => found.machine)]
+		repos: scans.flatMap((found) => found.scan.repos),
+		missing: scans.flatMap((found) => found.scan.missing),
+		homes: new Map([[null, home], ...scans.map((found) => [found.machine, found.home])]),
+		machines: scans.map((found) => found.machine)
 	};
 	const repos = reposFrom(scanned.repos, [...ok.flatMap((found) => found.owners), ...toArray(current)], settings.folders, scanned.homes);
 	return {
@@ -11327,7 +11401,7 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, c
 		repos: withoutHidden(repos, settings.hidden),
 		statuses: new Map(searched.flatMap(({ machine, result }) => toArray(map$3(getFailure(result), (status) => [machine, status]))))
 	};
-}, asReason);
+};
 /**
 * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
 * empty for none) is in, if any, or the one-line reason the lookup failed.
@@ -12815,6 +12889,10 @@ var Worktrunk = class extends View {
 	settingsError = none();
 	/** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
 	scanned = none();
+	/** Each machine's latest search, which the repos are found from. */
+	searches = /* @__PURE__ */ new Map();
+	/** The machines whose refresh is still running: a new refresh runs nothing there. */
+	refreshing = /* @__PURE__ */ new Set();
 	lastScan = none();
 	repos = [];
 	discovered = false;
@@ -13379,7 +13457,10 @@ var Worktrunk = class extends View {
 			if (isSome(done.again)) this.refresh(cx, done.again.value);
 		});
 	}
-	/** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+	/**
+	* One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+	* the machines side by side. It ends when this machine's part does.
+	*/
 	async load(cx, { scan }) {
 		const settled = shared(IMPORTED_KEY) === true;
 		const loaded = await runEdge(loadSettings({
@@ -13419,28 +13500,57 @@ var Worktrunk = class extends View {
 			machine: p.machine,
 			folder: p.place
 		}));
-		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess)), machineStates(machines())), fail$2);
-		if (isSuccess(found)) {
-			this.repos = found.success.repos;
-			this.scanned = some(found.success.scanned);
-			if (due) this.lastScan = some({
-				key,
-				at: now
+		const current = flatten$1(flatMap$3(this.follow.found, getSuccess));
+		const ask = {
+			settings: this.settings,
+			home: home(),
+			places,
+			last: this.searches,
+			rescan: due,
+			states: machineStates(machines()),
+			busy: this.refreshing
+		};
+		const started = machinesOf$1(this.settings, places).filter((machine) => !this.refreshing.has(machine));
+		this.refreshing = /* @__PURE__ */ new Set([...this.refreshing, ...started]);
+		await new Promise((done) => {
+			if (!started.includes(null)) done();
+			cx.spawn(async (cx) => {
+				await runEdge(refreshMachines(ask, (machine, search) => {
+					const landed = landSearch({
+						searches: this.searches,
+						error: this.discoverError,
+						statuses: this.machineStatus
+					}, machine, search);
+					this.searches = landed.searches;
+					this.discoverError = landed.error;
+					this.machineStatus = landed.statuses;
+					if (due && machine === null && isSuccess(search)) this.lastScan = some({
+						key,
+						at: now
+					});
+					const found = foundOf(this.settings, ask.home, places, this.searches, current);
+					this.repos = found.repos;
+					this.scanned = some(found.scanned);
+					this.discovered = true;
+					cx.notify();
+					return this.reposToRead();
+				}, (machine, answer) => {
+					const kept = keepLists({
+						lists: this.lists,
+						machines: this.machineStatus
+					}, machine, answer);
+					this.lists = kept.lists;
+					this.machineStatus = kept.machines;
+					cx.notify();
+				}, (machine) => {
+					this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+					if (machine === null) done();
+				}), showDefect("the repos"));
+				this.discovered = true;
+				cx.notify();
+				done();
 			});
-			this.discoverError = none();
-			this.machineStatus = found.success.statuses;
-		} else this.discoverError = some(found.failure);
-		this.discovered = true;
-		cx.notify();
-		await runEdge(readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
-			const kept = keepLists({
-				lists: this.lists,
-				machines: this.machineStatus
-			}, machine, answer);
-			this.lists = kept.lists;
-			this.machineStatus = kept.machines;
-			cx.notify();
-		}), showDefect("the worktrees"));
+		});
 	}
 	/** Reads CI again with the next refresh, which `ask` starts. */
 	refreshWithCi(cx, ask) {

@@ -68,7 +68,12 @@ import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./
 import {
   addGroupFolderOn,
   dialogFor,
-  findRepos,
+  foundOf,
+  landSearch,
+  machinesOf,
+  refreshMachines,
+  type MachinesAsk,
+  type Searches,
   hideInSettings,
   loadSettings,
   lookUpCurrent,
@@ -77,7 +82,6 @@ import {
   readCi,
   readDialogRepo,
   readEach,
-  readLists,
   defectAsReason,
   runJob,
   saveSettings,
@@ -514,6 +518,10 @@ export default class Worktrunk extends View {
   settingsError: Option.Option<string> = Option.none();
   /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
   scanned: Option.Option<Scanned> = Option.none();
+  /** Each machine's latest search, which the repos are found from. */
+  searches: Searches = new Map();
+  /** The machines whose refresh is still running: a new refresh runs nothing there. */
+  refreshing: ReadonlySet<Machine> = new Set();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
@@ -1110,7 +1118,10 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+  /**
+   * One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+   * the machines side by side. It ends when this machine's part does.
+   */
   async load(cx: AsyncContext, { scan }: RefreshAsk) {
     const settled = shared(IMPORTED_KEY) === true;
     const loaded = await runEdge(
@@ -1144,44 +1155,74 @@ export default class Worktrunk extends View {
       machine: p.machine,
       folder: p.place,
     }));
-    const found = await runEdge(
-      findRepos(
-        this.settings,
-        home(),
-        places,
-        due ? Option.none() : this.scanned,
-        // The Current repo is listed even when no open space is in it.
-        Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess)),
-        machineStates(machines()),
-      ),
-      Result.fail,
+    const current = Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess));
+    const ask: MachinesAsk = {
+      settings: this.settings,
+      home: home(),
+      places,
+      last: this.searches,
+      rescan: due,
+      states: machineStates(machines()),
+      busy: this.refreshing,
+    };
+    const started = machinesOf(this.settings, places).filter(
+      (machine) => !this.refreshing.has(machine),
     );
-    if (Result.isSuccess(found)) {
-      this.repos = found.success.repos;
-      this.scanned = Option.some(found.success.scanned);
-      if (due) this.lastScan = Option.some({ key, at: now });
-      this.discoverError = Option.none();
-      this.machineStatus = found.success.statuses;
-    } else {
-      // The repos from the last search that worked stay listed.
-      this.discoverError = Option.some(found.failure);
-    }
-    this.discovered = true;
-    cx.notify();
-
-    await runEdge(
-      readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
-        const kept = keepLists(
-          { lists: this.lists, machines: this.machineStatus },
-          machine,
-          answer,
+    this.refreshing = new Set([...this.refreshing, ...started]);
+    // The refresh is done once this machine's part is: another machine's carries on alone,
+    // so this machine's next refresh never waits on it.
+    await new Promise<void>((done) => {
+      if (!started.includes(THIS_MACHINE)) done();
+      cx.spawn(async (cx) => {
+        await runEdge(
+          refreshMachines(
+            ask,
+            (machine, search) => {
+              const landed = landSearch(
+                {
+                  searches: this.searches,
+                  error: this.discoverError,
+                  statuses: this.machineStatus,
+                },
+                machine,
+                search,
+              );
+              this.searches = landed.searches;
+              this.discoverError = landed.error;
+              this.machineStatus = landed.statuses;
+              if (due && machine === THIS_MACHINE && Result.isSuccess(search)) {
+                this.lastScan = Option.some({ key, at: now });
+              }
+              // The Current repo is listed even when no open space is in it.
+              const found = foundOf(this.settings, ask.home, places, this.searches, current);
+              this.repos = found.repos;
+              this.scanned = Option.some(found.scanned);
+              this.discovered = true;
+              cx.notify();
+              return this.reposToRead();
+            },
+            (machine, answer) => {
+              const kept = keepLists(
+                { lists: this.lists, machines: this.machineStatus },
+                machine,
+                answer,
+              );
+              this.lists = kept.lists;
+              this.machineStatus = kept.machines;
+              cx.notify();
+            },
+            (machine) => {
+              this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+              if (machine === THIS_MACHINE) done();
+            },
+          ),
+          showDefect("the repos"),
         );
-        this.lists = kept.lists;
-        this.machineStatus = kept.machines;
+        this.discovered = true;
         cx.notify();
-      }),
-      showDefect("the worktrees"),
-    );
+        done();
+      });
+    });
   }
 
   /** Reads CI again with the next refresh, which `ask` starts. */
