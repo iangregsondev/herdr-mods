@@ -1,5 +1,6 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
+import { repoKey, THIS_MACHINE } from "../src/machines.ts";
 import type { CiRead, RepoList } from "../src/reads.ts";
 import type { Repo } from "../src/repos.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
@@ -60,8 +61,10 @@ const space = (id: string, folder: string, extra: Partial<SpaceLike> = {}): Spac
   ...extra,
 });
 
-const API: Repo = { root: "/w/api", count: 4, group: "Work" };
-const WEB: Repo = { root: "/p/web", count: 1, group: "Other" };
+const API: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 4, group: "Work" };
+const WEB: Repo = { machine: THIS_MACHINE, root: "/p/web", count: 1, group: "Other" };
+/** The same folder as API, on another machine: another repo. */
+const API_LINUX: Repo = { ...API, machine: "linux" };
 
 const API_WORKTREES = [
   wt("/w/api", "main", MAIN),
@@ -382,8 +385,8 @@ describe("buildView: header, banners and empty states", () => {
   });
 });
 
-const PERSONAL: Repo = { root: "/p/blog", count: 2, group: "Personal" };
-const STRAY: Repo = { root: "/x/tool", count: 2, group: "Lab" };
+const PERSONAL: Repo = { machine: THIS_MACHINE, root: "/p/blog", count: 2, group: "Personal" };
+const STRAY: Repo = { machine: THIS_MACHINE, root: "/x/tool", count: 2, group: "Lab" };
 const withView = (view: Partial<Snapshot["view"]>, more: Partial<Snapshot> = {}) =>
   snapshot({ view: { ...DEFAULT_VIEW_STATE, only: false, ...view }, ...more });
 const names = (s: Snapshot) => tree(s).map((r) => r.name);
@@ -856,5 +859,60 @@ describe("reposToRead", () => {
   test("every other view reads the selected chip's repos", () => {
     const s = scope({ show: "repos", group: Option.some("Work") }, { _tag: "InRepo", repo: WEB });
     expect(reposToRead(s)).toEqual([API]);
+  });
+});
+
+describe("buildView: the same folder on two machines", () => {
+  const both = (more: Partial<Snapshot> = {}) =>
+    tree(snapshot({ repos: [API, API_LINUX], ...more }));
+
+  test("each repo reads its own list, by machine and folder", () => {
+    const [here, linux] = both({ lists: new Map([[repoKey(API), read(API_WORKTREES)]]) });
+    expect([here?.status, linux?.status]).toEqual([{ _tag: "Ok" }, { _tag: "Reading" }]);
+  });
+
+  test("folding one folds it alone, its sections too", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const linuxKey = repoKey(API_LINUX);
+    const [here, linux] = both({ lists, folded: { [linuxKey]: true } });
+    expect([here?.folded, linux?.folded]).toEqual([false, true]);
+    const sections = both({ lists, folded: { [`${linuxKey}|merged`]: true } }).map(
+      (r) => r.sections.find((x) => x.kind === "merged")?.folded,
+    );
+    expect(sections).toEqual([false, true]);
+  });
+
+  test("Clean up counts them as two repos", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const s = snapshot({
+      repos: [API, API_LINUX],
+      lists,
+      view: { ...DEFAULT_VIEW_STATE, show: "merged" },
+    });
+    const body = buildView(s).body;
+    expect(body._tag === "Flat" && body.summary).toEqual(Option.some("2 merged in 2 repos"));
+  });
+
+  test("each repo shows its own CI", () => {
+    const lists = new Map([
+      [repoKey(API), read([wt("/w/api", "main", MAIN)])],
+      [repoKey(API_LINUX), read([wt("/w/api", "main", MAIN)])],
+    ]);
+    const ci: CiRead = {
+      byPath: new Map([["/w/api", { _tag: "Checks", status: "failed", stale: false }]]),
+      error: Option.some("timed out"),
+    };
+    const repos = both({ lists, ci: new Map([[repoKey(API_LINUX), ci]]) });
+    expect(repos.map((r) => r.main[0]?.ci)).toEqual([
+      Option.none(),
+      Option.some({ status: "failed", stale: false }),
+    ]);
+    expect(repos.map((r) => Option.isSome(r.ciNote))).toEqual([false, true]);
   });
 });

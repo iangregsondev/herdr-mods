@@ -7,6 +7,7 @@ import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
 import { Files, type FileError } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
+import type { RepoId } from "./machines.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
@@ -219,19 +220,19 @@ export const readCi = Effect.fn("readCi")(function* (root: string) {
 }, asReason);
 
 /**
- * Runs `read` on every repo root, at most `limit` at a time, handing each answer to
- * `keep` as it lands. Each read spawns processes, and Herdr runs out of open files when
- * every repo's list and CI start at once.
+ * Runs `read` on every repo, at most `limit` at a time, handing each answer to `keep` as
+ * it lands. Each read spawns processes, and Herdr runs out of open files when every
+ * repo's list and CI start at once.
  */
-export const readEach = <A, R>(
-  roots: readonly string[],
+export const readEach = <T, A, R>(
+  repos: readonly T[],
   limit: number,
-  read: (root: string) => Effect.Effect<A, never, R>,
-  keep: (root: string, answer: A) => void,
+  read: (repo: T) => Effect.Effect<A, never, R>,
+  keep: (repo: T, answer: A) => void,
 ): Effect.Effect<void, never, R> =>
   Effect.forEach(
-    roots,
-    (root) => read(root).pipe(Effect.tap((answer) => Effect.sync(() => keep(root, answer)))),
+    repos,
+    (repo) => read(repo).pipe(Effect.tap((answer) => Effect.sync(() => keep(repo, answer)))),
     { concurrency: limit, discard: true },
   );
 
@@ -278,14 +279,14 @@ const unsavedText = (name: string, failed: FileError): string =>
   `${name}: couldn't save it (${causeText(failed.cause)})`;
 
 /**
- * Hides the repo at `root` in the settings file (`files.path`), never over a hand edit
+ * Hides `repo` (by machine and folder) in the settings file (`files.path`), never over a hand edit
  * made since it was read. The answer is the one-line reason it couldn't, if it couldn't.
  */
 export const hideInSettings = Effect.fn("hideInSettings")(
-  function* (files: Pick<SettingsFiles, "path" | "name">, root: string) {
+  function* (files: Pick<SettingsFiles, "path" | "name">, repo: RepoId) {
     const disk = yield* Files;
     const current = yield* currentSettings(files.path);
-    const next = yield* Effect.fromResult(hideRepo(current, root, files.name)).pipe(
+    const next = yield* Effect.fromResult(hideRepo(current, repo, files.name)).pipe(
       Effect.mapError((reason) => new SettingsBroken({ reason })),
     );
     if (next === current) return Result.succeed(undefined);

@@ -1,3 +1,4 @@
+import { THIS_MACHINE } from "../src/machines.ts";
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
@@ -16,6 +17,9 @@ import {
   withFields,
   type Settings,
 } from "../src/settings.ts";
+
+/** A repo on this machine. */
+const here = (root: string) => ({ machine: THIS_MACHINE, root });
 
 const FILE = "iangregsondev-worktrunk.json";
 
@@ -64,14 +68,27 @@ describe("parseSettings", () => {
     });
   });
 
-  test("reads the hidden repos", () => {
+  test("a hidden repo written as a bare folder is on this machine", () => {
     const text = JSON.stringify({ hidden: ["/code/old", "/code/odd"] });
-    expect(parseSettings(text, FILE).settings.hidden).toEqual(["/code/old", "/code/odd"]);
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([
+      { machine: THIS_MACHINE, root: "/code/old" },
+      { machine: THIS_MACHINE, root: "/code/odd" },
+    ]);
+  });
+
+  test("a hidden repo written with its machine is on that machine", () => {
+    const text = JSON.stringify({
+      hidden: ["/code/old", { machine: "linux", path: "/code/old" }],
+    });
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([
+      here("/code/old"),
+      { machine: "linux", root: "/code/old" },
+    ]);
   });
 
   test("blank hidden entries are dropped", () => {
     const text = JSON.stringify({ hidden: ["", "/code/old"] });
-    expect(parseSettings(text, FILE).settings.hidden).toEqual(["/code/old"]);
+    expect(parseSettings(text, FILE).settings.hidden).toEqual([here("/code/old")]);
   });
 
   test("reads the no-wrapper setting", () => {
@@ -160,7 +177,7 @@ describe("serializeSettings", () => {
   test("stable key order, two-space indent, trailing newline", () => {
     const text = serializeSettings({
       noWrapper: true,
-      hidden: ["/r/old"],
+      hidden: [here("/r/old")],
       skip: ["a"],
       depth: 2,
       folders: [{ name: "W", path: "~/w" }],
@@ -175,10 +192,18 @@ describe("serializeSettings", () => {
       folders: [{ name: "W", path: "~/w" }],
       depth: 5,
       skip: [],
-      hidden: ["/r/old"],
+      hidden: [here("/r/old")],
       noWrapper: true,
     };
     expect(parseSettings(serializeSettings(settings), FILE).settings).toEqual(settings);
+  });
+
+  test("a hidden repo on another machine is written with its machine", () => {
+    const text = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      hidden: [here("/r/old"), { machine: "linux", root: "/r/old" }],
+    });
+    expect(JSON.parse(text).hidden).toEqual(["/r/old", { machine: "linux", path: "/r/old" }]);
   });
 });
 
@@ -224,34 +249,44 @@ describe("hideRepo", () => {
   const file = serializeSettings({
     ...DEFAULT_SETTINGS,
     folders: [{ name: "W", path: "~/w" }],
-    hidden: ["/w/old"],
+    hidden: [here("/w/old")],
   });
   const settingsOf = (result: Result.Result<string, string>) =>
     Result.map(result, (text) => parseSettings(text, FILE).settings);
 
   test("adds the repo to the file's hidden list and keeps the rest", () => {
-    expect(settingsOf(hideRepo(file, "/w/api", FILE))).toEqual(
+    expect(settingsOf(hideRepo(file, here("/w/api"), FILE))).toEqual(
       Result.succeed({
         ...DEFAULT_SETTINGS,
         folders: [{ name: "W", path: "~/w" }],
-        hidden: ["/w/old", "/w/api"],
+        hidden: [here("/w/old"), here("/w/api")],
+      }),
+    );
+  });
+
+  test("hiding a folder hidden on this machine hides it on another machine too", () => {
+    expect(settingsOf(hideRepo(file, { machine: "linux", root: "/w/old" }, FILE))).toEqual(
+      Result.succeed({
+        ...DEFAULT_SETTINGS,
+        folders: [{ name: "W", path: "~/w" }],
+        hidden: [here("/w/old"), { machine: "linux", root: "/w/old" }],
       }),
     );
   });
 
   test("hiding a hidden repo leaves the file as it is, hand formatting and all", () => {
     const handMade = '{ "hidden": ["/w/old"] }';
-    expect(hideRepo(handMade, "/w/old", FILE)).toEqual(Result.succeed(handMade));
+    expect(hideRepo(handMade, here("/w/old"), FILE)).toEqual(Result.succeed(handMade));
   });
 
   test("with no settings file yet, hiding writes one", () => {
-    expect(settingsOf(hideRepo(null, "/w/api", FILE))).toEqual(
-      Result.succeed({ ...DEFAULT_SETTINGS, hidden: ["/w/api"] }),
+    expect(settingsOf(hideRepo(null, here("/w/api"), FILE))).toEqual(
+      Result.succeed({ ...DEFAULT_SETTINGS, hidden: [here("/w/api")] }),
     );
   });
 
   test("a file that doesn't parse is never replaced: hiding fails with the reason", () => {
-    expect(hideRepo('{"depth": ', "/w/api", FILE)).toEqual(
+    expect(hideRepo('{"depth": ', here("/w/api"), FILE)).toEqual(
       Result.fail(Option.getOrThrow(parseSettings('{"depth": ', FILE).error)),
     );
   });
@@ -313,9 +348,15 @@ describe("editing in the Settings dialog", () => {
   };
   const names = (settings: Settings) => settings.folders.map((folder) => folder.name);
 
+  test("un-hiding a repo on one machine leaves the same folder on another hidden", () => {
+    const linux = { machine: "linux", root: "/r/a" };
+    const hidden = { ...DEFAULT_SETTINGS, hidden: [here("/r/a"), linux] };
+    expect(unhide(hidden, linux).hidden).toEqual([here("/r/a")]);
+  });
+
   test("un-hiding a repo takes it off the hidden list, the rest stay hidden", () => {
-    const hidden = { ...DEFAULT_SETTINGS, hidden: ["/r/a", "/r/b"] };
-    expect(unhide(hidden, "/r/a").hidden).toEqual(["/r/b"]);
+    const hidden = { ...DEFAULT_SETTINGS, hidden: [here("/r/a"), here("/r/b")] };
+    expect(unhide(hidden, here("/r/a")).hidden).toEqual([here("/r/b")]);
   });
 
   test("a picked folder joins the end, under home written with ~, named after its last segment", () => {
@@ -402,8 +443,8 @@ describe("editing in the Settings dialog", () => {
     const opened = serializeSettings(two);
     const edited = withFields(
       unhide(
-        moveFolder(addFolder({ ...two, hidden: ["/r/a"] }, "/Users/me/oss", HOME), 2, -1),
-        "/r/a",
+        moveFolder(addFolder({ ...two, hidden: [here("/r/a")] }, "/Users/me/oss", HOME), 2, -1),
+        here("/r/a"),
       ),
       { names: ["W", "O", "P"], skip: "vendor", depth: 2 },
     );

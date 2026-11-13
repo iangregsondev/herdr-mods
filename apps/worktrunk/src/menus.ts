@@ -11,6 +11,7 @@ import {
   type MergeMode,
   type WtOptions,
 } from "./commands.ts";
+import { repoKey, repoOfKey, type Machine, type RepoId } from "./machines.ts";
 import type { RepoList } from "./reads.ts";
 import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
@@ -56,7 +57,7 @@ export type Action =
   | { readonly _tag: "CopyPath"; readonly path: string }
   | { readonly _tag: "Reveal"; readonly path: string }
   | { readonly _tag: "Refresh" }
-  | { readonly _tag: "Hide"; readonly root: string }
+  | { readonly _tag: "Hide"; readonly machine: Machine; readonly root: string }
   /** Open the Settings dialog. */
   | { readonly _tag: "Settings" }
 
@@ -181,36 +182,41 @@ export const cleanupAction = (repos: readonly RepoWorktrees[]): Option.Option<Cl
   });
 };
 
-/** The right-click menu of the repo whose main checkout is `root`. */
-export const repoMenu = (root: string, worktrees: readonly Worktree[]): readonly MenuItem[] => [
+/** The right-click menu of `repo`. */
+export const repoMenu = (
+  { machine, root }: RepoId,
+  worktrees: readonly Worktree[],
+): readonly MenuItem[] => [
   item("New or open worktree…", { _tag: "NewOrOpen", folder: root }),
   ...Option.toArray(cleanupAction([{ root, worktrees }])).map((action) =>
     item(`Clean up ${action.paths.length} merged…`, action, true),
   ),
   item("Refresh", { _tag: "Refresh" }),
   item("Reveal in Finder", { _tag: "Reveal", path: root }),
-  item("Hide this repo", { _tag: "Hide", root }),
+  item("Hide this repo", { _tag: "Hide", machine, root }),
 ];
 
-/** A worktree found in the panel's lists, with its repo's main checkout. */
-export interface FoundWorktree {
-  readonly root: string;
+/** A worktree found in the panel's lists, with its repo's machine and main checkout. */
+export interface FoundWorktree extends RepoId {
   readonly worktree: Worktree;
 }
 
-/** The worktree at `path` in any repo's list (`lists`, by main checkout). */
+/** The worktree at `path` in any repo's list (`lists`, by `repoKey`). */
 export const findWorktree = (
   lists: ReadonlyMap<string, RepoList>,
   path: string,
 ): Option.Option<FoundWorktree> =>
   Option.fromNullishOr(
-    Array.from(lists).flatMap(([root, list]) =>
-      list.worktrees.filter((w) => w.path === path).map((worktree) => ({ root, worktree })),
+    Array.from(lists).flatMap(([key, list]) =>
+      list.worktrees
+        .filter((w) => w.path === path)
+        .map((worktree) => ({ ...repoOfKey(key), worktree })),
     )[0],
   );
 
 /**
- * Removing the merged worktrees among those at `paths`, batched by repo in the order
+ * Removing the merged worktrees among those at `paths`, batched by repo (machine and
+ * folder) in the order
  * their repos first appear; none when none of them is merged.
  */
 export const cleanupFor = (
@@ -218,11 +224,11 @@ export const cleanupFor = (
   paths: readonly string[],
 ): Option.Option<CleanupAction> => {
   const found = paths.flatMap((path) => Option.toArray(findWorktree(lists, path)));
-  const roots = Array.from(new Set(found.map(({ root }) => root)));
+  const repos = Array.from(new Map(found.map((f) => [repoKey(f), f.root])));
   return cleanupAction(
-    roots.map((root) => ({
+    repos.map(([key, root]) => ({
       root,
-      worktrees: found.filter((f) => f.root === root).map((f) => f.worktree),
+      worktrees: found.filter((f) => repoKey(f) === key).map((f) => f.worktree),
     })),
   );
 };

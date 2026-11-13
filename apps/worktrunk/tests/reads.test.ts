@@ -15,7 +15,8 @@ import {
   scanDue,
   takeLookup,
 } from "../src/reads.ts";
-import type { Repo } from "../src/repos.ts";
+import { THIS_MACHINE } from "../src/machines.ts";
+import type { FoundRepo, Repo } from "../src/repos.ts";
 import type { Worktree } from "../src/worktrees.ts";
 
 const wt = (path: string): Worktree => ({
@@ -211,10 +212,9 @@ describe("onRender", () => {
 });
 
 describe("currentRepoOf", () => {
-  const LISTED: Repo = { root: "/w/api", count: 3, group: "Work" };
+  const LISTED: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 3, group: "Work" };
   const folders = [{ name: "Work", path: "~/w" }];
-  const answer = (found: Option.Option<{ root: string; count: number }>) =>
-    Option.some(Result.succeed(found));
+  const answer = (found: Option.Option<FoundRepo>) => Option.some(Result.succeed(found));
 
   test("NotInRepo when the focused folder is in none", () => {
     expect(currentRepoOf(answer(Option.none()), [LISTED], folders, "/home")).toEqual({
@@ -227,7 +227,7 @@ describe("currentRepoOf", () => {
   });
 
   test("InRepo with the listed repo, group included", () => {
-    const found = answer(Option.some({ root: "/w/api", count: 1 }));
+    const found = answer(Option.some({ machine: THIS_MACHINE, root: "/w/api", count: 1 }));
     expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
       _tag: "InRepo",
       repo: LISTED,
@@ -235,10 +235,18 @@ describe("currentRepoOf", () => {
   });
 
   test("InRepo with a repo the panel doesn't list, grouped by the group folders", () => {
-    const found = answer(Option.some({ root: "/home/w/tool", count: 2 }));
+    const found = answer(Option.some({ machine: THIS_MACHINE, root: "/home/w/tool", count: 2 }));
     expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
       _tag: "InRepo",
-      repo: { root: "/home/w/tool", count: 2, group: "Work" },
+      repo: { machine: THIS_MACHINE, root: "/home/w/tool", count: 2, group: "Work" },
+    });
+  });
+
+  test("the same folder on another machine is not the listed repo", () => {
+    const found = answer(Option.some({ machine: "linux", root: "/w/api", count: 1 }));
+    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+      _tag: "InRepo",
+      repo: { machine: "linux", root: "/w/api", count: 1, group: "Other" },
     });
   });
 
@@ -279,7 +287,7 @@ describe("followFocus", () => {
 });
 
 describe("takeLookup", () => {
-  const API = { root: "/w/api", count: 2 };
+  const API: FoundRepo = { machine: THIS_MACHINE, root: "/w/api", count: 2 };
   const following = (
     folder: string,
     found: Option.Option<Result.Result<Option.Option<typeof API>, string>> = Option.none(),
@@ -311,6 +319,12 @@ describe("takeLookup", () => {
       follow: following("/w/api.feat", Option.some(answer)),
       refresh: false,
     });
+  });
+
+  test("an answer naming the same folder on another machine refreshes", () => {
+    const before = Option.some(Result.succeed(Option.some(API)));
+    const answer = Result.succeed(Option.some({ ...API, machine: "linux" }));
+    expect(takeLookup(following("/w/api", before), "/w/api", answer).refresh).toBe(true);
   });
 
   test("an answer naming another repo than before refreshes", () => {

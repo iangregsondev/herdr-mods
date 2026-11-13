@@ -1,4 +1,5 @@
 import { assert, describe, expect, it, test } from "@effect/vitest";
+import { THIS_MACHINE } from "../src/machines.ts";
 import { Effect, Option, Result } from "effect";
 import {
   BRANCHES_SCRIPT,
@@ -255,7 +256,7 @@ describe("scanRepos", () => {
         stderr: "",
       });
       const repos = yield* scanRepos(settings, "/h").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(repos, [{ root: "/h/work/api", count: 2 }]);
+      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/h/work/api", count: 2 }]);
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(SCAN_SCRIPT, scanArgs(settings, "/h")), { timeout: 60_000 }],
       ]);
@@ -278,7 +279,7 @@ describe("reposOf", () => {
       const repos = yield* reposOf(["/r/api/src", "/r/api.feat"]).pipe(
         Effect.provide(Shell.layer(api)),
       );
-      assert.deepStrictEqual(repos, [{ root: "/r/api", count: 3 }]);
+      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/r/api", count: 3 }]);
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(OWNERS_SCRIPT, ["/r/api/src", "/r/api.feat"]), { timeout: 60_000 }],
       ]);
@@ -299,7 +300,10 @@ describe("repoAt", () => {
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/r/api\t3\n", stderr: "" });
       const found = yield* repoAt("/r/api.feat/src").pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual(found, Option.some({ root: "/r/api", count: 3 }));
+      assert.deepStrictEqual(
+        found,
+        Option.some({ machine: THIS_MACHINE, root: "/r/api", count: 3 }),
+      );
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(OWNERS_SCRIPT, ["/r/api.feat/src"]), { timeout: 60_000 }],
       ]);

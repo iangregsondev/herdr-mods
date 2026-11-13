@@ -8,6 +8,7 @@ import {
   reposFrom,
   withoutHidden,
 } from "../src/repos.ts";
+import { THIS_MACHINE } from "../src/machines.ts";
 
 const HOME = "/home/me";
 const folders = [
@@ -50,25 +51,41 @@ describe("groupOf", () => {
 
 describe("parseScan", () => {
   test("scan lines are group folder, repo, worktree count", () => {
-    expect(parseScan("/r\t/r/a\t3\n/r\t/r/b\t1\n")).toEqual([
-      { root: "/r/a", count: 3 },
-      { root: "/r/b", count: 1 },
+    expect(parseScan("/r\t/r/a\t3\n/r\t/r/b\t1\n", THIS_MACHINE)).toEqual([
+      { machine: THIS_MACHINE, root: "/r/a", count: 3 },
+      { machine: THIS_MACHINE, root: "/r/b", count: 1 },
     ]);
   });
 
   test("a count that isn't a whole number above 0 reads as 1; bad lines are skipped", () => {
-    expect(parseScan("/r\t/r/b\tx\n/r\t/r/c\t0\n\nnot a line\n")).toEqual([
-      { root: "/r/b", count: 1 },
-      { root: "/r/c", count: 1 },
+    expect(parseScan("/r\t/r/b\tx\n/r\t/r/c\t0\n\nnot a line\n", THIS_MACHINE)).toEqual([
+      { machine: THIS_MACHINE, root: "/r/b", count: 1 },
+      { machine: THIS_MACHINE, root: "/r/c", count: 1 },
+    ]);
+  });
+});
+
+describe("parseScan on a machine", () => {
+  test("each repo found is on the machine the scan ran on", () => {
+    expect(parseScan("/r\t/r/a\t3\n", "linux")).toEqual([
+      { machine: "linux", root: "/r/a", count: 3 },
     ]);
   });
 });
 
 describe("parseOwners", () => {
   test("owner lines are repo, worktree count; a line with no tab is skipped", () => {
-    expect(parseOwners("/r/a\t2\n/r/c\t\nfatal: not a repo\n")).toEqual([
-      { root: "/r/a", count: 2 },
-      { root: "/r/c", count: 1 },
+    expect(parseOwners("/r/a\t2\n/r/c\t\nfatal: not a repo\n", THIS_MACHINE)).toEqual([
+      { machine: THIS_MACHINE, root: "/r/a", count: 2 },
+      { machine: THIS_MACHINE, root: "/r/c", count: 1 },
+    ]);
+  });
+});
+
+describe("parseOwners on a machine", () => {
+  test("each owner repo is on the machine the lookup ran on", () => {
+    expect(parseOwners("/r/a\t2\n", "linux")).toEqual([
+      { machine: "linux", root: "/r/a", count: 2 },
     ]);
   });
 });
@@ -77,20 +94,38 @@ describe("reposFrom", () => {
   test("scanned repos and open spaces' repos, once each, with their groups, by name", () => {
     const repos = reposFrom(
       [
-        { root: "/home/me/dev/work/zeta", count: 2 },
-        { root: "/home/me/dev/work/alpha", count: 1 },
+        { machine: THIS_MACHINE, root: "/home/me/dev/work/zeta", count: 2 },
+        { machine: THIS_MACHINE, root: "/home/me/dev/work/alpha", count: 1 },
       ],
       [
-        { root: "/home/me/dev/work/alpha", count: 4 },
-        { root: "/tmp/mid", count: 1 },
+        { machine: THIS_MACHINE, root: "/home/me/dev/work/alpha", count: 4 },
+        { machine: THIS_MACHINE, root: "/tmp/mid", count: 1 },
       ],
       folders,
       HOME,
     );
     expect(repos).toEqual([
-      { root: "/home/me/dev/work/alpha", count: 4, group: "Work" },
-      { root: "/tmp/mid", count: 1, group: "Other" },
-      { root: "/home/me/dev/work/zeta", count: 2, group: "Work" },
+      { machine: THIS_MACHINE, root: "/home/me/dev/work/alpha", count: 4, group: "Work" },
+      { machine: THIS_MACHINE, root: "/tmp/mid", count: 1, group: "Other" },
+      { machine: THIS_MACHINE, root: "/home/me/dev/work/zeta", count: 2, group: "Work" },
+    ]);
+  });
+});
+
+describe("reposFrom across machines", () => {
+  test("the same folder on two machines is two repos, each on its machine", () => {
+    const repos = reposFrom(
+      [
+        { machine: THIS_MACHINE, root: "/srv/code/api", count: 2 },
+        { machine: "linux", root: "/srv/code/api", count: 3 },
+      ],
+      [{ machine: "linux", root: "/srv/code/api", count: 4 }],
+      folders,
+      HOME,
+    );
+    expect(repos).toEqual([
+      { machine: THIS_MACHINE, root: "/srv/code/api", count: 2, group: "Abs" },
+      { machine: "linux", root: "/srv/code/api", count: 4, group: "Abs" },
     ]);
   });
 });
@@ -98,13 +133,29 @@ describe("reposFrom", () => {
 describe("withoutHidden", () => {
   test("leaves out the hidden repos; the rest keep their order", () => {
     const repos = [
-      { root: "/w/b", count: 1 },
-      { root: "/w/old", count: 2 },
-      { root: "/w/a", count: 1 },
+      { machine: THIS_MACHINE, root: "/w/b", count: 1 },
+      { machine: THIS_MACHINE, root: "/w/old", count: 2 },
+      { machine: THIS_MACHINE, root: "/w/a", count: 1 },
     ];
-    expect(withoutHidden(repos, ["/w/old", "/w/gone"])).toEqual([
-      { root: "/w/b", count: 1 },
-      { root: "/w/a", count: 1 },
+    const hidden = [
+      { machine: THIS_MACHINE, root: "/w/old" },
+      { machine: THIS_MACHINE, root: "/w/gone" },
+    ];
+    expect(withoutHidden(repos, hidden)).toEqual([
+      { machine: THIS_MACHINE, root: "/w/b", count: 1 },
+      { machine: THIS_MACHINE, root: "/w/a", count: 1 },
+    ]);
+  });
+});
+
+describe("withoutHidden across machines", () => {
+  test("hides a repo only on the machine it was hidden on", () => {
+    const repos = [
+      { machine: THIS_MACHINE, root: "/w/old", count: 1 },
+      { machine: "linux", root: "/w/old", count: 1 },
+    ];
+    expect(withoutHidden(repos, [{ machine: "linux", root: "/w/old" }])).toEqual([
+      { machine: THIS_MACHINE, root: "/w/old", count: 1 },
     ]);
   });
 });

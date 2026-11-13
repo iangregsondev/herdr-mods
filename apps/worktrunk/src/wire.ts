@@ -130,7 +130,10 @@ export const readAction = (value: unknown): Option.Option<Action> => {
     case "Reveal":
       return Option.map(text(f.path), (path): Action => ({ _tag: "Reveal", path }));
     case "Hide":
-      return Option.map(text(f.root), (root): Action => ({ _tag: "Hide", root }));
+      return Option.map(
+        Option.all({ machine: textOrNull(f.machine), root: text(f.root) }),
+        (repo): Action => ({ _tag: "Hide", ...repo }),
+      );
     case "Refresh":
       return Option.some({ _tag: "Refresh" });
     case "Settings":
