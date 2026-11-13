@@ -68,12 +68,22 @@ describe("readFolded", () => {
 });
 
 describe("view state", () => {
-  test("defaults: All, the Repos view, only repos with worktrees", () => {
-    expect(DEFAULT_VIEW_STATE).toEqual({ group: Option.none(), show: "repos", only: true });
+  test("defaults: All groups, the Repos view, only repos with worktrees, All machines", () => {
+    expect(DEFAULT_VIEW_STATE).toEqual({
+      group: Option.none(),
+      show: "repos",
+      only: true,
+      machine: Option.none(),
+    });
   });
 
   test("survives a round trip through shared state", () => {
-    const state = { group: Option.some("Work"), show: "merged", only: false } as const;
+    const state = {
+      group: Option.some("Work"),
+      show: "merged",
+      only: false,
+      machine: Option.none(),
+    } as const;
     const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
     expect(readViewState(stored)).toEqual(state);
     const defaults: unknown = JSON.parse(JSON.stringify(writeViewState(DEFAULT_VIEW_STATE)));
@@ -85,10 +95,21 @@ describe("view state", () => {
     expect(readViewState("repos")).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState({ group: 3, show: "nope", only: "yes" })).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState({ show: "open" })).toEqual({ ...DEFAULT_VIEW_STATE, show: "open" });
+    expect(readViewState({ machine: { name: 3 } })).toEqual(DEFAULT_VIEW_STATE);
+  });
+
+  test("a machine filter survives a round trip, this machine and another alike", () => {
+    const roundTrip = (machine: Option.Option<string | null>) => {
+      const state = { ...DEFAULT_VIEW_STATE, machine };
+      const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
+      return readViewState(stored).machine;
+    };
+    expect(roundTrip(Option.some("linux"))).toEqual(Option.some("linux"));
+    expect(roundTrip(Option.some(null))).toEqual(Option.some(null));
   });
 
   test("the Current view is remembered like the others", () => {
-    const state = { group: Option.none(), show: "current", only: true } as const;
+    const state = { ...DEFAULT_VIEW_STATE, show: "current" } as const;
     const stored: unknown = JSON.parse(JSON.stringify(writeViewState(state)));
     expect(readViewState(stored)).toEqual(state);
   });

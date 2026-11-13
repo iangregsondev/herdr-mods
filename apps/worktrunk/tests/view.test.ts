@@ -859,7 +859,7 @@ describe("buildView: the Current view", () => {
   test("ignores the group chips and the With worktrees toggle", () => {
     const s = current({
       current: inRepo(WEB),
-      view: { group: Option.some("Work"), show: "current", only: true },
+      view: { ...DEFAULT_VIEW_STATE, group: Option.some("Work"), show: "current", only: true },
     });
     expect(tree(s).map((r) => r.name)).toEqual(["web"]);
     expect(buildView(s).toggle).toEqual(Option.none());
@@ -1084,5 +1084,90 @@ describe("buildView: machine labels", () => {
 
   test("with every repo on one machine, no repo names it", () => {
     expect(tree(snapshot()).map((r) => r.machine)).toEqual([Option.none(), Option.none()]);
+  });
+});
+
+describe("buildView: the machine filter", () => {
+  const choices = (s: Snapshot) =>
+    buildView(s).machineFilter.map((c) => [c.label, c.machine, c.selected]);
+
+  test("offers All, then this machine, then each other machine by name, starting at All", () => {
+    const API_MAC: Repo = { ...API, machine: "mac" };
+    expect(choices(snapshot({ repos: [API_LINUX, WEB, API_MAC] }))).toEqual([
+      ["All", Option.none(), true],
+      ["this machine", Option.some(null), false],
+      ["linux", Option.some("linux"), false],
+      ["mac", Option.some("mac"), false],
+    ]);
+  });
+
+  test("with every repo and folder on one machine there is nothing to filter, so no choices", () => {
+    expect(buildView(snapshot()).machineFilter).toEqual([]);
+  });
+
+  test("offers a machine a group folder names before any repo is found on it", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      folders: [{ name: "Box", path: "~/code", machine: "linux" }],
+    };
+    expect(choices(snapshot({ repos: [API], settings })).map(([label]) => label)).toEqual([
+      "All",
+      "this machine",
+      "linux",
+    ]);
+  });
+
+  const LINUX_WEB: Repo = { ...WEB, machine: "linux" };
+  const onMachines = (machine: Option.Option<string | null>) =>
+    withView({ machine }, { repos: [API, API_LINUX, WEB, LINUX_WEB] });
+
+  test("picking a machine lists only that machine's repos", () => {
+    expect(tree(onMachines(Option.some("linux"))).map((r) => r.key)).toEqual([
+      repoKey(API_LINUX),
+      repoKey(LINUX_WEB),
+    ]);
+    expect(tree(onMachines(Option.some(null))).map((r) => r.key)).toEqual([
+      repoKey(API),
+      repoKey(WEB),
+    ]);
+  });
+
+  test("only the filtered machine's repos are read, in the Current view outside a repo too", () => {
+    const linux = onMachines(Option.some("linux"));
+    expect(reposToRead(linux)).toEqual([API_LINUX, LINUX_WEB]);
+    const current = { ...linux, view: { ...linux.view, show: "current" as const } };
+    expect(reposToRead(current)).toEqual([API_LINUX, LINUX_WEB]);
+  });
+
+  test("a filtered machine no repo or folder is on any more falls back to All", () => {
+    const s = withView({ machine: Option.some("mac") }, { repos: [API, API_LINUX] });
+    expect(tree(s).map((r) => r.key)).toEqual([repoKey(API), repoKey(API_LINUX)]);
+    expect(choices(s)[0]).toEqual(["All", Option.none(), true]);
+    expect(reposToRead(s)).toEqual([API, API_LINUX]);
+  });
+
+  test("before the first scan a filtered machine stays, so a saved filter never flashes All", () => {
+    const s = withView({ machine: Option.some("mac") }, { repos: [API_LINUX], discovered: false });
+    expect(choices(s).find(([, , selected]) => selected)).toBeUndefined();
+    expect(reposToRead(s)).toEqual([]);
+  });
+
+  test("machine labels follow the filter: none while one machine is in view", () => {
+    const lists = new Map([
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(API_LINUX), read(API_WORKTREES)],
+    ]);
+    const linux = withView({ machine: Option.some("linux") }, { repos: [API, API_LINUX], lists });
+    expect(tree(linux).map((r) => r.machine)).toEqual([Option.none()]);
+    const open = { ...linux, view: { ...linux.view, show: "merged" as const } };
+    const body = buildView(open).body;
+    expect(body._tag === "Flat" && body.rows.map((r) => r.subline.split(" · ")[0])).toEqual([
+      "api",
+    ]);
+    const all = { ...linux, view: { ...linux.view, machine: Option.none() } };
+    expect(tree(all).map((r) => r.machine)).toEqual([
+      Option.some("this machine"),
+      Option.some("linux"),
+    ]);
   });
 });
