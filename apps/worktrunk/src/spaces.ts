@@ -1,8 +1,8 @@
 // Which open Herdr space sits on which worktree. Pure: no `herdr` or `gpui` imports, so
 // spaces and panes come in as plain data shaped like `spaces()` and `panes()`.
 import { Option } from "effect";
-import { THIS_MACHINE, type Located, type Machine } from "./machines.ts";
-import { isUnder } from "./repos.ts";
+import { repoKey, THIS_MACHINE, type Located, type Machine } from "./machines.ts";
+import { isUnder, OTHER, type Repo } from "./repos.ts";
 import type { Click } from "./view.ts";
 
 /** The parts of a `SpaceInfo` this module reads. */
@@ -176,4 +176,40 @@ export const goTo = (places: readonly Place[], wanted: Wanted): Click =>
       onSome: (on): Click => ({ _tag: "Select", space: on.id }),
       onNone: (): Click => ({ _tag: "New", ...wanted }),
     },
+  );
+
+/** The parts of a repo's `wt list` this module reads: its worktrees' folders. */
+export interface ListLike {
+  readonly worktrees: readonly { readonly path: string }[];
+}
+
+/**
+ * Each space's group, by space id, for the sidebar's labels: the group of the repo whose
+ * worktree the space sits on, on the space's machine. As in `spacesOnWorktrees`, the
+ * longest worktree path holding the space's place wins, across every repo there, so a
+ * repo nested in another's folder keeps its own group. A repo whose list isn't read yet
+ * counts its main checkout. Spaces on no repo, or on a repo in Other (which the panel
+ * shows with no group), are left out.
+ */
+export const spaceGroups = (
+  places: readonly Place[],
+  repos: readonly Repo[],
+  lists: ReadonlyMap<string, ListLike>,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    places.flatMap(({ space, machine, place }) =>
+      repos
+        .filter((repo) => repo.machine === machine)
+        .flatMap((repo) =>
+          (lists.get(repoKey(repo))?.worktrees.map((w) => w.path) ?? [repo.root])
+            .filter((path) => isUnder(place, path))
+            .map((path) => ({ path, group: repo.group })),
+        )
+        .reduce<readonly { readonly path: string; readonly group: string }[]>(
+          (best, on) => (best[0] && best[0].path.length >= on.path.length ? best : [on]),
+          [],
+        )
+        .filter((on) => on.group !== OTHER)
+        .map((on) => [space.id, on.group]),
+    ),
   );

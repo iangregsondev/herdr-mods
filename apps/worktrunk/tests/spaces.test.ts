@@ -8,6 +8,7 @@ import {
   spacePlaces,
   placeOf,
   spacesInGone,
+  spaceGroups,
   spacesOnWorktrees,
   type PaneLike,
   type SpaceLike,
@@ -236,5 +237,59 @@ describe("goTo", () => {
   test("else a new space on the worktree's machine, though this machine has one at that folder", () => {
     const here = [{ space: { id: "s1", active: false }, machine: null, place: "/r/app.feat" }];
     expect(goTo(here, wanted)).toEqual({ _tag: "New", ...wanted });
+  });
+});
+
+describe("spaceGroups", () => {
+  const repo = (root: string, group: string, machine: string | null = null) => ({
+    machine,
+    root,
+    count: 1,
+    group,
+  });
+  const listed = (...paths: readonly string[]) => ({ worktrees: paths.map((path) => ({ path })) });
+  const at = (id: string, place: string, machine: string | null = null) => ({
+    space: { id, active: false },
+    machine,
+    place,
+  });
+
+  test("a space on a repo's worktree gets that repo's group", () => {
+    const lists = new Map([["/w/app", listed("/w/app", "/w/app.feature")]]);
+    expect(spaceGroups([at("s1", "/w/app.feature/src")], [repo("/w/app", "Work")], lists)).toEqual({
+      s1: "Work",
+    });
+  });
+
+  test("spaces on every machine get their group, from the repo on their own machine", () => {
+    const lists = new Map([
+      ["/w/app", listed("/w/app")],
+      ["vps:/w/app", listed("/w/app")],
+    ]);
+    const repos = [repo("/w/app", "Work"), repo("/w/app", "Personal", "vps")];
+    expect(spaceGroups([at("s1", "/w/app", "vps"), at("s2", "/w/app")], repos, lists)).toEqual({
+      s1: "Personal",
+      s2: "Work",
+    });
+  });
+
+  test("a space on a repo in no group folder gets no group, as the panel shows none", () => {
+    const lists = new Map([["/tmp/toy", listed("/tmp/toy")]]);
+    expect(spaceGroups([at("s1", "/tmp/toy")], [repo("/tmp/toy", "Other")], lists)).toEqual({});
+  });
+
+  test("a space in a repo nested inside another's folder gets the inner repo's group", () => {
+    const lists = new Map([
+      ["/w", listed("/w")],
+      ["/w/inner", listed("/w/inner")],
+    ]);
+    const repos = [repo("/w", "Work"), repo("/w/inner", "Personal")];
+    expect(spaceGroups([at("s1", "/w/inner/src")], repos, lists)).toEqual({ s1: "Personal" });
+  });
+
+  test("a repo whose list isn't read yet still gives its group to spaces on its main checkout", () => {
+    expect(spaceGroups([at("s1", "/w/app/src")], [repo("/w/app", "Work")], new Map())).toEqual({
+      s1: "Work",
+    });
   });
 });

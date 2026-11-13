@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { appHome, closeOverlay, exec, layout, notify, openOverlay, pickFolder, props, readTextFile, run, setShared, spaces, theme, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, layout, notify, openOverlay, pickFolder, props, readTextFile, run, setShared, shared, spaces, theme, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -2988,6 +2988,50 @@ const getOrUndefined$1 = /*#__PURE__*/ getOrElse$1(constUndefined);
 * @since 2.0.0
 */
 const map$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(self.value)));
+/**
+* Applies a function that returns an `Option` to the value of a `Some`,
+* flattening the result. Returns `None` if the input is `None`.
+*
+* **When to use**
+*
+* Use when you need to chain dependent `Option` computations where each step
+* may return `None`.
+*
+* **Details**
+*
+* - `Some` → applies `f` to the value and returns its `Option` result
+* - `None` → returns `None` without calling `f`
+* - Equivalent to `map` followed by {@link flatten}
+*
+* **Example** (Chaining optional lookups)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* interface User {
+*   readonly name: string
+*   readonly address: Option.Option<{ readonly street: Option.Option<string> }>
+* }
+*
+* const user: User = {
+*   name: "John",
+*   address: Option.some({ street: Option.some("123 Main St") })
+* }
+*
+* user.address.pipe(
+*   Option.flatMap((addr) => addr.street)
+* ) // => Option.some("123 Main St")
+* ```
+*
+* @see {@link map} when `f` returns a plain value
+* @see {@link andThen} for a more flexible variant
+* @see {@link flatten} to unwrap a nested `Option<Option<A>>`
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
 /**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
@@ -8311,6 +8355,14 @@ const deliveryFor = (layout, panelMod) => match$4(findModBlock(layout, panelMod)
 		id: block.id
 	} : { _tag: "Post" }
 });
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
+const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
+/**
+* The group the space `space` belongs to, from the space groups the panel published
+* (`groupsKey`): an object of space id to group name. None for a space it names no group
+* for (or an empty name), or a value of any other shape.
+*/
+const spaceGroup = (published, space) => filter(text(at(published, space)), (group) => group !== "");
 
 // src/patch.ts
 const occurrences = (text, find) => find === "" ? 0 : text.split(find).length - 1;
@@ -8360,6 +8412,21 @@ let __wtExtend = (list) => list;
 export function __wtSetExtend(extend) { __wtExtend = extend; }
 export { items as __wtItems };
 `;
+/**
+* The sidebar copy's group label, drawn after a space's name: a small pill holding the
+* text our wrapper's `labelOf(space)` gives, none when it gives none. It is drawn with
+* the copy's own `div`, which the patch point itself calls, so it is in scope.
+*/
+const SPACES_TAIL = `
+;function __wtLabels(w, t) {
+  const label = __wtLabelOf(w);
+  return label ? [div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t.dim).child(label)] : [];
+}
+let __wtLabelOf = () => null;
+export function __wtSetLabelOf(labelOf) { __wtLabelOf = labelOf; }
+`;
+/** Herdr's space row draws the space's name with exactly this. */
+const SPACE_NAME = ".child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))";
 /** What the copy for `role` is made from, for this mod's id `self`. */
 const wrapFor = (role, self) => {
 	switch (role) {
@@ -8378,8 +8445,12 @@ const wrapFor = (role, self) => {
 				name: "spaces: space right-click opens menu",
 				find: "openOverlay({ mod: \"menu\", kind: \"popup\", width: 200, height: 260, props: { tab: \"space\",",
 				replace: `openOverlay({ mod: ${JSON.stringify(self)}, kind: "popup", width: 200, height: ${353}, props: { role: "menu", tab: "space",`
+			}, {
+				name: "spaces: space row's name",
+				find: SPACE_NAME,
+				replace: `${SPACE_NAME}.children(__wtLabels(w, t))`
 			}],
-			tail: ""
+			tail: SPACES_TAIL
 		};
 		case "new-menu": return {
 			mod: "new-menu",
@@ -8567,7 +8638,7 @@ const ready = /* @__PURE__ */ new Map();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role, copy) => {
 	if (copy.misses.length === 0) return;
-	const body = `Herdr's ${role} changed, so worktrunk items are left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
+	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and group labels are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
 	console.error(`iangregsondev-menus: ${body}`);
 	notify({
 		title: "worktrunk menus: patch point not found",
@@ -8744,6 +8815,15 @@ function newMenuWithOurItem(copy) {
 	}
 	return WithOurItem;
 }
+/**
+* Gives the sidebar copy each space's group label, read from what the worktrunk panel
+* publishes, at every render. A copy left unpatched has no hook, so it shows no labels.
+*/
+const withGroupLabels = (copy) => {
+	const setLabelOf = copy.exports.__wtSetLabelOf;
+	if (!isFunction(setLabelOf)) return;
+	setLabelOf((space) => getOrNull(flatMap$2(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id))));
+};
 /** Our own members, never overwritten by Herdr's. */
 const OWN = /* @__PURE__ */ new Set([
 	"constructor",
@@ -8806,6 +8886,7 @@ var Menus = class extends View {
 	start(role, copy, cx) {
 		try {
 			const view = role === "menu" ? menuWithOurItems(copy) : role === "new-menu" ? newMenuWithOurItem(copy) : viewOf(copy);
+			if (role === "spaces") withGroupLabels(copy);
 			adopt(this, view);
 			callOn(view, "init", this, props(), cx);
 			this.wtView = view;

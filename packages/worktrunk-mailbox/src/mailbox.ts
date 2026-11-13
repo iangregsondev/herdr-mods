@@ -1,7 +1,9 @@
 // The worktrunk panel's mailbox, as other copies and other mods use it: a request posted
-// to one shared-state key, which the shown panel reads and runs once.
+// to one shared-state key, which the shown panel reads and runs once. And the other way,
+// the space groups the panel publishes for the sidebar's labels.
 // Pure: no `herdr` or `gpui` imports.
 import { Option } from "effect";
+import { at, text } from "./json.ts";
 import { findModBlock } from "./layout.ts";
 
 /** The shared-state key the panel of the worktrunk mod `panelMod` reads requests from. */
@@ -45,3 +47,14 @@ export const deliveryFor = (layout: unknown, panelMod: string): Delivery =>
     onSome: (block): Delivery =>
       block.hidden ? { _tag: "ShowThenPost", id: block.id } : { _tag: "Post" },
   });
+
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
+export const groupsKey = (panelMod: string): string => `${panelMod}.groups.v1`;
+
+/**
+ * The group the space `space` belongs to, from the space groups the panel published
+ * (`groupsKey`): an object of space id to group name. None for a space it names no group
+ * for (or an empty name), or a value of any other shape.
+ */
+export const spaceGroup = (published: unknown, space: string): Option.Option<string> =>
+  Option.filter(text(at(published, space)), (group) => group !== "");

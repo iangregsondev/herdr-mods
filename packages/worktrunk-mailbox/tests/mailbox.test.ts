@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
-import { deliveryFor, requestKey } from "../src/index.ts";
+import { Option } from "effect";
+import { deliveryFor, groupsKey, requestKey, spaceGroup } from "../src/index.ts";
 
 const PANEL = "iangregsondev-worktrunk";
 
@@ -35,5 +36,28 @@ describe("deliveryFor", () => {
   test("has nowhere to deliver when the layout has no panel, only its toggle", () => {
     const noPanel = { id: "root", type: "row", children: [tree(false).children[0]] };
     expect(deliveryFor(noPanel, PANEL)).toEqual({ _tag: "NoPanel" });
+  });
+});
+
+describe("groupsKey", () => {
+  test("is the panel's own shared-state key for space groups", () => {
+    expect(groupsKey(PANEL)).toBe("iangregsondev-worktrunk.groups.v1");
+  });
+});
+
+describe("spaceGroup", () => {
+  test("is the group the panel published for the space", () => {
+    expect(spaceGroup({ sp1: "Work", sp2: "Personal" }, "sp2")).toEqual(Option.some("Personal"));
+  });
+
+  test("is none for an empty group name, so no empty label is drawn", () => {
+    expect(spaceGroup({ sp1: "" }, "sp1")).toEqual(Option.none());
+  });
+
+  test("is none for a space with no group, or a published value of another shape", () => {
+    expect(spaceGroup({ sp1: "Work" }, "sp9")).toEqual(Option.none());
+    expect(spaceGroup({ sp1: 3 }, "sp1")).toEqual(Option.none());
+    expect(spaceGroup(undefined, "sp1")).toEqual(Option.none());
+    expect(spaceGroup(["Work"], "0")).toEqual(Option.none());
   });
 });
