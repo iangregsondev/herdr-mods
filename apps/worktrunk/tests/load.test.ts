@@ -33,6 +33,9 @@ const here = (root: string) => ({ machine: THIS_MACHINE, root });
 /** The folder picker for fakes of tests that never open it. */
 const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
+/** `exec` for fakes of tests that never delete a file. */
+const noExec: FilesApi["exec"] = () => Promise.reject(new Error("exec isn't called here"));
+
 /** `hc` for fakes of tests that never call it. */
 const noHc: ExecApi["hc"] = () => Promise.reject(new Error("hc isn't called here"));
 
@@ -44,10 +47,19 @@ const FILES = {
 
 const WORK = JSON.stringify({ folders: [{ name: "Work", path: "~/w" }], depth: 2, skip: [] });
 
-/** A Herdr API over `disk` (path to text) that records what it reads and creates. */
+/** `exec` that removes each file it is asked to (`rm -f -- <path>`), recording the paths. */
+const removing =
+  (removed: string[]): FilesApi["exec"] =>
+  (_command, args = []) => {
+    removed.push(args.at(-1) ?? "");
+    return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+  };
+
+/** A Herdr API over `disk` (path to text) that records what it reads, creates and removes. */
 const disk = (files: Readonly<Record<string, string>>) => {
   const reads: string[] = [];
   const writes: unknown[] = [];
+  const removed: string[] = [];
   const api: FilesApi = {
     readTextFile: (path) => {
       reads.push(path);
@@ -58,8 +70,9 @@ const disk = (files: Readonly<Record<string, string>>) => {
       return Promise.resolve(null);
     },
     pickFolder: noPicker,
+    exec: removing(removed),
   };
-  return { api, reads, writes };
+  return { api, reads, writes, removed };
 };
 
 describe("loadSettings", () => {
@@ -79,6 +92,7 @@ describe("loadSettings", () => {
           error: Option.none(),
         },
         settled: true,
+        leftover: Option.none(),
       });
     }),
   );
@@ -95,6 +109,38 @@ describe("loadSettings", () => {
     }),
   );
 
+  it.effect("a successful import deletes the old mod's file", () =>
+    Effect.gen(function* () {
+      const { api, removed } = disk({ [FILES.legacyPath]: WORK });
+      const loaded = yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(
+        [loaded.parsed.error, loaded.settled, removed],
+        [Option.none(), true, [FILES.legacyPath]],
+      );
+    }),
+  );
+
+  it.effect("an old mod's file that can't be deleted keeps the import and says why", () =>
+    Effect.gen(function* () {
+      const { api } = disk({ [FILES.legacyPath]: WORK });
+      const stuck: FilesApi = {
+        ...api,
+        exec: () => Promise.resolve({ code: 1, stdout: "", stderr: "Permission denied\n" }),
+      };
+      const loaded = yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(stuck)));
+      // The imported settings are fine and in use: the leftover file is a separate note.
+      assert.deepStrictEqual(
+        [loaded.parsed.settings.folders, loaded.parsed.error, loaded.leftover, loaded.settled],
+        [
+          [{ name: "Work", path: "~/w" }],
+          Option.none(),
+          Option.some("worktrunk.json: imported, but couldn't delete it (Permission denied)"),
+          true,
+        ],
+      );
+    }),
+  );
+
   it.effect("once settled, the old mod's file is never read again", () =>
     Effect.gen(function* () {
       const { api, reads, writes } = disk({ [FILES.legacyPath]: WORK });
@@ -102,6 +148,7 @@ describe("loadSettings", () => {
       assert.deepStrictEqual(loaded, {
         parsed: { settings: DEFAULT_SETTINGS, error: Option.none() },
         settled: true,
+        leftover: Option.none(),
       });
       assert.deepStrictEqual([reads, writes], [[FILES.path], []]);
     }),
@@ -114,6 +161,7 @@ describe("loadSettings", () => {
       assert.deepStrictEqual(loaded, {
         parsed: { settings: DEFAULT_SETTINGS, error: Option.none() },
         settled: false,
+        leftover: Option.none(),
       });
       assert.deepStrictEqual(writes, []);
     }),
@@ -129,6 +177,7 @@ describe("loadSettings", () => {
           error: Option.some("iangregsondev-worktrunk.json: couldn't read it (EACCES)"),
         },
         settled: true,
+        leftover: Option.none(),
       });
     }),
   );
@@ -149,6 +198,7 @@ describe("loadSettings", () => {
             error: Option.some("worktrunk.json: couldn't read it (EIO)"),
           },
           settled: false,
+          leftover: Option.none(),
         });
       }),
   );
@@ -166,13 +216,32 @@ describe("loadSettings", () => {
           ),
         },
         settled: false,
+        leftover: Option.none(),
       });
+    }),
+  );
+
+  it.effect("an import that fails leaves the old mod's file in place", () =>
+    Effect.gen(function* () {
+      const { api, removed } = disk({ [FILES.legacyPath]: WORK });
+      const refusing: FilesApi = { ...api, writeTextFile: () => Promise.reject("EROFS") };
+      yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(refusing)));
+      assert.deepStrictEqual(removed, []);
+    }),
+  );
+
+  it.effect("with no old mod's file, nothing is deleted", () =>
+    Effect.gen(function* () {
+      const { api, removed } = disk({});
+      yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(api)));
+      assert.deepStrictEqual(removed, []);
     }),
   );
 
   it.effect("a settings file made meanwhile wins over the copy, and settles the import", () =>
     Effect.gen(function* () {
       const files: Record<string, string> = { [FILES.legacyPath]: WORK };
+      const removed: string[] = [];
       const api: FilesApi = {
         readTextFile: (path) => Promise.resolve(files[path] ?? null),
         // Someone else writes the settings file first, so Herdr refuses to create it.
@@ -181,12 +250,21 @@ describe("loadSettings", () => {
           return Promise.reject(new Error("stale"));
         },
         pickFolder: noPicker,
+        exec: removing(removed),
       };
       const loaded = yield* loadSettings(FILES, false).pipe(Effect.provide(Files.layer(api)));
-      assert.deepStrictEqual(loaded, {
-        parsed: { settings: { ...DEFAULT_SETTINGS, depth: 7 }, error: Option.none() },
-        settled: true,
-      });
+      // Nothing was imported, so the old file stays.
+      assert.deepStrictEqual(
+        [loaded, removed],
+        [
+          {
+            parsed: { settings: { ...DEFAULT_SETTINGS, depth: 7 }, error: Option.none() },
+            settled: true,
+            leftover: Option.none(),
+          },
+          [],
+        ],
+      );
     }),
   );
 });
@@ -737,6 +815,7 @@ describe("hideInSettings", () => {
           return Promise.reject(new Error("stale"));
         },
         pickFolder: noPicker,
+        exec: noExec,
       };
       const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
         Effect.provide(Files.layer(api)),
@@ -754,6 +833,7 @@ describe("hideInSettings", () => {
         readTextFile: () => Promise.resolve(WORK),
         writeTextFile: () => Promise.reject(new Error("disk full")),
         pickFolder: noPicker,
+        exec: noExec,
       };
       const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
         Effect.provide(Files.layer(api)),
@@ -775,6 +855,7 @@ describe("hideInSettings", () => {
           return Promise.resolve(null);
         },
         pickFolder: noPicker,
+        exec: noExec,
       };
       const hid = yield* hideInSettings(FILES, here("/w/api")).pipe(
         Effect.provide(Files.layer(api)),
@@ -1105,6 +1186,7 @@ describe("saveSettings", () => {
           return Promise.reject(new Error("stale"));
         },
         pickFolder: noPicker,
+        exec: noExec,
       };
       const saved = yield* saveSettings(FILES, WORK, edited).pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(saved, Result.fail(CHANGED));
@@ -1122,6 +1204,7 @@ describe("saveSettings", () => {
           return Promise.reject(new Error("exists"));
         },
         pickFolder: noPicker,
+        exec: noExec,
       };
       const saved = yield* saveSettings(FILES, null, edited).pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual([saved, files], [Result.fail(CHANGED), { [FILES.path]: "{}" }]);
@@ -1159,6 +1242,7 @@ describe("saveSettings", () => {
           return Promise.resolve(null);
         },
         pickFolder: noPicker,
+        exec: noExec,
       };
       const saved = yield* saveSettings(FILES, WORK, edited).pipe(Effect.provide(Files.layer(api)));
       assert.deepStrictEqual(
@@ -1176,6 +1260,7 @@ describe("saveSettings", () => {
           readTextFile: () => Promise.resolve(WORK),
           writeTextFile: () => Promise.reject(new Error("disk full")),
           pickFolder: noPicker,
+          exec: noExec,
         };
         const saved = yield* saveSettings(FILES, WORK, edited).pipe(
           Effect.provide(Files.layer(api)),

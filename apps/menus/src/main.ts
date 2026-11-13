@@ -17,6 +17,7 @@ import { v_flex } from "gpui-base";
 import {
   appHome,
   closeOverlay,
+  exec,
   layout,
   notify,
   openOverlay,
@@ -43,7 +44,7 @@ type Colors = Record<string, `#${string}`>;
 
 /** Herdr's API, as the services call it. */
 const services = Layer.mergeAll(
-  Files.layer({ readTextFile, writeTextFile, pickFolder }),
+  Files.layer({ readTextFile, writeTextFile, pickFolder, exec }),
   // A variable specifier, so the bundler leaves the import for Herdr to resolve, from
   // this mod's own folder.
   Modules.layer((file) => import(/* @vite-ignore */ `./${file}`)),

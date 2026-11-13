@@ -9667,10 +9667,25 @@ var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 			try: () => api.pickFolder({ prompt }),
 			catch: (cause) => new PickerFailed({ cause })
 		}).pipe(map(fromNullishOr));
+		const remove = (path) => tryPromise({
+			try: () => api.exec("rm", [
+				"-f",
+				"--",
+				path
+			]),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(filterOrFail((run) => run.code === 0, (run) => new FileError({
+			path,
+			cause: run.stderr.trim()
+		})), asVoid);
 		return succeed$1(Files, Files.of({
 			read,
 			create,
 			replace,
+			remove,
 			pickFolder
 		}));
 	};
@@ -10941,7 +10956,8 @@ const removeTerminal = fn("removeTerminal")(function* (addr) {
 // src/load.ts
 /**
 * The settings, read from `files.path`, after the one-time import of the old mod's
-* settings when there is no settings file yet and the import isn't `settled`.
+* settings when there is no settings file yet and the import isn't `settled`. A
+* successful import deletes the old file; a failed one leaves it.
 */
 const loadSettings = fn("loadSettings")(function* (files, settled) {
 	const disk = yield* Files;
@@ -10951,11 +10967,21 @@ const loadSettings = fn("loadSettings")(function* (files, settled) {
 	const plan = planImport(text, legacy, settled);
 	const loaded = (now) => ({
 		parsed: parseSettings(now, files.name),
-		settled: plan.settled
+		settled: plan.settled,
+		leftover: none()
 	});
 	if (isNone(plan.write)) return loaded(text);
 	const created = yield* result(disk.create(files.path, plan.write.value));
-	if (isSuccess(created)) return loaded(plan.write.value);
+	if (isSuccess(created)) {
+		const removed = yield* result(disk.remove(files.legacyPath));
+		const imported = loaded(plan.write.value);
+		if (isSuccess(removed)) return imported;
+		const why = `${lastSegment(files.legacyPath)}: imported, but couldn't delete it (${causeText(removed.failure.cause)})`;
+		return {
+			...imported,
+			leftover: some(why)
+		};
+	}
 	if (created.failure._tag === "FileError") {
 		const what = `${files.name}: couldn't create it from ${lastSegment(files.legacyPath)}`;
 		return defaultsBecause(what, created.failure, false);
@@ -10967,7 +10993,8 @@ const defaultsBecause = (what, failed, settled) => ({
 		settings: DEFAULT_SETTINGS,
 		error: some(`${what} (${causeText(failed.cause)})`)
 	},
-	settled
+	settled,
+	leftover: none()
 });
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
@@ -12022,7 +12049,8 @@ const services = mergeAll(Shell.layer({
 }), Files.layer({
 	readTextFile,
 	writeTextFile,
-	pickFolder
+	pickFolder,
+	exec
 }));
 /**
 * Runs a program at the edge. The programs never fail (load.ts turns every failure into
@@ -12701,9 +12729,15 @@ var Worktrunk = class extends View {
 				settings: DEFAULT_SETTINGS,
 				error: some(`${SETTINGS_FILE}: ${defect}`)
 			},
-			settled
+			settled,
+			leftover: none()
 		}));
 		if (loaded.settled && !settled) setShared(IMPORTED_KEY, true);
+		map$3(loaded.leftover, (body) => notify({
+			title: "Old settings file left behind",
+			body,
+			level: "warning"
+		}));
 		this.settings = loaded.parsed.settings;
 		this.settingsError = loaded.parsed.error;
 		const now = Date.now();

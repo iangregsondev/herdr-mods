@@ -14,6 +14,9 @@ const COPY = `${HOME}/mods/${SELF}/.herdr-tabs.js`;
 /** The folder picker for fakes of tests that never open it. */
 const noPicker: FilesApi["pickFolder"] = () => Promise.reject(new Error("no picker here"));
 
+/** `exec` for fakes of tests that never delete a file. */
+const noExec: FilesApi["exec"] = () => Promise.reject(new Error("exec isn't called here"));
+
 /** A Herdr API over `files` (path to text) that records every write. */
 const disk = (files: Readonly<Record<string, string>>) => {
   const writes: unknown[] = [];
@@ -24,6 +27,7 @@ const disk = (files: Readonly<Record<string, string>>) => {
       return Promise.resolve(null);
     },
     pickFolder: noPicker,
+    exec: noExec,
   };
   return { api, writes };
 };
@@ -169,6 +173,7 @@ describe("loadCopy", () => {
         },
         writeTextFile: () => Promise.reject(new Error("expected text differs")),
         pickFolder: noPicker,
+        exec: noExec,
       };
       const copy = yield* loaded(api);
       assert.deepStrictEqual(copy, Result.fail(`${COPY} changed while it was written; try again`));

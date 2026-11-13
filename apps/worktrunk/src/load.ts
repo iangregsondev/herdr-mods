@@ -50,7 +50,7 @@ export interface SettingsFiles {
   readonly path: string;
   /** Its name, for messages. */
   readonly name: string;
-  /** The old `worktrunk` mod's settings file, only ever read. */
+  /** The old `worktrunk` mod's settings file: read once, and deleted once imported. */
   readonly legacyPath: string;
 }
 
@@ -58,11 +58,14 @@ export interface LoadedSettings {
   readonly parsed: ParsedSettings;
   /** The one-time import is over for good (see `planImport`); record it. */
   readonly settled: boolean;
+  /** Why the old mod's file is still there after it was imported; none when it went. */
+  readonly leftover: Option.Option<string>;
 }
 
 /**
  * The settings, read from `files.path`, after the one-time import of the old mod's
- * settings when there is no settings file yet and the import isn't `settled`.
+ * settings when there is no settings file yet and the import isn't `settled`. A
+ * successful import deletes the old file; a failed one leaves it.
  */
 export const loadSettings = Effect.fn("loadSettings")(
   function* (files: SettingsFiles, settled: boolean) {
@@ -76,10 +79,20 @@ export const loadSettings = Effect.fn("loadSettings")(
     const loaded = (now: string | null): LoadedSettings => ({
       parsed: parseSettings(now, files.name),
       settled: plan.settled,
+      leftover: Option.none(),
     });
     if (Option.isNone(plan.write)) return loaded(text);
     const created = yield* Effect.result(disk.create(files.path, plan.write.value));
-    if (Result.isSuccess(created)) return loaded(plan.write.value);
+    if (Result.isSuccess(created)) {
+      // The old settings now live in the new file, so the old file goes. One that stays
+      // is only clutter: the import still counts, and the panel says why it stayed.
+      const removed = yield* Effect.result(disk.remove(files.legacyPath));
+      const imported = loaded(plan.write.value);
+      if (Result.isSuccess(removed)) return imported;
+      const why = `${lastSegment(files.legacyPath)}: imported, but couldn't delete it (${causeText(removed.failure.cause)})`;
+      const kept: LoadedSettings = { ...imported, leftover: Option.some(why) };
+      return kept;
+    }
     if (created.failure._tag === "FileError") {
       const what = `${files.name}: couldn't create it from ${lastSegment(files.legacyPath)}`;
       return defaultsBecause(what, created.failure, false);
@@ -104,6 +117,7 @@ const defaultsBecause = (what: string, failed: FileError, settled: boolean): Loa
     error: Option.some(`${what} (${causeText(failed.cause)})`),
   },
   settled,
+  leftover: Option.none(),
 });
 
 /** An effect's failure as its one-line reason, so the effect itself never fails. */

@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { appHome, closeOverlay, layout, notify, openOverlay, pickFolder, props, readTextFile, run, setShared, spaces, theme, writeTextFile } from "herdr";
+import { appHome, closeOverlay, exec, layout, notify, openOverlay, pickFolder, props, readTextFile, run, setShared, spaces, theme, writeTextFile } from "herdr";
 
 // ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Pipeable.js
 /**
@@ -8219,10 +8219,25 @@ var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 			try: () => api.pickFolder({ prompt }),
 			catch: (cause) => new PickerFailed({ cause })
 		}).pipe(map(fromNullishOr));
+		const remove = (path) => tryPromise({
+			try: () => api.exec("rm", [
+				"-f",
+				"--",
+				path
+			]),
+			catch: (cause) => new FileError({
+				path,
+				cause
+			})
+		}).pipe(filterOrFail((run) => run.code === 0, (run) => new FileError({
+			path,
+			cause: run.stderr.trim()
+		})), asVoid);
 		return succeed$1(Files, Files.of({
 			read,
 			create,
 			replace,
+			remove,
 			pickFolder
 		}));
 	};
@@ -8531,7 +8546,8 @@ const PANEL = `iangregsondev-worktrunk`;
 const services = mergeAll(Files.layer({
 	readTextFile,
 	writeTextFile,
-	pickFolder
+	pickFolder,
+	exec
 }), Modules.layer((file) => import(
 	/* @vite-ignore */
 	`./${file}`
