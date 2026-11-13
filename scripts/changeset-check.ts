@@ -8,29 +8,29 @@
 //   vp run check:changesets   (CI, on pull_request; compares with origin/<base branch>)
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Data, Effect, Result } from "effect";
+import { Data, Effect, Option, Result, Schema } from "effect";
 import { Git, gitErrorText } from "./git.ts";
 import { causeText } from "./herdr-host.ts";
 import { runMain, type ScriptResult, scriptFailure } from "./script-result.ts";
 
 /** How far a changeset moves a package's version. */
-export type Bump = "major" | "minor" | "patch";
+export const Bump = Schema.Literals(["major", "minor", "patch"]);
+export type Bump = typeof Bump.Type;
+
+const isBump = Schema.is(Bump);
 
 /** The packages a changeset names, each with its bump. Empty for an empty changeset. */
 export type ChangesetBumps = Readonly<Record<string, Bump>>;
 
-/** One frontmatter line: a package name, quoted or not, then its bump. */
-const BUMP_LINE = /^(["']?)([^"'\s:]+)\1\s*:\s*(major|minor|patch)$/;
+/** One frontmatter line: a package name, quoted or not, a colon, then one word (the bump). */
+const BUMP_LINE = /^(["']?)([^"'\s:]+)\1\s*:\s*(\S+)$/;
 
 const FENCE = "---";
 
 /** `line` as a package name and its bump, if it is a frontmatter bump line. */
-const bumpEntry = (line: string): ReadonlyArray<readonly [string, Bump]> => {
-  const match = BUMP_LINE.exec(line);
-  const [, , name, bump] = match ?? [];
-  return name !== undefined && (bump === "major" || bump === "minor" || bump === "patch")
-    ? [[name, bump]]
-    : [];
+const bumpEntry = (line: string): Option.Option<readonly [string, Bump]> => {
+  const [, , name, bump] = BUMP_LINE.exec(line) ?? [];
+  return name !== undefined && isBump(bump) ? Option.some([name, bump]) : Option.none();
 };
 
 /**
@@ -44,11 +44,12 @@ export const parseChangeset = (text: string): Result.Result<ChangesetBumps, stri
     return Result.fail("no frontmatter: the file must open and close with a --- line");
   }
   const body = lines.slice(1, close).filter((line) => line !== "");
-  const bad = body.find((line) => bumpEntry(line).length === 0);
+  const entries = body.map((line) => ({ line, entry: bumpEntry(line) }));
+  const bad = entries.find(({ entry }) => Option.isNone(entry));
   if (bad !== undefined) {
-    return Result.fail(`frontmatter line isn't "<package>": major|minor|patch: ${bad}`);
+    return Result.fail(`frontmatter line isn't "<package>": major|minor|patch: ${bad.line}`);
   }
-  return Result.succeed(Object.fromEntries(body.flatMap(bumpEntry)));
+  return Result.succeed(Object.fromEntries(entries.flatMap(({ entry }) => Option.toArray(entry))));
 };
 
 export interface ChangesetCheckOptions {
