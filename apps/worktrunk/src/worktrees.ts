@@ -5,6 +5,8 @@ import { at, finite, parseJson, text } from "worktrunk-mailbox";
 /** Where a worktree stands against the default branch. */
 export type WorktreeState =
   | { readonly _tag: "Main" }
+  /** At main's tip with no commits or changes of its own: nothing to clean up yet. */
+  | { readonly _tag: "New" }
   /** In main already; `reason` is wt's integration reason, such as "patch_id_match". */
   | { readonly _tag: "Merged"; readonly reason: Option.Option<string> }
   | { readonly _tag: "Active" }
@@ -56,12 +58,17 @@ const CHANGE_KINDS = ["staged", "modified", "untracked", "renamed", "deleted", "
 const count = (item: unknown, ...path: readonly string[]): number =>
   Option.getOrElse(finite(at(item, ...path)), () => 0);
 
+const dirtyOf = (item: unknown): boolean =>
+  CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true);
+
 const stateOf = (item: unknown): WorktreeState => {
   if (at(item, "worktree", "main") === true) return { _tag: "Main" };
   const state = at(item, "display", "state");
-  if (state === "integrated" || state === "empty") {
-    return { _tag: "Merged", reason: text(at(item, "default_branch", "integration", "reason")) };
+  const reason = text(at(item, "default_branch", "integration", "reason"));
+  if (state === "empty" && Option.contains(reason, "same_commit") && !dirtyOf(item)) {
+    return { _tag: "New" };
   }
+  if (state === "integrated" || state === "empty") return { _tag: "Merged", reason };
   if (state === "would_conflict") return { _tag: "Conflict" };
   return { _tag: "Active" };
 };
@@ -101,7 +108,7 @@ const toWorktree = (item: unknown, asked: boolean): Option.Option<Worktree> =>
       upstream: Predicate.isObject(upstream)
         ? Option.some({ ahead: count(upstream, "ahead"), behind: count(upstream, "behind") })
         : Option.none(),
-      dirty: CHANGE_KINDS.some((kind) => at(item, "worktree", "changes", kind) === true),
+      dirty: dirtyOf(item),
       ci: ciOf(item, asked),
       committedAt: committedAt(item),
     };
