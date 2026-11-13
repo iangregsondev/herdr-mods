@@ -205,7 +205,7 @@ const CI_LIMIT = 3;
 /** Herdr's API, as the services call it. */
 const services = Layer.mergeAll(
   Shell.layer({ exec, hc }),
-  Files.layer({ readTextFile, writeTextFile, pickFolder }),
+  Files.layer({ readTextFile, writeTextFile, pickFolder, exec }),
 );
 
 /**
@@ -998,9 +998,14 @@ export default class Worktrunk extends View {
       (defect): LoadedSettings => ({
         parsed: { settings: DEFAULT_SETTINGS, error: Option.some(`${SETTINGS_FILE}: ${defect}`) },
         settled,
+        leftover: Option.none(),
       }),
     );
     if (loaded.settled && !settled) setShared(IMPORTED_KEY, true);
+    // The import happens once, so this toast shows once.
+    Option.map(loaded.leftover, (body) =>
+      notify({ title: "Old settings file left behind", body, level: "warning" }),
+    );
     this.settings = loaded.parsed.settings;
     this.settingsError = loaded.parsed.error;
 
