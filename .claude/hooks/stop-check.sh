@@ -40,9 +40,10 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 # fails (conflicts, or git older than 2.38), run anyway. No fetch: the local ref is trusted.
 if [ -z "$(git status --porcelain)" ]; then
   main_tree=$(git rev-parse -q --verify 'origin/main^{tree}' 2>/dev/null)
-  if [ -n "$main_tree" ] && merged=$(git merge-tree --write-tree origin/main HEAD 2>/dev/null); then
-    [ "${merged%%
-*}" = "$main_tree" ] && exit 0
+  if [ -n "$main_tree" ] && merge_tree_out=$(git merge-tree --write-tree origin/main HEAD 2>/dev/null); then
+    # The first line of merge-tree's output is the merged tree.
+    merged_tree=$(printf '%s\n' "$merge_tree_out" | head -n 1)
+    [ "$merged_tree" = "$main_tree" ] && exit 0
   fi
 fi
 
