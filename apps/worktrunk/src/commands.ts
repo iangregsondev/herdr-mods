@@ -3,27 +3,39 @@
 // spliced into the script text, so no path or name needs quoting.
 import { Option, Predicate, Result } from "effect";
 import { at, finite, parseJson, text } from "worktrunk-mailbox";
-import { expandHome } from "./repos.ts";
+import type { Homes, Machine } from "./machines.ts";
+import { folderOn } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 
-/** The scan's arguments for these settings. */
-export const scanArgs = (settings: Settings, home: string): readonly string[] => [
+/** The scan's arguments for these settings' group folders on `machine`, `~` from `homes`. */
+export const scanArgs = (settings: Settings, machine: Machine, homes: Homes): readonly string[] => [
   String(settings.depth),
   settings.skip.map((name) => `/${name}/`).join(""),
-  ...settings.folders.map((folder) => expandHome(folder.path, home)),
+  ...settings.folders
+    .filter((folder) => folder.machine === machine)
+    .flatMap((folder) => Option.toArray(folderOn(folder, homes))),
 ];
 
 /** argv[0] for `sh -c`: the name the scripts report errors under. */
 export const SCRIPT_NAME = "worktrunk";
 
-// The app's environment may lack the folders wt and git are usually installed in.
-// Appended, so the person's own PATH order still wins.
-const PATH_LINE = 'PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; export PATH';
+// Every script runs with the PATH of the machine's login shell ($SHELL -l), so the
+// person's own tool setup (mise, Homebrew, ~/.local/bin) applies on whichever machine
+// it runs. The PATH is printed last, after a newline, so anything the profile prints
+// first is dropped.
+const LOGIN_PATH = `[ -n "$SHELL" ] || {
+  printf '%s\\n' "worktrunk: \\$SHELL is empty, so the login shell's PATH is unknown" >&2
+  exit 127
+}
+nl='
+'
+login_path=$("$SHELL" -l -c 'printf "\\n%s" "$PATH"') || exit
+PATH=\${login_path##*"$nl"}; export PATH`;
 
 /** `body` as the arguments to `sh`: `-c`, the script, its name, then `args` as $1... */
 export const shArgs = (body: string, args: readonly string[]): readonly string[] => [
   "-c",
-  `${PATH_LINE}\n${body}`,
+  `${LOGIN_PATH}\n${body}`,
   SCRIPT_NAME,
   ...args,
 ];

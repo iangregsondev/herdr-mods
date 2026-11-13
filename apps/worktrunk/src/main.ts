@@ -38,7 +38,6 @@ import {
   writeTextFile,
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import { scanArgs } from "./commands.ts";
 import {
   flippedBase,
   highlight,
@@ -80,6 +79,7 @@ import {
   syncToast,
   type JobOutcome,
   type LoadedSettings,
+  type Scanned,
 } from "./load.ts";
 import {
   ITEM_HEIGHT,
@@ -119,8 +119,8 @@ import {
   type RefreshAsk,
   type RepoList,
 } from "./reads.ts";
-import { repoKey, repoOfKey, type RepoId } from "./machines.ts";
-import type { Repo, Scan } from "./repos.ts";
+import { repoKey, repoOfKey, THIS_MACHINE, type Homes, type RepoId } from "./machines.ts";
+import type { Repo } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
   addFolder,
@@ -308,14 +308,14 @@ const defectAsFailure = <A>(
 const readAll = (
   repos: readonly RepoId[],
   limit: number,
-  read: (root: string) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
+  read: (repo: RepoId) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
   keep: (key: string, answer: Result.Result<readonly Worktree[], string>) => void,
 ): Promise<void> =>
   runEdge(
     readEach(
       repos,
       limit,
-      (repo) => defectAsFailure(read(repo.root)),
+      (repo) => defectAsFailure(read(repo)),
       (repo, answer) => keep(repoKey(repo), answer),
     ),
     () => undefined,
@@ -483,7 +483,7 @@ export default class Worktrunk extends View {
   settings: Settings = DEFAULT_SETTINGS;
   settingsError: Option.Option<string> = Option.none();
   /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
-  scanned: Option.Option<Scan> = Option.none();
+  scanned: Option.Option<Scanned> = Option.none();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
@@ -571,7 +571,10 @@ export default class Worktrunk extends View {
   openNewOrOpen(cx: AsyncContext, folder: string | null) {
     const places = localPlaces(spaces(), panes());
     const at = folder ?? Option.getOrElse(focusedFolder(focused(), places), () => "");
-    const listed = this.repos.map((repo) => repo.root);
+    // The dialog and the job it starts act on this machine, so it offers only its repos.
+    const listed = this.repos
+      .filter((repo) => repo.machine === THIS_MACHINE)
+      .map((repo) => repo.root);
     cx.spawn(async () => {
       const opened = await runEdge(dialogFor(at, listed), Result.fail);
       Result.match(opened, {
@@ -620,7 +623,9 @@ export default class Worktrunk extends View {
         const state = openDialog(readDialogProps(ownProps()));
         const dialog: NewDialog = { state, input: this.newInput(() => dialog, state) };
         this.copy = { _tag: "New", dialog };
-        Option.map(state.repo, (repo) => this.readDialogRepo(cx, dialog, repo));
+        Option.map(state.repo, (root) =>
+          this.readDialogRepo(cx, dialog, { machine: THIS_MACHINE, root }),
+        );
         return;
       }
     }
@@ -645,7 +650,7 @@ export default class Worktrunk extends View {
   }
 
   /** Reads the worktrees and branches of `repo` into the dialog's list. */
-  readDialogRepo(cx: AsyncContext | Context, dialog: NewDialog, repo: string) {
+  readDialogRepo(cx: AsyncContext | Context, dialog: NewDialog, repo: RepoId) {
     cx.spawn(async (cx) => {
       const read = await runEdge(readDialogRepo(repo), (defect) => ({
         list: Result.fail(defect),
@@ -663,7 +668,7 @@ export default class Worktrunk extends View {
       case "ReadRepo":
         dialog.state = picked.state;
         dialog.input = this.newInput(() => dialog, picked.state);
-        this.readDialogRepo(cx, dialog, picked.root);
+        this.readDialogRepo(cx, dialog, { machine: THIS_MACHINE, root: picked.root });
         cx.notify();
         return;
       case "Send":
@@ -941,7 +946,15 @@ export default class Worktrunk extends View {
 
   /** The Current repo, with its group; Looking while it is first being looked up. */
   currentRepo(): CurrentRepo {
-    return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+    return currentRepoOf(
+      this.follow.found,
+      this.repos,
+      this.settings.folders,
+      Option.match(this.scanned, {
+        onNone: (): Homes => new Map([[THIS_MACHINE, home()]]),
+        onSome: (scanned) => scanned.homes,
+      }),
+    );
   }
 
   /**
@@ -1025,7 +1038,8 @@ export default class Worktrunk extends View {
     this.settingsError = loaded.parsed.error;
 
     const now = Date.now();
-    const key = JSON.stringify(scanArgs(this.settings, home()));
+    const { folders, depth, skip } = this.settings;
+    const key = JSON.stringify({ folders, depth, skip });
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
     const places = localPlaces(spaces(), panes()).map((p) => p.place);
     const found = await runEdge(
@@ -1212,8 +1226,8 @@ export default class Worktrunk extends View {
   }
 
   openRowMenu(row: RowView) {
-    Option.map(findWorktree(this.lists, row.key), ({ root, worktree }) =>
-      openMenu(row.label, rowMenu(root, worktree, row.click)),
+    Option.map(findWorktree(this.lists, row.key), ({ machine, root, worktree }) =>
+      openMenu(row.label, rowMenu({ machine, root }, worktree, row.click)),
     );
   }
 
@@ -2010,6 +2024,19 @@ export default class Worktrunk extends View {
       .on_mouse_down("right", () => this.openRepoMenu(repo.key))
       .child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted))
       .child(div().min_w(0).truncate().font_semibold().child(repo.name))
+      .children(
+        Option.toArray(repo.machine).map((machine) =>
+          div()
+            .flex_none()
+            .px(6)
+            .rounded(4)
+            .border(1)
+            .border_color(t.border)
+            .text_size(sizes.label - 1)
+            .text_color(t.muted)
+            .child(machine),
+        ),
+      )
       .children(
         Option.toArray(repo.group).map((group) =>
           div()

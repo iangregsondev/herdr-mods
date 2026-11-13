@@ -11,7 +11,7 @@ import {
   type MergeMode,
   type WtOptions,
 } from "./commands.ts";
-import { repoKey, repoOfKey, type Machine, type RepoId } from "./machines.ts";
+import { repoKey, repoOfKey, THIS_MACHINE, type Machine, type RepoId } from "./machines.ts";
 import type { RepoList } from "./reads.ts";
 import { isUnder } from "./repos.ts";
 import { lastSegment } from "./settings.ts";
@@ -79,6 +79,10 @@ const item = (label: string, action: Action, danger = false): MenuItem => ({
   action,
 });
 
+/** "Reveal in Finder" for a folder on `machine`: only this machine's Finder can show it. */
+const revealOn = (machine: Machine, path: string): readonly MenuItem[] =>
+  machine === THIS_MACHINE ? [item("Reveal in Finder", { _tag: "Reveal", path })] : [];
+
 const mergeOf = (root: string, worktree: Worktree, branch: string, mode: MergeMode): Action => ({
   _tag: "Merge",
   target: { main: root, path: worktree.path, branch },
@@ -97,8 +101,12 @@ const removeOf = (root: string, worktree: Worktree): Action => ({
   dirty: worktree.dirty,
 });
 
-/** The right-click menu of a worktree in the repo whose main checkout is `root`. */
-export const rowMenu = (root: string, worktree: Worktree, click: Click): readonly MenuItem[] => {
+/** The right-click menu of a worktree of `repo`. */
+export const rowMenu = (
+  { machine, root }: RepoId,
+  worktree: Worktree,
+  click: Click,
+): readonly MenuItem[] => {
   const remove = item("Remove…", removeOf(root, worktree), true);
   const linked =
     worktree.state._tag === "Main"
@@ -115,7 +123,7 @@ export const rowMenu = (root: string, worktree: Worktree, click: Click): readonl
     item("Open", { _tag: "Open", click }),
     ...linked,
     item("Copy path", { _tag: "CopyPath", path: worktree.path }),
-    item("Reveal in Finder", { _tag: "Reveal", path: worktree.path }),
+    ...revealOn(machine, worktree.path),
   ];
 };
 
@@ -192,7 +200,7 @@ export const repoMenu = (
     item(`Clean up ${action.paths.length} merged…`, action, true),
   ),
   item("Refresh", { _tag: "Refresh" }),
-  item("Reveal in Finder", { _tag: "Reveal", path: root }),
+  ...revealOn(machine, root),
   item("Hide this repo", { _tag: "Hide", machine, root }),
 ];
 

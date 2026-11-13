@@ -213,22 +213,26 @@ describe("onRender", () => {
 
 describe("currentRepoOf", () => {
   const LISTED: Repo = { machine: THIS_MACHINE, root: "/w/api", count: 3, group: "Work" };
-  const folders = [{ name: "Work", path: "~/w" }];
+  const folders = [{ name: "Work", path: "~/w", machine: THIS_MACHINE }];
   const answer = (found: Option.Option<FoundRepo>) => Option.some(Result.succeed(found));
 
   test("NotInRepo when the focused folder is in none", () => {
-    expect(currentRepoOf(answer(Option.none()), [LISTED], folders, "/home")).toEqual({
+    expect(
+      currentRepoOf(answer(Option.none()), [LISTED], folders, new Map([[THIS_MACHINE, "/home"]])),
+    ).toEqual({
       _tag: "NotInRepo",
     });
   });
 
   test("Looking until the first answer", () => {
-    expect(currentRepoOf(Option.none(), [LISTED], folders, "/home")).toEqual({ _tag: "Looking" });
+    expect(
+      currentRepoOf(Option.none(), [LISTED], folders, new Map([[THIS_MACHINE, "/home"]])),
+    ).toEqual({ _tag: "Looking" });
   });
 
   test("InRepo with the listed repo, group included", () => {
     const found = answer(Option.some({ machine: THIS_MACHINE, root: "/w/api", count: 1 }));
-    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
       _tag: "InRepo",
       repo: LISTED,
     });
@@ -236,7 +240,7 @@ describe("currentRepoOf", () => {
 
   test("InRepo with a repo the panel doesn't list, grouped by the group folders", () => {
     const found = answer(Option.some({ machine: THIS_MACHINE, root: "/home/w/tool", count: 2 }));
-    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
       _tag: "InRepo",
       repo: { machine: THIS_MACHINE, root: "/home/w/tool", count: 2, group: "Work" },
     });
@@ -244,7 +248,7 @@ describe("currentRepoOf", () => {
 
   test("the same folder on another machine is not the listed repo", () => {
     const found = answer(Option.some({ machine: "linux", root: "/w/api", count: 1 }));
-    expect(currentRepoOf(found, [LISTED], folders, "/home")).toEqual({
+    expect(currentRepoOf(found, [LISTED], folders, new Map([[THIS_MACHINE, "/home"]]))).toEqual({
       _tag: "InRepo",
       repo: { machine: "linux", root: "/w/api", count: 1, group: "Other" },
     });
@@ -252,7 +256,12 @@ describe("currentRepoOf", () => {
 
   test("Failed when the lookup failed, with its reason", () => {
     expect(
-      currentRepoOf(Option.some(Result.fail("git: boom")), [LISTED], folders, "/home"),
+      currentRepoOf(
+        Option.some(Result.fail("git: boom")),
+        [LISTED],
+        folders,
+        new Map([[THIS_MACHINE, "/home"]]),
+      ),
     ).toEqual({
       _tag: "Failed",
       reason: "git: boom",

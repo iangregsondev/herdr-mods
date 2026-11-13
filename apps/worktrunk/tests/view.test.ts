@@ -82,7 +82,7 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
     [API.root, read(API_WORKTREES)],
     [WEB.root, read([wt("/p/web", "main", MAIN)])],
   ]),
-  settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w" }] },
+  settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w", machine: THIS_MACHINE }] },
   settingsError: Option.none(),
   discoverError: Option.none(),
   missingFolders: [],
@@ -432,8 +432,8 @@ describe("buildView: group chips", () => {
   const settings = {
     ...DEFAULT_SETTINGS,
     folders: [
-      { name: "Work", path: "/w" },
-      { name: "Personal", path: "/p" },
+      { name: "Work", path: "/w", machine: THIS_MACHINE },
+      { name: "Personal", path: "/p", machine: THIS_MACHINE },
     ],
   };
   const repos = [API, WEB, PERSONAL, STRAY];
@@ -951,5 +951,19 @@ describe("buildView: the same folder on two machines", () => {
       Option.some({ status: "failed", stale: false }),
     ]);
     expect(repos.map((r) => Option.isSome(r.ciNote))).toEqual([false, true]);
+  });
+});
+
+describe("buildView: machine labels", () => {
+  test("with repos on more than one machine, each repo names its machine", () => {
+    const repos = tree(snapshot({ repos: [API, API_LINUX] }));
+    expect(repos.map((r) => r.machine)).toEqual([
+      Option.some("this machine"),
+      Option.some("linux"),
+    ]);
+  });
+
+  test("with every repo on one machine, no repo names it", () => {
+    expect(tree(snapshot()).map((r) => r.machine)).toEqual([Option.none(), Option.none()]);
   });
 });

@@ -96,8 +96,16 @@ describe("view state", () => {
 
 describe("readAction", () => {
   test.each([
-    ...actionsOf(rowMenu("/r/app", FEAT, { _tag: "New", name: "feat", folder: "/r/app.feat" })),
-    ...actionsOf(rowMenu("/r/app", DETACHED, { _tag: "Select", space: "s1" })),
+    ...actionsOf(
+      rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+        _tag: "New",
+        name: "feat",
+        folder: "/r/app.feat",
+      }),
+    ),
+    ...actionsOf(
+      rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, DETACHED, { _tag: "Select", space: "s1" }),
+    ),
   ])("reads back the row menu's $_tag action as it was sent", (action) => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
@@ -205,7 +213,10 @@ describe("overlayOf", () => {
 
 describe("readMenuProps", () => {
   test("reads a menu as the panel opens it", () => {
-    const items = rowMenu("/r/app", FEAT, { _tag: "Select", space: "s1" });
+    const items = rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+      _tag: "Select",
+      space: "s1",
+    });
     expect(readMenuProps(overTheWire({ role: "menu", title: "feat", items }))).toEqual({
       title: "feat",
       items,
@@ -223,7 +234,10 @@ describe("readMenuProps", () => {
 });
 
 describe("readConfirmProps", () => {
-  const remove = rowMenu("/r/app", FEAT, { _tag: "Select", space: "s1" })[3]?.action;
+  const remove = rowMenu({ machine: THIS_MACHINE, root: "/r/app" }, FEAT, {
+    _tag: "Select",
+    space: "s1",
+  })[3]?.action;
 
   test("asks what confirmFor asks of the action in the props", () => {
     expect(readConfirmProps(overTheWire({ role: "confirm", action: remove }))).toEqual(

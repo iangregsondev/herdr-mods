@@ -1,7 +1,7 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import { repoKey } from "./machines.ts";
+import { machineName, repoKey } from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
@@ -132,6 +132,8 @@ export interface RepoView {
   /** The repo's `repoKey`: unique, and its fold key. */
   readonly key: string;
   readonly name: string;
+  /** The machine it is on, shown only while the list holds repos on more than one. */
+  readonly machine: Option.Option<string>;
   /** Its group, none for Other. */
   readonly group: Option.Option<string>;
   /** How many worktrees, none before the first read. */
@@ -392,6 +394,10 @@ const repoView = (
   return {
     key,
     name: lastSegment(repo.root),
+    machine: Option.liftPredicate(
+      machineName(repo.machine),
+      () => new Set(snapshot.repos.map((listed) => listed.machine)).size > 1,
+    ),
     group: repo.group === OTHER ? Option.none() : Option.some(repo.group),
     count: Option.map(list, () => countOf(repo, list)),
     status: statusOf(list),
