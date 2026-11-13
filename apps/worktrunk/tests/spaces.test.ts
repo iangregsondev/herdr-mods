@@ -4,6 +4,8 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   clickCommand,
   focusedFolder,
+  focusedOrHere,
+  groupsChanged,
   goTo,
   spacePlaces,
   placeOf,
@@ -184,6 +186,12 @@ describe("focusedFolder", () => {
   });
 });
 
+describe("focusedOrHere", () => {
+  test("nothing focused: this machine, with no folder", () => {
+    expect(focusedOrHere(null, [])).toEqual({ machine: THIS_MACHINE, folder: "" });
+  });
+});
+
 describe("placeOf", () => {
   const places = spacePlaces(
     [space("s1", "/r/app", ["t1"]), space("s2", "/r/app.feat", ["t2"])],
@@ -291,5 +299,20 @@ describe("spaceGroups", () => {
     expect(spaceGroups([at("s1", "/w/app/src")], [repo("/w/app", "Work")], new Map())).toEqual({
       s1: "Work",
     });
+  });
+});
+
+describe("groupsChanged", () => {
+  const groups = { s1: "Work", s2: "Home" };
+
+  test("the groups already published are no change; another group for a space is", () => {
+    expect([
+      groupsChanged(groups, { s1: "Work", s2: "Home" }),
+      groupsChanged(groups, { s1: "Work", s2: "Play" }),
+    ]).toEqual([false, true]);
+  });
+
+  test("the same groups in another order are no change", () => {
+    expect(groupsChanged(groups, { s2: "Home", s1: "Work" })).toBe(false);
   });
 });

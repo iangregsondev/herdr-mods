@@ -15,6 +15,7 @@ import {
   machineName,
   repoKey,
   repoOfKey,
+  type RepoKey,
   THIS_MACHINE,
   type Located,
   type Machine,
@@ -250,8 +251,8 @@ export interface FoundWorktree extends RepoId {
  * any list of a repo on that machine (`lists`, by `repoKey`).
  */
 export const findWorktree = (
-  lists: ReadonlyMap<string, RepoList>,
-  key: string,
+  lists: ReadonlyMap<RepoKey, RepoList>,
+  key: RepoKey,
 ): Option.Option<FoundWorktree> => {
   const { machine, root: path } = repoOfKey(key);
   return Option.fromNullishOr(
@@ -270,12 +271,14 @@ export const findWorktree = (
  * none of them is merged.
  */
 export const cleanupFor = (
-  lists: ReadonlyMap<string, RepoList>,
-  keys: readonly string[],
+  lists: ReadonlyMap<RepoKey, RepoList>,
+  keys: readonly RepoKey[],
 ): Option.Option<CleanupAction> => {
   const found = keys.flatMap((key) => Option.toArray(findWorktree(lists, key)));
   const repos = Array.from(
-    new Map(found.map((f): [string, RepoId] => [repoKey(f), { machine: f.machine, root: f.root }])),
+    new Map(
+      found.map((f): [RepoKey, RepoId] => [repoKey(f), { machine: f.machine, root: f.root }]),
+    ),
   );
   return cleanupAction(
     repos.map(([key, repo]) => ({

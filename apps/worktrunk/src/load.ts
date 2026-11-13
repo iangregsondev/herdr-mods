@@ -137,6 +137,10 @@ const defaultsBecause = (what: string, failed: FileError, settled: boolean): Loa
   leftover: Option.none(),
 });
 
+/** What a folder scan scans, as a key: a scan is due again when it changes. */
+export const scanKey = ({ folders, depth, skip }: Settings): string =>
+  JSON.stringify({ folders, depth, skip });
+
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = <A, R>(
   effect: Effect.Effect<A, ShellError | CommandFailed | ListUnreadable, R>,
@@ -161,7 +165,7 @@ export interface Found {
 }
 
 /** What the search found on one machine: its scan (when one ran) and its open spaces' repos. */
-interface MachineFound {
+export interface MachineFound {
   readonly machine: Machine;
   /** Its home, read for the scan; none when no scan ran there. */
   readonly home: Option.Option<string>;
@@ -171,8 +175,8 @@ interface MachineFound {
 
 /**
  * Searches `machine`: scans its group folders when `scan` says to (after reading its
- * home there; this machine's is `home`), and looks up the repos its open spaces
- * (`places`) are in.
+ * home there; this machine's is `home`), else keeps the scan of its `last` search, and
+ * looks up the repos its open spaces (`places`) are in.
  */
 const searchOn = Effect.fnUntraced(function* (
   settings: Settings,
@@ -180,14 +184,18 @@ const searchOn = Effect.fnUntraced(function* (
   home: string,
   places: readonly Located[],
   scan: boolean,
+  last: Option.Option<MachineFound>,
 ) {
   const scans = scan && settings.folders.some((folder) => folder.machine === machine);
   const found = !scans
-    ? Option.none<string>()
+    ? Option.flatMap(last, (before) => before.home)
     : Option.some(machine === THIS_MACHINE ? home : yield* machineHome(machine));
-  const scanned: Scan = Option.isSome(found)
-    ? yield* scanRepos(settings, machine, new Map([[machine, found.value]]))
-    : { repos: [], missing: [] };
+  const scanned: Scan = scans
+    ? yield* scanRepos(settings, machine, new Map([[machine, Option.getOrElse(found, () => home)]]))
+    : Option.match(last, {
+        onNone: (): Scan => ({ repos: [], missing: [] }),
+        onSome: (before) => before.scan,
+      });
   const owners = yield* reposOf(
     places.filter((place) => place.machine === machine).map((place) => place.folder),
     machine,
@@ -196,85 +204,153 @@ const searchOn = Effect.fnUntraced(function* (
   return answer;
 });
 
+/** One machine's search: what it found, or why it couldn't be searched. */
+export type MachineSearch = Result.Result<MachineFound, MachineStatus>;
+
+/** Each machine's latest search. */
+export type Searches = ReadonlyMap<Machine, MachineSearch>;
+
+/** What a refresh searches, and what it remembers from the last. */
+export interface MachinesAsk {
+  readonly settings: Settings;
+  /** This machine's home. */
+  readonly home: string;
+  /** The open spaces' folders, each on its machine. */
+  readonly places: readonly Located[];
+  /** Each machine's last search: one not scanned again keeps its scan. */
+  readonly last: Searches;
+  /** The group folders are scanned again on every machine, not only those never scanned. */
+  readonly rescan: boolean;
+  /** Herdr's machine list: a machine connecting or unavailable runs nothing. */
+  readonly states: MachineStates;
+  /** The machines still busy with an earlier refresh: they run nothing now. */
+  readonly busy: ReadonlySet<Machine>;
+}
+
+/** The machines a search covers: those with group folders, and those with open spaces. */
+export const machinesOf = (settings: Settings, places: readonly Located[]): readonly Machine[] =>
+  Array.from(
+    new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]),
+  );
+
 /**
  * `machine`'s search, or the status saying why it couldn't run there: its state in
- * `states`, or its failure. This machine's failure fails the search as a whole; another
- * machine's is that machine's alone.
+ * `states`, or its failure, a bug included. A machine never scanned (or every machine,
+ * when `rescan`) scans its group folders.
  */
-const searchOrStatus = (
-  settings: Settings,
+const searchMachine = (
+  ask: MachinesAsk,
   machine: Machine,
-  home: string,
-  places: readonly Located[],
-  scan: boolean,
-  states: MachineStates,
-): Effect.Effect<Result.Result<MachineFound, MachineStatus>, ShellError | CommandFailed, Shell> => {
-  const held = statusOf(states, machine);
+): Effect.Effect<MachineSearch, never, Shell> => {
+  const held = statusOf(ask.states, machine);
   if (Option.isSome(held)) return Effect.succeed(Result.fail(held.value));
-  const search = searchOn(settings, machine, home, places, scan).pipe(
-    Effect.map((found): Result.Result<MachineFound, MachineStatus> => Result.succeed(found)),
+  const last = Option.flatMap(Option.fromNullishOr(ask.last.get(machine)), Result.getSuccess);
+  const scan = ask.rescan || !Option.exists(last, (before) => Option.isSome(before.home));
+  return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(
+    Effect.map((found): MachineSearch => Result.succeed(found)),
+    Effect.catch((failed) =>
+      Effect.succeed<MachineSearch>(Result.fail({ _tag: "Down", reason: failureText(failed) })),
+    ),
+    Effect.catchDefect((defect) =>
+      Effect.succeed<MachineSearch>(Result.fail({ _tag: "Down", reason: defectText(defect) })),
+    ),
   );
-  return machine === THIS_MACHINE
-    ? search
-    : search.pipe(
-        Effect.catch((failed) =>
-          Effect.succeed(Result.fail<MachineStatus>({ _tag: "Down", reason: failureText(failed) })),
-        ),
-      );
 };
 
 /**
- * The repos to list: the folder scan's (run again on every machine when `lastScan` is
- * none, else only on the machines it lacks) plus the repos the open spaces are in
- * (`places`, each on its machine) and the Current repo (`current`), less the hidden ones.
- * Each machine is searched on its own, side by side. A machine Herdr's machine list
- * (`states`) says is connecting or unavailable runs nothing, and one whose search fails
- * gives up only its own repos: each gets its status. A failure on this machine is its
- * one-line reason.
+ * One refresh of every machine in `ask` not busy, side by side: each machine's search,
+ * handed to `onSearch` as it lands, which answers with that machine's repos to read; then
+ * those repos' lists in one batched read, handed to `onLists`; then `onDone`, however the
+ * machine's refresh ended. No machine waits on another. A machine whose search failed
+ * reads no lists; this machine's lists are read even then, from the repos it kept.
  */
-export const findRepos = Effect.fn("findRepos")(function* (
+export const refreshMachines = (
+  ask: MachinesAsk,
+  onSearch: (machine: Machine, search: MachineSearch) => readonly RepoId[],
+  onLists: (machine: Machine, answer: MachineLists) => void,
+  onDone: (machine: Machine) => void = () => undefined,
+): Effect.Effect<void, never, Shell> =>
+  Effect.forEach(
+    machinesOf(ask.settings, ask.places).filter((machine) => !ask.busy.has(machine)),
+    (machine) =>
+      searchMachine(ask, machine).pipe(
+        Effect.flatMap((search) =>
+          Effect.sync(() => onSearch(machine, search)).pipe(
+            Effect.flatMap((repos) =>
+              readLists(
+                repos.filter((repo) => repo.machine === machine),
+                machine !== THIS_MACHINE && Result.isFailure(search)
+                  ? new Map([[machine, search.failure]])
+                  : new Map(),
+                onLists,
+              ),
+            ),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => onDone(machine))),
+      ),
+    { concurrency: "unbounded", discard: true },
+  );
+
+/** The searches so far, and why this machine's last search failed, if it did. */
+export interface Landed {
+  readonly searches: Searches;
+  readonly error: Option.Option<string>;
+  /** The machines that couldn't be searched, and why: their repos are left out. */
+  readonly statuses: ReadonlyMap<Machine, MachineStatus>;
+}
+
+/**
+ * `search` of `machine` landed. Another machine's failure is its status; this machine's
+ * is the error, and its last search that worked stays, so its repos stay listed. A
+ * search that works clears the machine's status, one a failed list read gave included.
+ */
+export const landSearch = (landed: Landed, machine: Machine, search: MachineSearch): Landed => {
+  const here = machine === THIS_MACHINE;
+  const searches = new Map([...landed.searches, [machine, search]]);
+  return Result.match(search, {
+    onSuccess: (): Landed => ({
+      searches,
+      error: here ? Option.none() : landed.error,
+      statuses: new Map([...landed.statuses].filter(([at]) => at !== machine)),
+    }),
+    onFailure: (status): Landed =>
+      here
+        ? { ...landed, error: Option.some(status._tag === "Down" ? status.reason : "connecting") }
+        : { ...landed, searches, statuses: new Map([...landed.statuses, [machine, status]]) },
+  });
+};
+
+/**
+ * The repos to list, from each machine's search in `searches` (only the machines `settings`
+ * and `places` cover): the folder scans' plus the repos the open spaces are in and the
+ * Current repo (`current`), less the hidden ones. A machine whose search failed gives up
+ * its repos.
+ */
+export const foundOf = (
   settings: Settings,
   home: string,
   places: readonly Located[],
-  lastScan: Option.Option<Scanned>,
+  searches: Searches,
   current: Option.Option<FoundRepo> = Option.none(),
-  states: MachineStates = new Map(),
-) {
-  const machines = Array.from(
-    new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]),
-  );
-  const searched = yield* Effect.forEach(
-    machines,
-    (machine) =>
-      searchOrStatus(
-        settings,
-        machine,
-        home,
-        places,
-        // A machine the last scan lacks (it was down, or connecting) is scanned now.
-        Option.match(lastScan, {
-          onNone: () => true,
-          onSome: (last) => !last.machines.includes(machine),
-        }),
-        states,
-      ).pipe(Effect.map((result) => ({ machine, result }))),
-    { concurrency: "unbounded" },
+): Found => {
+  const searched = machinesOf(settings, places).flatMap((machine) =>
+    Option.toArray(
+      Option.map(Option.fromNullishOr(searches.get(machine)), (result) => ({ machine, result })),
+    ),
   );
   const ok = searched.flatMap(({ result }) => Option.toArray(Result.getSuccess(result)));
-  const last: Scanned = Option.getOrElse(lastScan, () => ({
-    repos: [],
-    missing: [],
-    homes: new Map([[THIS_MACHINE, home]]),
-    machines: [],
-  }));
   const scans = ok.flatMap((found) =>
     Option.toArray(Option.map(found.home, (at) => ({ ...found, home: at }))),
   );
   const scanned: Scanned = {
-    repos: [...last.repos, ...scans.flatMap((found) => found.scan.repos)],
-    missing: [...last.missing, ...scans.flatMap((found) => found.scan.missing)],
-    homes: new Map([...last.homes, ...scans.map((found) => [found.machine, found.home] as const)]),
-    machines: [...last.machines, ...scans.map((found) => found.machine)],
+    repos: scans.flatMap((found) => found.scan.repos),
+    missing: scans.flatMap((found) => found.scan.missing),
+    homes: new Map([
+      [THIS_MACHINE, home],
+      ...scans.map((found) => [found.machine, found.home] as const),
+    ]),
+    machines: scans.map((found) => found.machine),
   };
   const repos = reposFrom(
     scanned.repos,
@@ -282,7 +358,7 @@ export const findRepos = Effect.fn("findRepos")(function* (
     settings.folders,
     scanned.homes,
   );
-  const found: Found = {
+  return {
     scanned,
     repos: withoutHidden(repos, settings.hidden),
     statuses: new Map(
@@ -293,8 +369,7 @@ export const findRepos = Effect.fn("findRepos")(function* (
       ),
     ),
   };
-  return found;
-}, asReason);
+};
 
 /**
  * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
@@ -425,7 +500,20 @@ const machineLists = (
     Effect.catch((failed) =>
       Effect.succeed<MachineLists>(Result.fail({ _tag: "Down", reason: failureText(failed) })),
     ),
+    // A bug in the read is that machine's failure too, so the panel says so.
+    Effect.catchDefect((defect) =>
+      Effect.succeed<MachineLists>(Result.fail({ _tag: "Down", reason: defectText(defect) })),
+    ),
   );
+
+/** A defect, a bug, as its one-line reason. */
+export const defectText = (defect: unknown): string => `a bug: ${String(defect)}`;
+
+/** `read`, with a defect, a bug, as its failed answer, so the panel shows it like any other. */
+export const defectAsReason = <A, R>(
+  read: Effect.Effect<Result.Result<A, string>, never, R>,
+): Effect.Effect<Result.Result<A, string>, never, R> =>
+  read.pipe(Effect.catchDefect((defect) => Effect.succeed(Result.fail(defectText(defect)))));
 
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 export const readCi = Effect.fn("readCi")(function* (repo: RepoId) {

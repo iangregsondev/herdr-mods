@@ -1,6 +1,6 @@
 // Which open Herdr space sits on which worktree. Pure: no `herdr` or `gpui` imports, so
 // spaces and panes come in as plain data shaped like `spaces()` and `panes()`.
-import { Option } from "effect";
+import { Option, Predicate } from "effect";
 import { repoKey, THIS_MACHINE, type Located, type Machine } from "./machines.ts";
 import { isUnder, OTHER, type Repo } from "./repos.ts";
 import type { Click } from "./view.ts";
@@ -137,6 +137,16 @@ export const focusedFolder = (
   );
 };
 
+/**
+ * The focused folder (see `focusedFolder`), or this machine with no folder when nothing
+ * is focused: what the panel looks up when it needs a place to start.
+ */
+export const focusedOrHere = (focus: FocusLike | null, places: readonly Place[]): Located =>
+  Option.getOrElse(focusedFolder(focus, places), (): Located => ({
+    machine: THIS_MACHINE,
+    folder: "",
+  }));
+
 /** A Herdr command (`run`) and its arguments. */
 export interface Command {
   readonly command: string;
@@ -213,3 +223,19 @@ export const spaceGroups = (
         .map((on) => [space.id, on.group]),
     ),
   );
+
+/**
+ * Whether `groups` differ from those `published` in shared state (anything at all, since
+ * any mod can write it): publishing only on a change spares every mod a render.
+ */
+export const groupsChanged = (
+  groups: Readonly<Record<string, string>>,
+  published: unknown,
+): boolean => {
+  const entries = Object.entries(groups);
+  return (
+    !Predicate.isObject(published) ||
+    Object.keys(published).length !== entries.length ||
+    entries.some(([space, group]) => Reflect.get(published, space) !== group)
+  );
+};

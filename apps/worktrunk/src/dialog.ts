@@ -4,8 +4,8 @@
 import { Option, Result } from "effect";
 import { isShortcut } from "./commands.ts";
 import type { Action } from "./menus.ts";
-import { THIS_MACHINE, type RepoId } from "./machines.ts";
-import { lastSegment, tildePath } from "./settings.ts";
+import { locatedLabel, THIS_MACHINE, type RepoId } from "./machines.ts";
+import { lastSegment } from "./settings.ts";
 import type { Worktree } from "./worktrees.ts";
 
 /** A branch the dialog can offer: local, or only on origin. */
@@ -298,6 +298,43 @@ export const dialogTitle = (state: DialogState): string => {
   });
 };
 
+/** The dialog's words for where it is: picking a repo, or opening or making a worktree. */
+export interface DialogCopy {
+  /** The input's placeholder. */
+  readonly placeholder: string;
+  /** What the list says when it has no lines. */
+  readonly empty: string;
+  /** The keys line at the bottom. */
+  readonly footer: string;
+  /** It offers the base a new branch starts from. */
+  readonly offersBase: boolean;
+  /** The hint beside a worktree line, the worktree at `path`. */
+  readonly worktreeHint: (path: string) => string;
+}
+
+/** What the dialog says at its step: see `DialogCopy`. */
+export const dialogCopy = (state: DialogState): DialogCopy => ({
+  placeholder: Option.isNone(state.repo)
+    ? "Repo name"
+    : state.mode === "open"
+      ? "Worktree's branch"
+      : "Branch name, pr:123 or a PR link",
+  empty: Option.isNone(state.repo)
+    ? "No repo matches."
+    : state.reading
+      ? "Reading worktrees and branches…"
+      : state.mode === "open"
+        ? "No worktree matches."
+        : "Type a branch name to create it.",
+  footer: Option.isNone(state.repo)
+    ? "↑↓ choose · Enter picks the repo · Esc closes"
+    : state.mode === "open"
+      ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes"
+      : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+  offersBase: Option.isSome(state.repo) && state.mode === "new",
+  worktreeHint: (path) => (state.mode === "open" ? lastSegment(path) : "open worktree"),
+});
+
 /** The hint beside a repo the dialog offers: where it is, and on which machine. */
 export const repoHint = ({ machine, root }: RepoId, home: string): string =>
-  machine === THIS_MACHINE ? tildePath(root, home) : `${machine}: ${root}`;
+  locatedLabel({ machine, folder: root }, { home });

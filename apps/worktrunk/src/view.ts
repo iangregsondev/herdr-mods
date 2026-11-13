@@ -1,7 +1,14 @@
 // What the panel draws, from one snapshot of everything it knows. Pure: no `herdr` or
 // `gpui` imports, so the shell (main.ts) only turns this into elements.
 import { Option } from "effect";
-import { machineName, repoKey, type Machine, type MachineStatus } from "./machines.ts";
+import {
+  locatedLabel,
+  machineName,
+  repoKey,
+  type RepoKey,
+  type Machine,
+  type MachineStatus,
+} from "./machines.ts";
 import type { CiRead, CurrentRepo, RepoList } from "./reads.ts";
 import { OTHER, type Repo } from "./repos.ts";
 import { lastSegment, type Settings } from "./settings.ts";
@@ -56,7 +63,7 @@ export interface Snapshot {
   readonly discovered: boolean;
   readonly loading: boolean;
   /** Each repo's list by its `repoKey`; a repo missing here hasn't been read yet. */
-  readonly lists: ReadonlyMap<string, RepoList>;
+  readonly lists: ReadonlyMap<RepoKey, RepoList>;
   readonly settings: Settings;
   readonly settingsError: Option.Option<string>;
   /** Why the last search for repos (folder scan, open spaces' repos) failed, if it did. */
@@ -72,7 +79,7 @@ export interface Snapshot {
   /** Folded repos (by `repoKey`) and groups (by `<repoKey>|<kind>`). */
   readonly folded: Readonly<Record<string, boolean>>;
   /** Each repo's CI by its `repoKey`; CI is read less often than the list. */
-  readonly ci: ReadonlyMap<string, CiRead>;
+  readonly ci: ReadonlyMap<RepoKey, CiRead>;
   readonly view: ViewState;
   /** The search box's text. */
   readonly search: string;
@@ -106,7 +113,7 @@ export interface RowView {
    * The worktree's machine and path, as `repoKey` keys a folder: unique, so also the
    * element id.
    */
-  readonly key: string;
+  readonly key: RepoKey;
   /** Its repo's root. */
   readonly repo: string;
   readonly label: string;
@@ -148,7 +155,7 @@ export type RepoStatus =
 
 export interface RepoView {
   /** The repo's `repoKey`: unique, and its fold key. */
-  readonly key: string;
+  readonly key: RepoKey;
   readonly name: string;
   /** The machine it is on, shown only while the list holds repos on more than one. */
   readonly machine: Option.Option<string>;
@@ -408,7 +415,8 @@ const machineLabel = (snapshot: Snapshot, repo: Repo): Option.Option<string> =>
 const flatRepoName = (snapshot: Snapshot, repo: Repo): string =>
   Option.match(machineLabel(snapshot, repo), {
     onNone: () => lastSegment(repo.root),
-    onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`,
+    onSome: () =>
+      locatedLabel({ machine: repo.machine, folder: lastSegment(repo.root) }, { nameHere: true }),
   });
 
 const repoView = (

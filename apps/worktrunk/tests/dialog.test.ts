@@ -3,6 +3,7 @@ import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
   choicesFor,
+  dialogCopy,
   dialogTitle,
   enterAction,
   flippedBase,
@@ -515,6 +516,66 @@ describe("dialogTitle", () => {
     expect([titled("new", Option.none()), titled("open", Option.none())]).toEqual([
       "New or open worktree: pick a repo",
       "Open a worktree: pick a repo",
+    ]);
+  });
+});
+
+describe("dialogCopy", () => {
+  /** The dialog in `mode`: on a repo whose read is done, or picking one. */
+  const copied = (mode: "new" | "open", repo: Option.Option<RepoId>) =>
+    dialogCopy(
+      withRead(
+        openDialog({ mode, repo, branch: Option.none(), repos: [] }),
+        Result.succeed([]),
+        Result.succeed([]),
+      ),
+    );
+  const picking = (mode: "new" | "open") => copied(mode, Option.none());
+  const on = (mode: "new" | "open") => copied(mode, Option.some(here("/r/app")));
+
+  test("the placeholder asks for a repo, a worktree's branch, or a branch to make", () => {
+    expect(
+      [picking("new"), picking("open"), on("open"), on("new")].map((c) => c.placeholder),
+    ).toEqual(["Repo name", "Repo name", "Worktree's branch", "Branch name, pr:123 or a PR link"]);
+  });
+
+  test("the empty list says no repo matches, it is reading, no worktree matches, or to type", () => {
+    const reading = dialogCopy(
+      openDialog({
+        mode: "new",
+        repo: Option.some(here("/r/app")),
+        branch: Option.none(),
+        repos: [],
+      }),
+    );
+    expect([picking("new"), reading, on("open"), on("new")].map((c) => c.empty)).toEqual([
+      "No repo matches.",
+      "Reading worktrees and branches…",
+      "No worktree matches.",
+      "Type a branch name to create it.",
+    ]);
+  });
+
+  test("the footer names what Enter does at each step, and Tab only where a base is offered", () => {
+    expect([picking("open"), on("open"), on("new")].map((c) => c.footer)).toEqual([
+      "↑↓ choose · Enter picks the repo · Esc closes",
+      "↑↓ choose · Enter goes to its space, or opens one · Esc closes",
+      "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+    ]);
+  });
+
+  test("offers the base only when making a worktree in a repo", () => {
+    expect([picking("new"), on("open"), on("new")].map((c) => c.offersBase)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  test("a worktree line's hint is its folder when opening, else that it opens", () => {
+    expect([on("open"), on("new")].map((c) => c.worktreeHint("/r/app.feat"))).toEqual([
+      "app.feat",
+      "open worktree",
     ]);
   });
 });

@@ -42,6 +42,7 @@ import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import {
   flippedBase,
   highlight,
+  dialogCopy,
   dialogTitle,
   linesFor,
   moved,
@@ -68,7 +69,12 @@ import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./
 import {
   addGroupFolderOn,
   dialogFor,
-  findRepos,
+  foundOf,
+  landSearch,
+  machinesOf,
+  refreshMachines,
+  type MachinesAsk,
+  type Searches,
   hideInSettings,
   loadSettings,
   lookUpCurrent,
@@ -77,9 +83,10 @@ import {
   readCi,
   readDialogRepo,
   readEach,
-  readLists,
+  defectAsReason,
   runJob,
   saveSettings,
+  scanKey,
   settingsText,
   spaceWorktree,
   syncToast,
@@ -129,8 +136,10 @@ import {
   type RepoList,
 } from "./reads.ts";
 import {
+  locatedLabel,
   repoKey,
   repoOfKey,
+  type RepoKey,
   THIS_MACHINE,
   type Homes,
   machineStates,
@@ -157,7 +166,8 @@ import {
 import { failureText, reveal, Shell, stopJob } from "./shell.ts";
 import {
   clickCommand,
-  focusedFolder,
+  focusedOrHere,
+  groupsChanged,
   goTo,
   spaceGroups,
   spacePlaces,
@@ -317,18 +327,12 @@ const toggleFold = (key: string) => {
   setShared(FOLDED_KEY, { ...folded, [key]: !folded[key] });
 };
 
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = <A>(
-  read: Effect.Effect<Result.Result<A, string>, never, Shell | Files>,
-): Effect.Effect<Result.Result<A, string>, never, Shell | Files> =>
-  Effect.exit(read).pipe(
-    Effect.map(
-      Exit.match({
-        onSuccess: (answer) => answer,
-        onFailure: (cause) => Result.fail(Cause.pretty(cause)),
-      }),
-    ),
-  );
+/**
+ * Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+ * code that keeps the answers), as a toast: the read never stops silently.
+ */
+const showDefect = (what: string) => (body: string) =>
+  notify({ title: `Couldn't read ${what}`, body, level: "error" });
 
 /**
  * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
@@ -338,16 +342,16 @@ const readAll = (
   repos: readonly RepoId[],
   limit: number,
   read: (repo: RepoId) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
-  keep: (key: string, answer: Result.Result<readonly Worktree[], string>) => void,
+  keep: (key: RepoKey, answer: Result.Result<readonly Worktree[], string>) => void,
 ): Promise<void> =>
   runEdge(
     readEach(
       repos,
       limit,
-      (repo) => defectAsFailure(read(repo)),
+      (repo) => defectAsReason(read(repo)),
       (repo, answer) => keep(repoKey(repo), answer),
     ),
-    () => undefined,
+    showDefect("CI"),
   );
 
 const viewState = (): ViewState => readViewState(shared(VIEW_KEY));
@@ -519,16 +523,20 @@ export default class Worktrunk extends View {
   settingsError: Option.Option<string> = Option.none();
   /** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
   scanned: Option.Option<Scanned> = Option.none();
+  /** Each machine's latest search, which the repos are found from. */
+  searches: Searches = new Map();
+  /** The machines whose refresh is still running: a new refresh runs nothing there. */
+  refreshing: ReadonlySet<Machine> = new Set();
   lastScan: Option.Option<LastScan> = Option.none();
   repos: readonly Repo[] = [];
   discovered = false;
   discoverError: Option.Option<string> = Option.none();
-  lists: ReadonlyMap<string, RepoList> = new Map();
+  lists: ReadonlyMap<RepoKey, RepoList> = new Map();
   /** The machines that can't be read now, and why; their repos aren't listed or read. */
   machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
   reads = NO_READS;
-  ci: ReadonlyMap<string, CiRead> = new Map();
+  ci: ReadonlyMap<RepoKey, CiRead> = new Map();
   /** When the last CI read started; none makes the next refresh read CI too. */
   ciAt: Option.Option<number> = Option.none();
   checking = false;
@@ -607,10 +615,7 @@ export default class Worktrunk extends View {
    */
   openNewOrOpen(cx: AsyncContext, folder: Option.Option<Located>, mode: DialogMode = "new") {
     const places = spacePlaces(spaces(), panes());
-    const at: Located = Option.getOrElse(
-      Option.orElse(folder, () => focusedFolder(focused(), places)),
-      (): Located => ({ machine: THIS_MACHINE, folder: "" }),
-    );
+    const at = Option.getOrElse(folder, () => focusedOrHere(focused(), places));
     const listed = this.repos.map(({ machine, root }): RepoId => ({ machine, root }));
     cx.spawn(async () => {
       const opened = await runEdge(dialogFor(at, listed, mode), Result.fail);
@@ -669,11 +674,7 @@ export default class Worktrunk extends View {
   /** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
   newInput(dialog: () => NewDialog, state: DialogState): InputState {
     const input = InputState.new({
-      placeholder: Option.isNone(state.repo)
-        ? "Repo name"
-        : state.mode === "open"
-          ? "Worktree's branch"
-          : "Branch name, pr:123 or a PR link",
+      placeholder: dialogCopy(state).placeholder,
     });
     input.on("change", (_event, cx) => {
       dialog().state = retyped(dialog().state);
@@ -1064,10 +1065,7 @@ export default class Worktrunk extends View {
    */
   followFocus(cx: Context, following: boolean) {
     const places = spacePlaces(spaces(), panes());
-    const folder = Option.getOrElse(focusedFolder(focused(), places), (): Located => ({
-      machine: THIS_MACHINE,
-      folder: "",
-    }));
+    const folder = focusedOrHere(focused(), places);
     const step = followFocus(this.follow, { following, folder });
     this.follow = step.follow;
     Option.map(step.lookUp, (folder) => later(cx, (cx) => this.lookUpCurrent(cx, folder)));
@@ -1115,7 +1113,10 @@ export default class Worktrunk extends View {
     });
   }
 
-  /** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+  /**
+   * One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+   * the machines side by side. It ends when this machine's part does.
+   */
   async load(cx: AsyncContext, { scan }: RefreshAsk) {
     const settled = shared(IMPORTED_KEY) === true;
     const loaded = await runEdge(
@@ -1142,51 +1143,80 @@ export default class Worktrunk extends View {
     this.settingsError = loaded.parsed.error;
 
     const now = Date.now();
-    const { folders, depth, skip } = this.settings;
-    const key = JSON.stringify({ folders, depth, skip });
+    const key = scanKey(this.settings);
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
     const places = spacePlaces(spaces(), panes()).map((p): Located => ({
       machine: p.machine,
       folder: p.place,
     }));
-    const found = await runEdge(
-      findRepos(
-        this.settings,
-        home(),
-        places,
-        due ? Option.none() : this.scanned,
-        // The Current repo is listed even when no open space is in it.
-        Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess)),
-        machineStates(machines()),
-      ),
-      Result.fail,
+    const current = Option.flatten(Option.flatMap(this.follow.found, Result.getSuccess));
+    const ask: MachinesAsk = {
+      settings: this.settings,
+      home: home(),
+      places,
+      last: this.searches,
+      rescan: due,
+      states: machineStates(machines()),
+      busy: this.refreshing,
+    };
+    const started = machinesOf(this.settings, places).filter(
+      (machine) => !this.refreshing.has(machine),
     );
-    if (Result.isSuccess(found)) {
-      this.repos = found.success.repos;
-      this.scanned = Option.some(found.success.scanned);
-      if (due) this.lastScan = Option.some({ key, at: now });
-      this.discoverError = Option.none();
-      this.machineStatus = found.success.statuses;
-    } else {
-      // The repos from the last search that worked stay listed.
-      this.discoverError = Option.some(found.failure);
-    }
-    this.discovered = true;
-    cx.notify();
-
-    await runEdge(
-      readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
-        const kept = keepLists(
-          { lists: this.lists, machines: this.machineStatus },
-          machine,
-          answer,
+    this.refreshing = new Set([...this.refreshing, ...started]);
+    // The refresh is done once this machine's part is: another machine's carries on alone,
+    // so this machine's next refresh never waits on it.
+    await new Promise<void>((done) => {
+      if (!started.includes(THIS_MACHINE)) done();
+      cx.spawn(async (cx) => {
+        await runEdge(
+          refreshMachines(
+            ask,
+            (machine, search) => {
+              const landed = landSearch(
+                {
+                  searches: this.searches,
+                  error: this.discoverError,
+                  statuses: this.machineStatus,
+                },
+                machine,
+                search,
+              );
+              this.searches = landed.searches;
+              this.discoverError = landed.error;
+              this.machineStatus = landed.statuses;
+              if (due && machine === THIS_MACHINE && Result.isSuccess(search)) {
+                this.lastScan = Option.some({ key, at: now });
+              }
+              // The Current repo is listed even when no open space is in it.
+              const found = foundOf(this.settings, ask.home, places, this.searches, current);
+              this.repos = found.repos;
+              this.scanned = Option.some(found.scanned);
+              this.discovered = true;
+              cx.notify();
+              return this.reposToRead();
+            },
+            (machine, answer) => {
+              const kept = keepLists(
+                { lists: this.lists, machines: this.machineStatus },
+                machine,
+                answer,
+              );
+              this.lists = kept.lists;
+              this.machineStatus = kept.machines;
+              cx.notify();
+            },
+            (machine) => {
+              this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+              if (machine === THIS_MACHINE) done();
+            },
+          ),
+          showDefect("the repos"),
         );
-        this.lists = kept.lists;
-        this.machineStatus = kept.machines;
+        this.discovered = true;
         cx.notify();
-      }),
-      () => undefined,
-    );
+        done();
+      });
+    });
   }
 
   /** Reads CI again with the next refresh, which `ask` starts. */
@@ -1203,7 +1233,7 @@ export default class Worktrunk extends View {
   publishGroups() {
     if (!this.discovered) return;
     const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
-    if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) {
+    if (groupsChanged(groups, shared(GROUPS_KEY))) {
       setShared(GROUPS_KEY, groups);
     }
   }
@@ -1282,7 +1312,7 @@ export default class Worktrunk extends View {
       .border_b(1)
       .border_color(t.border)
       .child(icon("git", 16, t.accent))
-      .child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk"))
+      .child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk"))
       .when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900)))
       .child(iconButton("new", "plus", () => send({ _tag: "NewOrOpen", folder: null })))
       .child(iconButton("settings", "settings", () => send({ _tag: "Settings" })))
@@ -1332,7 +1362,7 @@ export default class Worktrunk extends View {
   }
 
   /** The worktrees of the repo kept under `key` (its `repoKey`). */
-  worktreesOf(key: string): readonly Worktree[] {
+  worktreesOf(key: RepoKey): readonly Worktree[] {
     return Option.match(Option.fromNullishOr(this.lists.get(key)), {
       onNone: () => [],
       onSome: (list) => list.worktrees,
@@ -1364,7 +1394,7 @@ export default class Worktrunk extends View {
   }
 
   /** The menu of the repo kept under `key` (its `repoKey`). */
-  openRepoMenu(key: string) {
+  openRepoMenu(key: RepoKey) {
     const repo = repoOfKey(key);
     openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
   }
@@ -1497,14 +1527,14 @@ export default class Worktrunk extends View {
     const lines = linesFor(state, dialog.input.value());
     const at = highlight(state, lines);
     const picking = Option.isNone(state.repo);
-    const opening = state.mode === "open";
+    const copy = dialogCopy(state);
     const title = dialogTitle(state);
     const describe = (line: Line): readonly [string, string] => {
       switch (line._tag) {
         case "Repo":
           return [lastSegment(line.repo.root), repoHint(line.repo, home())];
         case "Worktree":
-          return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
+          return [line.branch, copy.worktreeHint(line.path)];
         case "Branch":
           return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
         case "Typed":
@@ -1537,13 +1567,6 @@ export default class Worktrunk extends View {
           .child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint))
       );
     };
-    const empty = picking
-      ? "No repo matches."
-      : state.reading
-        ? "Reading worktrees and branches…"
-        : opening
-          ? "No worktree matches."
-          : "Type a branch name to create it.";
     const baseOption = (key: Base, label: string) =>
       h_flex()
         .id(`base-${key}`)
@@ -1610,7 +1633,7 @@ export default class Worktrunk extends View {
             .overflow_y_scrollbar()
             .children(lines.map(row))
             .when(lines.length === 0, (el) =>
-              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)),
+              el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)),
             ),
         )
         .children(
@@ -1618,7 +1641,7 @@ export default class Worktrunk extends View {
             div().text_size(sizes.label).text_color(t.ansi1).child(error),
           ),
         )
-        .when(!picking && !opening, (el) =>
+        .when(copy.offersBase, (el) =>
           el.child(
             h_flex()
               .w_full()
@@ -1635,18 +1658,7 @@ export default class Worktrunk extends View {
               .children(bases),
           ),
         )
-        .child(
-          div()
-            .text_size(sizes.label)
-            .text_color(t.dim)
-            .child(
-              picking
-                ? "↑↓ choose · Enter picks the repo · Esc closes"
-                : opening
-                  ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes"
-                  : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
-            ),
-        ),
+        .child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)),
     );
   }
 
@@ -1715,7 +1727,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`),
+            .child(locatedLabel({ machine: folder.machine, folder: folder.path })),
         )
         .child(
           small(
@@ -1751,11 +1763,7 @@ export default class Worktrunk extends View {
             .truncate()
             .text_size(sizes.small)
             .text_color(t.muted)
-            .child(
-              repo.machine === null
-                ? tildePath(repo.root, home())
-                : `${repo.machine}: ${repo.root}`,
-            ),
+            .child(repoHint(repo, home())),
         )
         .child(
           button(
@@ -2203,7 +2211,7 @@ export default class Worktrunk extends View {
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click(() => Option.map(block, (b) => run("layout.toggle", { id: b.id })))
           .child(icon("git", 14, on ? t.foreground : t.muted))
-          .child("worktrunk"),
+          .child("Worktrunk"),
       );
   }
 

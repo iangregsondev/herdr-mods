@@ -1,6 +1,6 @@
 // Which machine a repo lives on, and the key a repo is known by. Pure: no `herdr` or
 // `gpui` imports.
-import { Option } from "effect";
+import { Brand, Option } from "effect";
 
 /** A machine as Herdr names it (`hc machine ls`); null is this machine, as in `SpaceInfo`. */
 export type Machine = string | null;
@@ -26,19 +26,24 @@ export interface RepoId {
   readonly root: string;
 }
 
+/** A `repoKey`: no other string passes for one. */
+export type RepoKey = string & Brand.Brand<"RepoKey">;
+
+const RepoKey = Brand.nominal<RepoKey>();
+
 /**
  * The key a repo is kept under (lists, CI, folded state): its folder on this machine, else
  * `<machine>:<folder>`. A folder is absolute, so no key from another machine starts with
  * `/` the way this machine's do.
  */
-export const repoKey = (repo: RepoId): string =>
-  repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`;
+export const repoKey = (repo: RepoId): RepoKey =>
+  RepoKey(repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`);
 
 /**
  * The repo a `repoKey` names. Herdr's machine names never hold `/` (its ids use
  * `<machine>/` as a prefix), so the first `/` starts the folder.
  */
-export const repoOfKey = (key: string): RepoId => {
+export const repoOfKey = (key: RepoKey): RepoId => {
   const slash = key.indexOf("/");
   return slash <= 0
     ? { machine: THIS_MACHINE, root: key }
@@ -74,4 +79,27 @@ export const statusOf = (states: MachineStates, machine: Machine): Option.Option
     default:
       return Option.none();
   }
+};
+
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+export const tildePath = (path: string, home: string): string =>
+  path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+
+/** How a label shows a folder on this machine. */
+export interface LabelOptions {
+  /** This machine's home, shown as `~`. */
+  readonly home?: string;
+  /** Name this machine too, as "this machine". */
+  readonly nameHere?: boolean;
+}
+
+/**
+ * A folder on its machine, for a label: on another machine `<machine>: <folder>`; on
+ * this one the folder alone (`~` for `home`), or after "this machine" with `nameHere`.
+ */
+export const locatedLabel = ({ machine, folder }: Located, options: LabelOptions = {}): string => {
+  if (machine !== THIS_MACHINE || options.nameHere === true) {
+    return `${machineName(machine)}: ${folder}`;
+  }
+  return options.home === undefined ? folder : tildePath(folder, options.home);
 };

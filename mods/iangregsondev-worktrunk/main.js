@@ -5769,6 +5769,11 @@ const causeElectDefects = (self) => hasDies(self) && hasFails(self) ? causeFromR
 */
 const findRecoverableError = (self) => hasDies(self) ? fail$2(causeElectDefects(self)) : findError(self);
 /** @internal */
+const findDefect = (self) => {
+	const reason = self.reasons.find(isDieReason);
+	return reason ? succeed$3(reason.defect) : fail$2(self);
+};
+/** @internal */
 const hasInterrupts = (self) => self.reasons.some(isInterruptReason);
 /** @internal */
 const causeMap = /*#__PURE__*/ dual(2, (self, f) => {
@@ -6520,6 +6525,8 @@ const catchCauseFilter = /*#__PURE__*/ dual(3, (self, filter, f) => catchCause(s
 /** @internal */
 const catch_$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findRecoverableError, (e) => f(e)));
 /** @internal */
+const catchDefect$1 = /*#__PURE__*/ dual(2, (self, f) => catchCauseFilter(self, findDefect, f));
+/** @internal */
 const catchIf$1 = /*#__PURE__*/ dual((args) => isEffect(args[0]), (self, predicate, f, orElse) => catchCause(self, (cause) => {
 	const error = findRecoverableError(cause);
 	if (isFailure(error)) return failCause(error.failure);
@@ -6616,7 +6623,7 @@ const matchEager = /*#__PURE__*/ dual(2, (self, options) => {
 	return match$2(self, options);
 });
 /** @internal */
-const exit$1 = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
+const exit = (self) => effectIsExit(self) ? exitSucceed(self) : exitPrimitive(self);
 const exitPrimitive = /*#__PURE__*/ makePrimitive({
 	op: "Exit",
 	[evaluate](fiber) {
@@ -6669,7 +6676,7 @@ const scopeCloseFinalizers = /*#__PURE__*/ fnUntraced$1(function* (self, finaliz
 	const parent = getCurrentFiber();
 	for (let i = arr.length - 1; i >= 0; i--) {
 		const [key, finalizer] = arr[i];
-		if (self.strategy === "sequential") exits.push(yield* exit$1(runFinalizer(finalizer, exit_)));
+		if (self.strategy === "sequential") exits.push(yield* exit(runFinalizer(finalizer, exit_)));
 		else if (key !== parent) fibers.push(forkUnsafe$1(parent, runFinalizer(finalizer, exit_), true, true, "inherit"));
 	}
 	if (fibers.length > 0) exits = yield* fiberAwaitAll(fibers);
@@ -6781,6 +6788,8 @@ const onExitUnsafe = (fiber, f) => {
 };
 /** @internal */
 const onExit = /*#__PURE__*/ dual(2, onExitPrimitive);
+/** @internal */
+const ensuring$1 = /*#__PURE__*/ dual(2, (self, finalizer) => onExit(self, (_) => finalizer));
 /** @internal */
 const uninterruptible = (self) => withFiber((fiber) => {
 	if (!fiber.interruptible) return self;
@@ -8773,48 +8782,6 @@ const result = result$1;
 */
 const option = option$1;
 /**
-* Transforms an effect to encapsulate both failure and success using the `Exit`
-* data type.
-*
-* **When to use**
-*
-* Use when you need to inspect the full outcome, including typed failures, defects,
-* and interruptions.
-*
-* **Details**
-*
-* `exit` wraps an effect's success or failure inside an `Exit` type, allowing
-* you to handle both cases explicitly.
-*
-* The resulting effect cannot fail because the failure is encapsulated within
-* the `Exit.Failure` type. The error type is set to `never`, indicating that
-* the effect is structured to never fail directly.
-*
-* **Example** (Capturing completion as Exit)
-*
-* ```ts import.meta.vitest
-* import { Effect, Exit } from "effect"
-*
-* const success = Effect.succeed(42)
-* const failure = Effect.fail("Something went wrong")
-*
-* const program1 = Effect.exit(success)
-* const program2 = Effect.exit(failure)
-*
-* Effect.runSync(program1) // => Exit.succeed(42)
-*
-* Effect.runSync(program2) // => Exit.fail("Something went wrong")
-* ```
-*
-* @see {@link option} for a version that uses `Option` instead.
-* @see {@link result} for a version that uses `Result` instead.
-*
-* @stability stable
-* @category error handling
-* @since 2.0.0
-*/
-const exit = exit$1;
-/**
 * Transforms the value inside an effect by applying a function to it.
 *
 * **When to use**
@@ -9057,6 +9024,57 @@ const catchTag = catchTag$1;
 * @since 2.0.0
 */
 const catchTags = catchTags$1;
+/**
+* Recovers from defects using a provided recovery function.
+*
+* **When to use**
+*
+* Use when you need to report or translate defects at integration boundaries.
+*
+* **Details**
+*
+* `catchDefect` handles unexpected defects, such as thrown exceptions or
+* values passed to `die`, without catching typed failures or interruptions.
+*
+* When to Recover from Defects:
+*
+* Defects are unexpected errors that typically should not be recovered from, as
+* they often indicate serious issues. In some cases, such as dynamically loaded
+* plugins, controlled recovery may be needed.
+*
+* **Gotchas**
+*
+* `catchDefect` recovers any cause that contains a defect, including causes
+* that also contain typed errors. Typed error handlers such as `catch` skip
+* those causes, so defects always take precedence.
+*
+* **Example** (Recovering from defects)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* // An effect that might throw an unexpected error (defect)
+* const program = Effect.sync(() => {
+*   throw new Error("Unexpected error")
+* })
+*
+* // Recover from defects only
+* const recovered = Effect.catchDefect(program, (defect) => {
+*   return Effect.sync(() => { output.push(`Caught defect: ${(defect as Error).message}`) }).pipe(
+*     Effect.as("Recovered from defect")
+*   )
+* })
+*
+* void output.push(Effect.runSync(recovered))
+* output // => ["Caught defect: Unexpected error", "Recovered from defect"]
+* ```
+*
+* @stability stable
+* @category error handling
+* @since 4.0.0
+*/
+const catchDefect = catchDefect$1;
 /**
 * Recovers from specific errors using a `Predicate` or `Refinement`.
 *
@@ -9337,6 +9355,46 @@ const matchEffect = matchEffect$1;
 */
 const provide = provide$1;
 /**
+* Returns an effect that, if this effect _starts_ execution, then the
+* specified `finalizer` is guaranteed to be executed, whether this effect
+* succeeds, fails, or is interrupted.
+*
+* **Details**
+*
+* For use cases that need access to the effect's result, see `onExit`.
+*
+* Finalizers offer very powerful guarantees, but they are low-level, and
+* should generally not be used for releasing resources. For higher-level
+* logic built on `ensuring`, see the `acquireRelease` family of methods.
+*
+* **Example** (Always running cleanup)
+*
+* ```ts import.meta.vitest
+* import { Effect } from "effect"
+* const output: Array<unknown> = []
+*
+* const task = Effect.gen(function*() {
+*   yield* Effect.sync(() => { output.push("Task started") })
+*   yield* Effect.sync(() => { output.push("Task completed") })
+*   return 42
+* })
+*
+* // Ensure cleanup always runs, regardless of success or failure
+* const program = Effect.ensuring(
+*   task,
+*   Effect.sync(() => { output.push("Cleanup: This always runs!") })
+* )
+*
+* void output.push(Effect.runSync(program))
+* output // => ["Task started", "Task completed", "Cleanup: This always runs!", 42]
+* ```
+*
+* @stability stable
+* @category resource management
+* @since 2.0.0
+*/
+const ensuring = ensuring$1;
+/**
 * Runs an effect and returns a `Promise` that resolves to an `Exit`, which
 * represents the outcome (success or failure) of the effect.
 *
@@ -9593,6 +9651,31 @@ const fnUntraced = fnUntraced$1;
 */
 const fn = fn$1;
 
+// ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Brand.js
+/**
+* Returns a `Constructor` that **does not apply any runtime checks** and just
+* returns the provided value.
+*
+* **When to use**
+*
+* Use to create nominal types that allow distinguishing between two values
+* of the same type but with different meanings.
+*
+* @see {@link make} for constructing branded values with validation.
+* @see {@link check} for constructing branded values from schema checks.
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+function nominal() {
+	return Object.assign((input) => input, {
+		option: (input) => some(input),
+		result: (input) => succeed$3(input),
+		is: (_) => true
+	});
+}
+
 // ../../packages/worktrunk-mailbox/src/files.ts
 /** There is no file at `path`. */
 var FileMissing = class extends TaggedError("FileMissing") {};
@@ -9740,12 +9823,13 @@ const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 const THIS_MACHINE = null;
 /** What the panel calls `machine`: Herdr's name for it, or "this machine". */
 const machineName = (machine) => machine ?? "this machine";
+const RepoKey = nominal();
 /**
 * The key a repo is kept under (lists, CI, folded state): its folder on this machine, else
 * `<machine>:<folder>`. A folder is absolute, so no key from another machine starts with
 * `/` the way this machine's do.
 */
-const repoKey = (repo) => repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`;
+const repoKey = (repo) => RepoKey(repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`);
 /**
 * The repo a `repoKey` names. Herdr's machine names never hold `/` (its ids use
 * `<machine>/` as a prefix), so the first `/` starts the folder.
@@ -9775,6 +9859,16 @@ const statusOf$1 = (states, machine) => {
 		});
 		default: return none();
 	}
+};
+/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
+const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+/**
+* A folder on its machine, for a label: on another machine `<machine>: <folder>`; on
+* this one the folder alone (`~` for `home`), or after "this machine" with `nameHere`.
+*/
+const locatedLabel = ({ machine, folder }, options = {}) => {
+	if (machine !== null || options.nameHere === true) return `${machineName(machine)}: ${folder}`;
+	return options.home === void 0 ? folder : tildePath(folder, options.home);
 };
 
 // src/settings.ts
@@ -9809,8 +9903,6 @@ const readSettingsFile = (value) => {
 const lastSegment = (path) => path.split("/").filter((part) => part !== "").at(-1) ?? path;
 /** `path` with a leading `~` turned into `home`. */
 const expandHome = (path, home) => path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
-/** `path` with `home` at its start written as `~`, the way the settings file keeps folders. */
-const tildePath = (path, home) => path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 const trimSlashes = (path) => path.trim().replace(/\/+$/, "");
 const clampDepth = (depth) => Math.min(8, Math.max(1, Math.round(depth)));
 const normalize = (file) => ({
@@ -10483,8 +10575,19 @@ const dialogTitle = (state) => {
 		onSome: ({ machine, root }) => `${what} ${where} ${lastSegment(root)}${machine === null ? "" : ` on ${machine}`}`
 	});
 };
+/** What the dialog says at its step: see `DialogCopy`. */
+const dialogCopy = (state) => ({
+	placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link",
+	empty: isNone(state.repo) ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : state.mode === "open" ? "No worktree matches." : "Type a branch name to create it.",
+	footer: isNone(state.repo) ? "↑↓ choose · Enter picks the repo · Esc closes" : state.mode === "open" ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+	offersBase: isSome(state.repo) && state.mode === "new",
+	worktreeHint: (path) => state.mode === "open" ? lastSegment(path) : "open worktree"
+});
 /** The hint beside a repo the dialog offers: where it is, and on which machine. */
-const repoHint = ({ machine, root }, home) => machine === null ? tildePath(root, home) : `${machine}: ${root}`;
+const repoHint = ({ machine, root }, home) => locatedLabel({
+	machine,
+	folder: root
+}, { home });
 
 // src/keys.ts
 const IGNORE = { _tag: "Ignore" };
@@ -11237,73 +11340,111 @@ const defaultsBecause = (what, failed, settled) => ({
 	settled,
 	leftover: none()
 });
+/** What a folder scan scans, as a key: a scan is due again when it changes. */
+const scanKey = ({ folders, depth, skip }) => JSON.stringify({
+	folders,
+	depth,
+	skip
+});
 /** An effect's failure as its one-line reason, so the effect itself never fails. */
 const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * Searches `machine`: scans its group folders when `scan` says to (after reading its
-* home there; this machine's is `home`), and looks up the repos its open spaces
-* (`places`) are in.
+* home there; this machine's is `home`), else keeps the scan of its `last` search, and
+* looks up the repos its open spaces (`places`) are in.
 */
-const searchOn = fnUntraced(function* (settings, machine, home, places, scan) {
-	const found = !(scan && settings.folders.some((folder) => folder.machine === machine)) ? none() : some(machine === null ? home : yield* machineHome(machine));
+const searchOn = fnUntraced(function* (settings, machine, home, places, scan, last) {
+	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
+	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
 	return {
 		machine,
 		home: found,
-		scan: isSome(found) ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, found.value]])) : {
-			repos: [],
-			missing: []
-		},
+		scan: scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
+			onNone: () => ({
+				repos: [],
+				missing: []
+			}),
+			onSome: (before) => before.scan
+		}),
 		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
 	};
 });
+/** The machines a search covers: those with group folders, and those with open spaces. */
+const machinesOf$1 = (settings, places) => Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
 /**
 * `machine`'s search, or the status saying why it couldn't run there: its state in
-* `states`, or its failure. This machine's failure fails the search as a whole; another
-* machine's is that machine's alone.
+* `states`, or its failure, a bug included. A machine never scanned (or every machine,
+* when `rescan`) scans its group folders.
 */
-const searchOrStatus = (settings, machine, home, places, scan, states) => {
-	const held = statusOf$1(states, machine);
+const searchMachine = (ask, machine) => {
+	const held = statusOf$1(ask.states, machine);
 	if (isSome(held)) return succeed(fail$2(held.value));
-	const search = searchOn(settings, machine, home, places, scan).pipe(map((found) => succeed$3(found)));
-	return machine === null ? search : search.pipe(catch_((failed) => succeed(fail$2({
+	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
+	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
+	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
+	}))), catchDefect((defect) => succeed(fail$2({
+		_tag: "Down",
+		reason: defectText(defect)
 	}))));
 };
 /**
-* The repos to list: the folder scan's (run again on every machine when `lastScan` is
-* none, else only on the machines it lacks) plus the repos the open spaces are in
-* (`places`, each on its machine) and the Current repo (`current`), less the hidden ones.
-* Each machine is searched on its own, side by side. A machine Herdr's machine list
-* (`states`) says is connecting or unavailable runs nothing, and one whose search fails
-* gives up only its own repos: each gets its status. A failure on this machine is its
-* one-line reason.
+* One refresh of every machine in `ask` not busy, side by side: each machine's search,
+* handed to `onSearch` as it lands, which answers with that machine's repos to read; then
+* those repos' lists in one batched read, handed to `onLists`; then `onDone`, however the
+* machine's refresh ended. No machine waits on another. A machine whose search failed
+* reads no lists; this machine's lists are read even then, from the repos it kept.
 */
-const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, current = none(), states = /* @__PURE__ */ new Map()) {
-	const machines = Array.from(/* @__PURE__ */ new Set([...settings.folders.map((folder) => folder.machine), ...places.map((p) => p.machine)]));
-	const searched = yield* forEach(machines, (machine) => searchOrStatus(settings, machine, home, places, match$5(lastScan, {
-		onNone: () => true,
-		onSome: (last) => !last.machines.includes(machine)
-	}), states).pipe(map((result) => ({
+const refreshMachines = (ask, onSearch, onLists, onDone = () => void 0) => forEach(machinesOf$1(ask.settings, ask.places).filter((machine) => !ask.busy.has(machine)), (machine) => searchMachine(ask, machine).pipe(flatMap((search) => sync(() => onSearch(machine, search)).pipe(flatMap((repos) => readLists(repos.filter((repo) => repo.machine === machine), machine !== null && isFailure(search) ? /* @__PURE__ */ new Map([[machine, search.failure]]) : /* @__PURE__ */ new Map(), onLists)))), ensuring(sync(() => onDone(machine)))), {
+	concurrency: "unbounded",
+	discard: true
+});
+/**
+* `search` of `machine` landed. Another machine's failure is its status; this machine's
+* is the error, and its last search that worked stays, so its repos stay listed. A
+* search that works clears the machine's status, one a failed list read gave included.
+*/
+const landSearch = (landed, machine, search) => {
+	const here = machine === null;
+	const searches = new Map([...landed.searches, [machine, search]]);
+	return match$4(search, {
+		onSuccess: () => ({
+			searches,
+			error: here ? none() : landed.error,
+			statuses: new Map([...landed.statuses].filter(([at]) => at !== machine))
+		}),
+		onFailure: (status) => here ? {
+			...landed,
+			error: some(status._tag === "Down" ? status.reason : "connecting")
+		} : {
+			...landed,
+			searches,
+			statuses: new Map([...landed.statuses, [machine, status]])
+		}
+	});
+};
+/**
+* The repos to list, from each machine's search in `searches` (only the machines `settings`
+* and `places` cover): the folder scans' plus the repos the open spaces are in and the
+* Current repo (`current`), less the hidden ones. A machine whose search failed gives up
+* its repos.
+*/
+const foundOf = (settings, home, places, searches, current = none()) => {
+	const searched = machinesOf$1(settings, places).flatMap((machine) => toArray(map$3(fromNullishOr(searches.get(machine)), (result) => ({
 		machine,
 		result
-	}))), { concurrency: "unbounded" });
+	}))));
 	const ok = searched.flatMap(({ result }) => toArray(getSuccess(result)));
-	const last = getOrElse$1(lastScan, () => ({
-		repos: [],
-		missing: [],
-		homes: /* @__PURE__ */ new Map([[null, home]]),
-		machines: []
-	}));
 	const scans = ok.flatMap((found) => toArray(map$3(found.home, (at) => ({
 		...found,
 		home: at
 	}))));
 	const scanned = {
-		repos: [...last.repos, ...scans.flatMap((found) => found.scan.repos)],
-		missing: [...last.missing, ...scans.flatMap((found) => found.scan.missing)],
-		homes: new Map([...last.homes, ...scans.map((found) => [found.machine, found.home])]),
-		machines: [...last.machines, ...scans.map((found) => found.machine)]
+		repos: scans.flatMap((found) => found.scan.repos),
+		missing: scans.flatMap((found) => found.scan.missing),
+		homes: new Map([[null, home], ...scans.map((found) => [found.machine, found.home])]),
+		machines: scans.map((found) => found.machine)
 	};
 	const repos = reposFrom(scanned.repos, [...ok.flatMap((found) => found.owners), ...toArray(current)], settings.folders, scanned.homes);
 	return {
@@ -11311,7 +11452,7 @@ const findRepos = fn("findRepos")(function* (settings, home, places, lastScan, c
 		repos: withoutHidden(repos, settings.hidden),
 		statuses: new Map(searched.flatMap(({ machine, result }) => toArray(map$3(getFailure(result), (status) => [machine, status]))))
 	};
-}, asReason);
+};
 /**
 * The Current repo: the repo `focused` (the focused folder, looked up on its machine;
 * empty for none) is in, if any, or the one-line reason the lookup failed.
@@ -11394,7 +11535,14 @@ const machineLists = (machine, roots) => wtLists(machine, roots).pipe(map((lists
 }), list])))), catch_((failed) => succeed(fail$2({
 	_tag: "Down",
 	reason: failureText(failed)
+}))), catchDefect((defect) => succeed(fail$2({
+	_tag: "Down",
+	reason: defectText(defect)
 }))));
+/** A defect, a bug, as its one-line reason. */
+const defectText = (defect) => `a bug: ${String(defect)}`;
+/** `read`, with a defect, a bug, as its failed answer, so the panel shows it like any other. */
+const defectAsReason = (read) => read.pipe(catchDefect((defect) => succeed(fail$2(defectText(defect)))));
 /** The worktrees of `repo` with their CI, or the one-line reason the read failed. */
 const readCi = fn("readCi")(function* (repo) {
 	return yield* wtCi(repo);
@@ -11861,6 +12009,14 @@ const focusedFolder = (focus, places) => {
 	})));
 };
 /**
+* The focused folder (see `focusedFolder`), or this machine with no folder when nothing
+* is focused: what the panel looks up when it needs a place to start.
+*/
+const focusedOrHere = (focus, places) => getOrElse$1(focusedFolder(focus, places), () => ({
+	machine: null,
+	folder: ""
+}));
+/**
 * The Herdr command a click on a worktree row runs: select its space, or open a new one
 * on the worktree's machine (Herdr's `space.new` takes no machine for this one).
 */
@@ -11898,6 +12054,14 @@ const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(
 	path,
 	group: repo.group
 }))).reduce((best, on) => best[0] && best[0].path.length >= on.path.length ? best : [on], []).filter((on) => on.group !== OTHER).map((on) => [space.id, on.group])));
+/**
+* Whether `groups` differ from those `published` in shared state (anything at all, since
+* any mod can write it): publishing only on a change spares every mod a render.
+*/
+const groupsChanged = (groups, published) => {
+	const entries = Object.entries(groups);
+	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, group]) => Reflect.get(published, space) !== group);
+};
 
 // src/view.ts
 /** Every view, in the picker's order, with its label. */
@@ -12055,7 +12219,10 @@ const machineLabel = (snapshot, repo) => liftPredicate(machineName(repo.machine)
 /** A flat row's repo: its folder name, after its machine while more than one is listed. */
 const flatRepoName = (snapshot, repo) => match$5(machineLabel(snapshot, repo), {
 	onNone: () => lastSegment(repo.root),
-	onSome: (machine) => `${machine}: ${lastSegment(repo.root)}`
+	onSome: () => locatedLabel({
+		machine: repo.machine,
+		folder: lastSegment(repo.root)
+	}, { nameHere: true })
 });
 const repoView = (repo, snapshot, places, { foldable } = { foldable: true }) => {
 	const list = listOf(snapshot, repo);
@@ -12526,7 +12693,7 @@ const readConfirmProps = (props) => flatMap$3(readAction(fields(props).action), 
 const readTitlebarProps = (props) => {
 	const f = fields(props);
 	return {
-		title: getOrElse$1(text(f.title), () => "worktrunk"),
+		title: getOrElse$1(text(f.title), () => "Worktrunk"),
 		addr: text(f.addr)
 	};
 };
@@ -12659,16 +12826,20 @@ const toggleFold = (key) => {
 		[key]: !folded[key]
 	});
 };
-/** A read whose defect, a bug, becomes its failed answer, so the panel shows it like any other. */
-const defectAsFailure = (read) => exit(read).pipe(map(match$1({
-	onSuccess: (answer) => answer,
-	onFailure: (cause) => fail$2(pretty(cause))
-})));
+/**
+* Shows a refresh read's defect, a bug left after each answer's own is kept (one in the
+* code that keeps the answers), as a toast: the read never stops silently.
+*/
+const showDefect = (what) => (body) => notify({
+	title: `Couldn't read ${what}`,
+	body,
+	level: "error"
+});
 /**
 * Reads `read` for every repo's folder, a few at a time, handing each answer to `keep`
 * under the repo's `repoKey`.
 */
-const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsFailure(read(repo)), (repo, answer) => keep(repoKey(repo), answer)), () => void 0);
+const readAll = (repos, limit, read, keep) => runEdge(readEach(repos, limit, (repo) => defectAsReason(read(repo)), (repo, answer) => keep(repoKey(repo), answer)), showDefect("CI"));
 const viewState = () => readViewState(shared(VIEW_KEY));
 const setView = (change) => setShared(VIEW_KEY, writeViewState({
 	...viewState(),
@@ -12788,6 +12959,10 @@ var Worktrunk = class extends View {
 	settingsError = none();
 	/** The last folder scan's repos and missing group folders; `lastScan` says what and when. */
 	scanned = none();
+	/** Each machine's latest search, which the repos are found from. */
+	searches = /* @__PURE__ */ new Map();
+	/** The machines whose refresh is still running: a new refresh runs nothing there. */
+	refreshing = /* @__PURE__ */ new Set();
 	lastScan = none();
 	repos = [];
 	discovered = false;
@@ -12870,10 +13045,7 @@ var Worktrunk = class extends View {
 	*/
 	openNewOrOpen(cx, folder, mode = "new") {
 		const places = spacePlaces(spaces(), panes());
-		const at = getOrElse$1(orElse(folder, () => focusedFolder(focused(), places)), () => ({
-			machine: null,
-			folder: ""
-		}));
+		const at = getOrElse$1(folder, () => focusedOrHere(focused(), places));
 		const listed = this.repos.map(({ machine, root }) => ({
 			machine,
 			root
@@ -12944,7 +13116,7 @@ var Worktrunk = class extends View {
 	}
 	/** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
 	newInput(dialog, state) {
-		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link" });
+		const input = InputState.new({ placeholder: dialogCopy(state).placeholder });
 		input.on("change", (_event, cx) => {
 			dialog().state = retyped(dialog().state);
 			cx.notify();
@@ -13299,10 +13471,7 @@ var Worktrunk = class extends View {
 	*/
 	followFocus(cx, following) {
 		const places = spacePlaces(spaces(), panes());
-		const folder = getOrElse$1(focusedFolder(focused(), places), () => ({
-			machine: null,
-			folder: ""
-		}));
+		const folder = focusedOrHere(focused(), places);
 		const step = followFocus(this.follow, {
 			following,
 			folder
@@ -13352,7 +13521,10 @@ var Worktrunk = class extends View {
 			if (isSome(done.again)) this.refresh(cx, done.again.value);
 		});
 	}
-	/** One refresh: the settings, then the repos, then the shown repos' worktrees. */
+	/**
+	* One refresh: the settings, then each machine's repos and its shown repos' worktrees,
+	* the machines side by side. It ends when this machine's part does.
+	*/
 	async load(cx, { scan }) {
 		const settled = shared(IMPORTED_KEY) === true;
 		const loaded = await runEdge(loadSettings({
@@ -13376,12 +13548,7 @@ var Worktrunk = class extends View {
 		this.settings = loaded.parsed.settings;
 		this.settingsError = loaded.parsed.error;
 		const now = Date.now();
-		const { folders, depth, skip } = this.settings;
-		const key = JSON.stringify({
-			folders,
-			depth,
-			skip
-		});
+		const key = scanKey(this.settings);
 		const due = scanDue(this.lastScan, {
 			forced: scan,
 			key,
@@ -13392,28 +13559,57 @@ var Worktrunk = class extends View {
 			machine: p.machine,
 			folder: p.place
 		}));
-		const found = await runEdge(findRepos(this.settings, home(), places, due ? none() : this.scanned, flatten$1(flatMap$3(this.follow.found, getSuccess)), machineStates(machines())), fail$2);
-		if (isSuccess(found)) {
-			this.repos = found.success.repos;
-			this.scanned = some(found.success.scanned);
-			if (due) this.lastScan = some({
-				key,
-				at: now
+		const current = flatten$1(flatMap$3(this.follow.found, getSuccess));
+		const ask = {
+			settings: this.settings,
+			home: home(),
+			places,
+			last: this.searches,
+			rescan: due,
+			states: machineStates(machines()),
+			busy: this.refreshing
+		};
+		const started = machinesOf$1(this.settings, places).filter((machine) => !this.refreshing.has(machine));
+		this.refreshing = /* @__PURE__ */ new Set([...this.refreshing, ...started]);
+		await new Promise((done) => {
+			if (!started.includes(null)) done();
+			cx.spawn(async (cx) => {
+				await runEdge(refreshMachines(ask, (machine, search) => {
+					const landed = landSearch({
+						searches: this.searches,
+						error: this.discoverError,
+						statuses: this.machineStatus
+					}, machine, search);
+					this.searches = landed.searches;
+					this.discoverError = landed.error;
+					this.machineStatus = landed.statuses;
+					if (due && machine === null && isSuccess(search)) this.lastScan = some({
+						key,
+						at: now
+					});
+					const found = foundOf(this.settings, ask.home, places, this.searches, current);
+					this.repos = found.repos;
+					this.scanned = some(found.scanned);
+					this.discovered = true;
+					cx.notify();
+					return this.reposToRead();
+				}, (machine, answer) => {
+					const kept = keepLists({
+						lists: this.lists,
+						machines: this.machineStatus
+					}, machine, answer);
+					this.lists = kept.lists;
+					this.machineStatus = kept.machines;
+					cx.notify();
+				}, (machine) => {
+					this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
+					if (machine === null) done();
+				}), showDefect("the repos"));
+				this.discovered = true;
+				cx.notify();
+				done();
 			});
-			this.discoverError = none();
-			this.machineStatus = found.success.statuses;
-		} else this.discoverError = some(found.failure);
-		this.discovered = true;
-		cx.notify();
-		await runEdge(readLists(this.reposToRead(), this.machineStatus, (machine, answer) => {
-			const kept = keepLists({
-				lists: this.lists,
-				machines: this.machineStatus
-			}, machine, answer);
-			this.lists = kept.lists;
-			this.machineStatus = kept.machines;
-			cx.notify();
-		}), () => void 0);
+		});
 	}
 	/** Reads CI again with the next refresh, which `ask` starts. */
 	refreshWithCi(cx, ask) {
@@ -13428,7 +13624,7 @@ var Worktrunk = class extends View {
 	publishGroups() {
 		if (!this.discovered) return;
 		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
-		if (JSON.stringify(groups) !== JSON.stringify(shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
+		if (groupsChanged(groups, shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
 	}
 	render(cx) {
 		const style = {
@@ -13480,7 +13676,7 @@ var Worktrunk = class extends View {
 			now: Date.now()
 		});
 		const iconButton = (id, name, onClick) => h_flex().id(id).size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_event, cx) => onClick(cx)).child(icon(name, 14, t.muted));
-		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("new", "plus", () => send({
+		const header = h_flex().h(42).flex_none().pl(14).pr(8).gap(6).items_center().border_b(1).border_color(t.border).child(icon("git", 16, t.accent)).child(div().flex_1().text_size(sizes.title).font_semibold().child("Worktrunk")).when(view.loading, (el) => el.child(icon("ring", 13, t.muted).spin(900))).child(iconButton("new", "plus", () => send({
 			_tag: "NewOrOpen",
 			folder: null
 		}))).child(iconButton("settings", "settings", () => send({ _tag: "Settings" }))).child(iconButton("refresh", "sync", (cx) => later(cx, (cx) => this.refreshWithCi(cx, { scan: true })))).when(isSome(block), (el) => el.child(iconButton("close", "close", () => map$3(block, (b) => run("layout.hide", { id: b.id })))));
@@ -13562,12 +13758,12 @@ var Worktrunk = class extends View {
 		const lines = linesFor(state, dialog.input.value());
 		const at = highlight(state, lines);
 		const picking = isNone(state.repo);
-		const opening = state.mode === "open";
+		const copy = dialogCopy(state);
 		const title = dialogTitle(state);
 		const describe = (line) => {
 			switch (line._tag) {
 				case "Repo": return [lastSegment(line.repo.root), repoHint(line.repo, home())];
-				case "Worktree": return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
+				case "Worktree": return [line.branch, copy.worktreeHint(line.path)];
 				case "Branch": return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
 				case "Typed": return [line.name, line.shortcut ? "ask wt" : "new branch"];
 			}
@@ -13576,7 +13772,6 @@ var Worktrunk = class extends View {
 			const [label, hint] = describe(line);
 			return h_flex().id(`line-${i}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer().when(i === at, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pickNew(cx, dialog, some(line))).child(line._tag === "Typed" && !line.shortcut ? icon("plus", 12, t.accent) : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree")).child(div().flex_none().max_w(300).truncate().child(label)).child(div().flex_1()).child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint));
 		};
-		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : opening ? "No worktree matches." : "Type a branch name to create it.";
 		const baseOption = (key, label) => h_flex().id(`base-${key}`).h(24).px(9).when(key === "default", (el) => el.flex_none()).min_w(0).items_center().rounded(12).cursor_pointer().border_1().border_color(state.base === key ? t.accent : t.border).bg(state.base === key ? t.selected : t.popover).text_size(sizes.label).text_color(state.base === key ? t.foreground : t.muted).on_click((_e, cx) => {
 			if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
 			cx.notify();
@@ -13589,7 +13784,7 @@ var Worktrunk = class extends View {
 			else return;
 			cx.stop_propagation();
 			cx.notify();
-		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking && !opening, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : opening ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
+		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(copy.empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(copy.offersBase, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(copy.footer)));
 	}
 	/**
 	* The Settings dialog: group folders (name, order, remove, add), the scan's depth and
@@ -13611,8 +13806,11 @@ var Worktrunk = class extends View {
 		};
 		const heading = (text, hint) => v_flex().pt(6).gap(2).child(div().font_semibold().child(text)).child(div().text_size(sizes.label).text_color(t.muted).child(hint));
 		const hint = (text) => div().text_size(sizes.small).text_color(t.muted).child(text);
-		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(folder.machine === null ? folder.path : `${folder.machine}: ${folder.path}`)).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
-		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repo.machine === null ? tildePath(repo.root, home()) : `${repo.machine}: ${repo.root}`)).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
+		const folders = settings.folders.map((folder, i) => h_flex().gap(6).items_center().children(toArray(fromNullishOr(draft.names[i])).map((name) => field(name, some(150)))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(locatedLabel({
+			machine: folder.machine,
+			folder: folder.path
+		}))).child(small(`up-${i}`, "↑", edit((s) => moveFolder(s, i, -1)))).child(small(`down-${i}`, "↓", edit((s) => moveFolder(s, i, 1)))).child(small(`remove-${i}`, icon("close", 12, t.muted), edit((s) => removeFolder(s, i)))));
+		const hidden = settings.hidden.map((repo, i) => h_flex().gap(8).items_center().child(div().flex_none().font_medium().child(lastSegment(repo.root))).child(div().flex_1().min_w(0).truncate().text_size(sizes.small).text_color(t.muted).child(repoHint(repo, home()))).child(button(t, `unhide-${i}`, "Show again", "plain", edit((s) => unhide(s, repo)))));
 		const others = otherMachines(machines());
 		const machineChips = others.map((machine) => {
 			const on = contains(draft.machine, machine);
@@ -13694,7 +13892,7 @@ var Worktrunk = class extends View {
 	renderToggle({ t, sizes }) {
 		const block = findModBlock(layout(), "iangregsondev-worktrunk");
 		const on = exists(block, (b) => !b.hidden);
-		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("worktrunk"));
+		return h_flex().size_full().pr(10).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border).child(h_flex().id("toggle").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(sizes.label).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (_event, cx) => cx.stop_propagation()).on_click(() => map$3(block, (b) => run("layout.toggle", { id: b.id }))).child(icon("git", 14, on ? t.foreground : t.muted)).child("Worktrunk"));
 	}
 	renderRepo({ t, sizes }, repo) {
 		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.machine).map((machine) => div().flex_none().px(6).rounded(4).border(1).border_color(t.border).text_size(sizes.label - 1).text_color(t.muted).child(machine))).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{

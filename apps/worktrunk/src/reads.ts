@@ -1,7 +1,14 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
-import { repoKey, type Homes, type Located, type Machine, type MachineStatus } from "./machines.ts";
+import {
+  repoKey,
+  type Homes,
+  type Located,
+  type Machine,
+  type MachineStatus,
+  type RepoKey,
+} from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -30,13 +37,13 @@ export const foldList = (
 
 /** A machine's batched list read: each repo's list by its `repoKey`, or why the machine couldn't be read. */
 export type MachineLists = Result.Result<
-  ReadonlyMap<string, Result.Result<readonly Worktree[], string>>,
+  ReadonlyMap<RepoKey, Result.Result<readonly Worktree[], string>>,
   MachineStatus
 >;
 
 /** The repos' lists and the machines that can't be read, as the panel keeps them. */
 export interface KeptLists {
-  readonly lists: ReadonlyMap<string, RepoList>;
+  readonly lists: ReadonlyMap<RepoKey, RepoList>;
   readonly machines: ReadonlyMap<Machine, MachineStatus>;
 }
 
