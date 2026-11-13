@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import { herdrSync } from "./herdr-sync.ts";
-import type { LayoutNode } from "./herdr-slots.ts";
+import type { HerdrStatus, LayoutNode } from "./herdr-slots.ts";
 import { age, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
 
 const MOD = "iangregsondev-worktrunk";
@@ -163,22 +163,29 @@ describe("herdrSync", () => {
     const home = herdrHome();
     herdrSync({ home, herdrApp: fakeHerdrApp().run });
 
-    const written = readLayout(join(home, "layouts/iangregsondev.json"));
+    const written = readLayout(join(home, "layouts/workbench.json"));
     expect(nodeById(written, "tabs-row")).toEqual(expectedTabsRow());
+  });
+
+  test("writes the layout named workbench", () => {
+    const home = herdrHome();
+    herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+    expect(existsSync(join(home, "layouts/workbench.json"))).toBe(true);
   });
 
   test("writes my layout: Herdr's default with the worktrunk toggle and panel added", () => {
     const home = herdrHome();
     herdrSync({ home, herdrApp: fakeHerdrApp().run });
 
-    expect(readLayout(join(home, "layouts/iangregsondev.json"))).toEqual(expectedLayout());
+    expect(readLayout(join(home, "layouts/workbench.json"))).toEqual(expectedLayout());
   });
 
   test("records the Herdr version and the default layout it built from", () => {
     const home = herdrHome();
     herdrSync({ home, herdrApp: fakeHerdrApp("herdr-app 0.1.14").run });
 
-    expect(readRecord(home)).toEqual({ layout: "iangregsondev", from: "main", version: "0.1.14" });
+    expect(readRecord(home)).toEqual({ layout: "workbench", from: "main", version: "0.1.14" });
   });
 
   test("writes only my layout and the record, never Herdr's own files", () => {
@@ -188,7 +195,7 @@ describe("herdrSync", () => {
 
     expect(changedFiles(before, snapshot(home))).toEqual([
       "iangregsondev-sync.json",
-      join("layouts", "iangregsondev.json"),
+      join("layouts", "workbench.json"),
     ]);
   });
 
@@ -205,8 +212,8 @@ describe("herdrSync", () => {
     expect(result).toEqual({
       code: 0,
       out: [
-        `herdr-sync: wrote layout "iangregsondev" from Herdr's "main" (Herdr 0.1.14).`,
-        "herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name iangregsondev",
+        `herdr-sync: wrote layout "workbench" from Herdr's "main" (Herdr 0.1.14).`,
+        "herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name workbench",
       ],
       err: [],
     });
@@ -215,17 +222,17 @@ describe("herdrSync", () => {
   test("a second run rebuilds the same layout over its own earlier one", () => {
     const home = herdrHome();
     herdrSync({ home, herdrApp: fakeHerdrApp().run });
-    const first = readFileSync(join(home, "layouts/iangregsondev.json"), "utf8");
+    const first = readFileSync(join(home, "layouts/workbench.json"), "utf8");
     const again = herdrSync({ home, herdrApp: fakeHerdrApp().run });
 
     expect(again.code).toBe(0);
-    expect(readFileSync(join(home, "layouts/iangregsondev.json"), "utf8")).toBe(first);
+    expect(readFileSync(join(home, "layouts/workbench.json"), "utf8")).toBe(first);
   });
 
   test("a second run with nothing new leaves both files as they were, so Herdr reloads nothing", () => {
     const home = herdrHome();
     herdrSync({ home, herdrApp: fakeHerdrApp().run });
-    const layout = join(home, "layouts/iangregsondev.json");
+    const layout = join(home, "layouts/workbench.json");
     const record = join(home, "iangregsondev-sync.json");
     const mtimes = [age(layout), age(record)];
     herdrSync({ home, herdrApp: fakeHerdrApp().run });
@@ -238,7 +245,125 @@ describe("herdrSync", () => {
     herdrSync({ home, herdrApp: fakeHerdrApp("herdr-app 0.1.14").run });
     herdrSync({ home, herdrApp: fakeHerdrApp("herdr-app 0.1.15").run });
 
-    expect(readRecord(home)).toEqual({ layout: "iangregsondev", from: "main", version: "0.1.15" });
+    expect(readRecord(home)).toEqual({ layout: "workbench", from: "main", version: "0.1.15" });
+  });
+
+  describe("the old layout, named after the namespace", () => {
+    const OLD = "layouts/iangregsondev.json";
+
+    /** A Herdr home where an earlier sync built the old layout and recorded it. */
+    const syncedBefore = (): string => {
+      const home = herdrHome();
+      writeFile(home, OLD, json(defaultLayout()));
+      writeFile(
+        home,
+        "iangregsondev-sync.json",
+        json({ layout: "iangregsondev", from: "main", version: "0.1.13" }),
+      );
+      return home;
+    };
+
+    test("is removed when the sync record says sync made it", () => {
+      const home = syncedBefore();
+      herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(existsSync(join(home, OLD))).toBe(false);
+    });
+
+    /** A `herdr-app status` that shows `layout`. */
+    const showing = (layout: string) => (): HerdrStatus => ({
+      _tag: "Running",
+      text: JSON.stringify({ layout, errors: [] }),
+    });
+
+    test("when it was the shown layout, Herdr switches to workbench", () => {
+      const herdrApp = fakeHerdrApp();
+      herdrSync({ home: syncedBefore(), herdrApp: herdrApp.run, status: showing("iangregsondev") });
+
+      expect(herdrApp.calls).toContainEqual(["do", "layout.switch", "--name", "workbench"]);
+    });
+
+    test("the sync says it switched to workbench and removed the old layout", () => {
+      const home = syncedBefore();
+      writeFile(home, `mods/${MENUS}/main.js`, "export default class {}\n");
+      const result = herdrSync({
+        home,
+        herdrApp: fakeHerdrApp().run,
+        status: showing("iangregsondev"),
+      });
+
+      expect(result).toEqual({
+        code: 0,
+        out: [
+          `herdr-sync: wrote layout "workbench" from Herdr's "main" (Herdr 0.1.14).`,
+          `herdr-sync: removed layout "iangregsondev", which an earlier sync built.`,
+          `herdr-sync: switched Herdr from "iangregsondev" to "workbench".`,
+        ],
+        err: [],
+      });
+    });
+
+    test("retiring it changes only the old layout, mine and the record, never Herdr's files", () => {
+      const home = syncedBefore();
+      const before = snapshot(home);
+      herdrSync({ home, herdrApp: fakeHerdrApp().run, status: showing("iangregsondev") });
+
+      expect(changedFiles(before, snapshot(home))).toEqual([
+        "iangregsondev-sync.json",
+        join("layouts", "iangregsondev.json"),
+        join("layouts", "workbench.json"),
+      ]);
+    });
+
+    test("when another layout is shown, nothing is switched", () => {
+      const herdrApp = fakeHerdrApp();
+      herdrSync({ home: syncedBefore(), herdrApp: herdrApp.run, status: showing("main") });
+
+      expect(herdrApp.calls.filter(([command]) => command === "do")).toEqual([]);
+    });
+
+    test("is kept, and the sync says why, when Herdr can't switch off it", () => {
+      const home = syncedBefore();
+      const herdrApp = (args: readonly string[]): string => {
+        if (args[0] === "do") throw new Error("layout.switch failed");
+        return "herdr-app 0.1.14\n";
+      };
+      const result = herdrSync({ home, herdrApp, status: showing("iangregsondev") });
+
+      expect(existsSync(join(home, OLD))).toBe(true);
+      expect(result.err.join("\n")).toContain("couldn't switch");
+    });
+
+    test("is kept when there is no sync record: the person made it by hand", () => {
+      const home = herdrHome();
+      writeFile(home, OLD, json(defaultLayout()));
+      herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(existsSync(join(home, OLD))).toBe(true);
+    });
+
+    test("is kept when the sync record names another layout", () => {
+      const home = herdrHome();
+      writeFile(home, OLD, json(defaultLayout()));
+      writeFile(
+        home,
+        "iangregsondev-sync.json",
+        json({ layout: "workbench", from: "main", version: "0.1.13" }),
+      );
+      herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(existsSync(join(home, OLD))).toBe(true);
+    });
+
+    test("a layout Herdr ships is never removed, even when the record names it", () => {
+      const home = herdrHome();
+      writeFile(home, "iangregsondev-sync.json", json({ layout: "main", from: "main" }));
+      const main = readFileSync(join(home, "layouts/main.json"), "utf8");
+      herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(existsSync(join(home, "layouts/main.json"))).toBe(true);
+      expect(readFileSync(join(home, "layouts/main.json"), "utf8")).toBe(main);
+    });
   });
 
   describe("with the menus mod installed", () => {
@@ -260,7 +385,7 @@ describe("herdrSync", () => {
         { mod: MENUS, props: { role: "spaces" } },
       );
       expect(result.code).toBe(0);
-      expect(readLayout(join(home, "layouts/iangregsondev.json"))).toEqual(expected);
+      expect(readLayout(join(home, "layouts/workbench.json"))).toEqual(expected);
     });
 
     test("fails naming the sidebar when Herdr's default layout has no spaces block", () => {
@@ -280,7 +405,7 @@ describe("herdrSync", () => {
     const home = herdrHome();
     const result = herdrSync({ home, herdrApp: fakeHerdrApp().run });
 
-    expect(readLayout(join(home, "layouts/iangregsondev.json"))).toEqual(expectedLayout());
+    expect(readLayout(join(home, "layouts/workbench.json"))).toEqual(expectedLayout());
     expect(result.out.join("\n")).toContain(`${MENUS} isn't installed`);
   });
 
@@ -337,7 +462,7 @@ describe("herdrSync", () => {
       });
       expect(result.code).toBe(1);
       expect(result.err.join("\n")).toContain("version");
-      expect(existsSync(join(home, "layouts/iangregsondev.json"))).toBe(false);
+      expect(existsSync(join(home, "layouts/workbench.json"))).toBe(false);
       expect(existsSync(join(home, "iangregsondev-sync.json"))).toBe(false);
     });
 
@@ -350,8 +475,8 @@ describe("herdrSync", () => {
 
     test("when Herdr ships a layout with my layout's name", () => {
       const home = herdrHome();
-      writeFile(home, "installed.json", json({ "layout:main": {}, "layout:iangregsondev": {} }));
-      writeFile(home, "layouts/iangregsondev.json", json(defaultLayout()));
+      writeFile(home, "installed.json", json({ "layout:main": {}, "layout:workbench": {} }));
+      writeFile(home, "layouts/workbench.json", json(defaultLayout()));
       failsNaming(home, "ships with Herdr");
     });
   });
