@@ -16,7 +16,7 @@ import {
   scanDue,
   takeLookup,
 } from "../src/reads.ts";
-import { THIS_MACHINE } from "../src/machines.ts";
+import { repoKey, THIS_MACHINE, type RepoKey } from "../src/machines.ts";
 import type { FoundRepo, Repo } from "../src/repos.ts";
 import type { Worktree } from "../src/worktrees.ts";
 
@@ -66,12 +66,12 @@ describe("keepLists", () => {
 
   test("a machine's lists fold into each repo's, a failed repo keeping its old worktrees", () => {
     const kept = keepLists(
-      { lists: new Map([["linux:/a", OLD]]), machines: new Map() },
+      { lists: new Map([[repoKey({ machine: "linux", root: "/a" }), OLD]]), machines: new Map() },
       "linux",
       Result.succeed(
-        new Map<string, Result.Result<readonly Worktree[], string>>([
-          ["linux:/a", Result.fail("fatal: gone")],
-          ["linux:/b", Result.succeed([wt("/b")])],
+        new Map<RepoKey, Result.Result<readonly Worktree[], string>>([
+          [repoKey({ machine: "linux", root: "/a" }), Result.fail("fatal: gone")],
+          [repoKey({ machine: "linux", root: "/b" }), Result.succeed([wt("/b")])],
         ]),
       ),
     );
@@ -84,7 +84,7 @@ describe("keepLists", () => {
   });
 
   test("a machine that can't be read gets its status; the lists are left as they were", () => {
-    const lists = new Map([["linux:/a", OLD]]);
+    const lists = new Map([[repoKey({ machine: "linux", root: "/a" }), OLD]]);
     const down = { _tag: "Down", reason: "timed out" } as const;
     expect(keepLists({ lists, machines: new Map() }, "linux", Result.fail(down))).toEqual({
       lists,

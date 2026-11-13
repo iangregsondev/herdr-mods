@@ -139,6 +139,7 @@ import {
   locatedLabel,
   repoKey,
   repoOfKey,
+  type RepoKey,
   THIS_MACHINE,
   type Homes,
   machineStates,
@@ -341,7 +342,7 @@ const readAll = (
   repos: readonly RepoId[],
   limit: number,
   read: (repo: RepoId) => Effect.Effect<Result.Result<readonly Worktree[], string>, never, Shell>,
-  keep: (key: string, answer: Result.Result<readonly Worktree[], string>) => void,
+  keep: (key: RepoKey, answer: Result.Result<readonly Worktree[], string>) => void,
 ): Promise<void> =>
   runEdge(
     readEach(
@@ -530,12 +531,12 @@ export default class Worktrunk extends View {
   repos: readonly Repo[] = [];
   discovered = false;
   discoverError: Option.Option<string> = Option.none();
-  lists: ReadonlyMap<string, RepoList> = new Map();
+  lists: ReadonlyMap<RepoKey, RepoList> = new Map();
   /** The machines that can't be read now, and why; their repos aren't listed or read. */
   machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
   reads = NO_READS;
-  ci: ReadonlyMap<string, CiRead> = new Map();
+  ci: ReadonlyMap<RepoKey, CiRead> = new Map();
   /** When the last CI read started; none makes the next refresh read CI too. */
   ciAt: Option.Option<number> = Option.none();
   checking = false;
@@ -1361,7 +1362,7 @@ export default class Worktrunk extends View {
   }
 
   /** The worktrees of the repo kept under `key` (its `repoKey`). */
-  worktreesOf(key: string): readonly Worktree[] {
+  worktreesOf(key: RepoKey): readonly Worktree[] {
     return Option.match(Option.fromNullishOr(this.lists.get(key)), {
       onNone: () => [],
       onSome: (list) => list.worktrees,
@@ -1393,7 +1394,7 @@ export default class Worktrunk extends View {
   }
 
   /** The menu of the repo kept under `key` (its `repoKey`). */
-  openRepoMenu(key: string) {
+  openRepoMenu(key: RepoKey) {
     const repo = repoOfKey(key);
     openMenu(lastSegment(repo.root), repoMenu(repo, this.worktreesOf(key)));
   }

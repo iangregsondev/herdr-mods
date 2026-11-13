@@ -79,8 +79,8 @@ const snapshot = (more: Partial<Snapshot> = {}): Snapshot => ({
   discovered: true,
   loading: false,
   lists: new Map([
-    [API.root, read(API_WORKTREES)],
-    [WEB.root, read([wt("/p/web", "main", MAIN)])],
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(WEB), read([wt("/p/web", "main", MAIN)])],
   ]),
   settings: { ...DEFAULT_SETTINGS, folders: [{ name: "Work", path: "/w", machine: THIS_MACHINE }] },
   settingsError: Option.none(),
@@ -141,15 +141,15 @@ describe("buildView: the Repos tree", () => {
         { ...WEB, count: 3 },
       ],
       lists: new Map([
-        [API.root, read(API_WORKTREES)],
-        [WEB.root, read([])],
+        [repoKey(API), read(API_WORKTREES)],
+        [repoKey(WEB), read([])],
       ]),
     });
     expect(tree(s).map((r) => r.count)).toEqual([Option.some(4), Option.some(3)]);
   });
 
   test("before its first read a repo is Reading, with no count; once read it is Ok", () => {
-    const s = snapshot({ lists: new Map([[WEB.root, read([wt("/p/web", "main", MAIN)])]]) });
+    const s = snapshot({ lists: new Map([[repoKey(WEB), read([wt("/p/web", "main", MAIN)])]]) });
     expect(tree(s).map((r) => [r.status, r.count])).toEqual([
       [{ _tag: "Reading" }, Option.none()],
       [{ _tag: "Ok" }, Option.some(1)],
@@ -157,7 +157,7 @@ describe("buildView: the Repos tree", () => {
   });
 
   test("a failed read shows its error", () => {
-    const s = snapshot({ lists: new Map([[API.root, read(API_WORKTREES, "wt: not a repo")]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), read(API_WORKTREES, "wt: not a repo")]]) });
     expect(repo(s, "api").status).toEqual({ _tag: "Error", text: "wt: not a repo" });
   });
 
@@ -177,7 +177,7 @@ describe("buildView: the Repos tree", () => {
       wt("/w/api.wip", "wip", ACTIVE, { committedAt: Option.some(NOW - 2 * HOUR) }),
       wt("/w/api.fresh", "fresh", NEW),
     ]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect(repo(s, "api").sections.map((x) => [x.kind, x.count])).toEqual([["active", 2]]);
     expect(row(s, "/w/api.fresh").tone).toBe("active");
     const active = buildView({ ...s, view: { ...s.view, show: "active" } }).body;
@@ -196,7 +196,7 @@ describe("buildView: the Repos tree", () => {
       wt("/w/api.a", "older", ACTIVE, { committedAt: Option.some(NOW - 5 * HOUR) }),
       wt("/w/api.b", "newer", ACTIVE, { committedAt: Option.some(NOW - HOUR) }),
     ]);
-    const api = repo(snapshot({ lists: new Map([[API.root, list]]) }), "api");
+    const api = repo(snapshot({ lists: new Map([[repoKey(API), list]]) }), "api");
     expect(api.sections[0]?.rows.map((r) => r.label)).toEqual(["newer", "older", "unborn"]);
   });
 
@@ -220,7 +220,7 @@ describe("buildView: the Repos tree", () => {
   });
 
   test("a failed read keeps the rows it had", () => {
-    const s = snapshot({ lists: new Map([[API.root, read(API_WORKTREES, "wt: not a repo")]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), read(API_WORKTREES, "wt: not a repo")]]) });
     expect(allRows(repo(s, "api"))).toHaveLength(4);
   });
 });
@@ -284,14 +284,14 @@ describe("buildView: rows", () => {
 
   test("a detached worktree is labelled (detached), and its new space named by folder", () => {
     const list = read([wt("/w/api", "main", MAIN), wt("/w/api.d", null, ACTIVE)]);
-    const r = row(snapshot({ lists: new Map([[API.root, list]]) }), "/w/api.d");
+    const r = row(snapshot({ lists: new Map([[repoKey(API), list]]) }), "/w/api.d");
     expect(r.label).toBe("(detached)");
     expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d", machine: null });
   });
 
   test("a New worktree carries a new badge; no other row has one", () => {
     const list = read([...API_WORKTREES, wt("/w/api.fresh", "fresh", NEW)]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect(row(s, "/w/api.fresh").badge).toEqual(Option.some("new"));
     for (const path of ["/w/api", "/w/api.old", "/w/api.new", "/w/api.fight"]) {
       expect(row(s, path).badge).toEqual(Option.none());
@@ -300,14 +300,14 @@ describe("buildView: rows", () => {
 
   test("uncommitted changes show as dirty", () => {
     const list = read([wt("/w/api", "main", MAIN, { dirty: true }), wt("/w/api.x", "x", ACTIVE)]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect([row(s, "/w/api").dirty, row(s, "/w/api.x").dirty]).toEqual([true, false]);
   });
 });
 
 describe("buildView: sublines", () => {
   const sub = (w: Worktree) =>
-    row(snapshot({ lists: new Map([[API.root, read([w])]]) }), w.path).subline;
+    row(snapshot({ lists: new Map([[repoKey(API), read([w])]]) }), w.path).subline;
   const NO_COMMIT = { committedAt: Option.none() };
 
   test("a main checkout in step with its remote says so", () => {
@@ -433,7 +433,7 @@ describe("buildView: header, banners and empty states", () => {
     const s = snapshot({
       repos: [API, API_LINUX],
       lists: new Map([
-        [API.root, read(API_WORKTREES)],
+        [repoKey(API), read(API_WORKTREES)],
         [repoKey(API_LINUX), read(API_WORKTREES)],
       ]),
       machines: new Map([["linux", { _tag: "Down", reason: "timed out" }]]),
@@ -478,10 +478,10 @@ describe("buildView: group chips", () => {
   };
   const repos = [API, WEB, PERSONAL, STRAY];
   const lists = new Map([
-    [API.root, read(API_WORKTREES)],
-    [WEB.root, read([wt("/p/web", "main", MAIN)])],
-    [PERSONAL.root, read([wt("/p/blog", "main", MAIN), wt("/p/blog.x", "x", ACTIVE)])],
-    [STRAY.root, read([wt("/x/tool", "main", MAIN), wt("/x/tool.y", "y", ACTIVE)])],
+    [repoKey(API), read(API_WORKTREES)],
+    [repoKey(WEB), read([wt("/p/web", "main", MAIN)])],
+    [repoKey(PERSONAL), read([wt("/p/blog", "main", MAIN), wt("/p/blog.x", "x", ACTIVE)])],
+    [repoKey(STRAY), read([wt("/x/tool", "main", MAIN), wt("/x/tool.y", "y", ACTIVE)])],
   ]);
   const chipsOf = (s: Snapshot) => buildView(s).chips.map((c) => [c.label, c.selected]);
 
@@ -550,8 +550,8 @@ describe("buildView: views", () => {
     snapshot({
       repos: [API, PERSONAL],
       lists: new Map([
-        [API.root, read(API_WORKTREES)],
-        [PERSONAL.root, blogList],
+        [repoKey(API), read(API_WORKTREES)],
+        [repoKey(PERSONAL), blogList],
       ]),
       ...more,
     });
@@ -623,7 +623,7 @@ describe("buildView: views", () => {
   test("an empty flat view says so", () => {
     const webOnly = {
       repos: [WEB],
-      lists: new Map([[WEB.root, read([wt("/p/web", "main", MAIN)])]]),
+      lists: new Map([[repoKey(WEB), read([wt("/p/web", "main", MAIN)])]]),
     };
     expect(buildView(show("conflict", { repos: [PERSONAL] })).body).toEqual({
       _tag: "Message",
@@ -666,8 +666,8 @@ describe("buildView: the All repos / With worktrees toggle", () => {
   test("the count read from wt list wins over the scan's", () => {
     const grown = read([wt("/p/web", "main", MAIN), wt("/p/web.x", "x", ACTIVE)]);
     const lists = new Map([
-      [API.root, read(API_WORKTREES)],
-      [WEB.root, grown],
+      [repoKey(API), read(API_WORKTREES)],
+      [repoKey(WEB), grown],
     ]);
     expect(names(withView({ only: true }, { lists }))).toEqual(["api", "web"]);
   });
@@ -744,7 +744,7 @@ describe("buildView: search", () => {
     const nested = read([wt("/w/api", "main", MAIN), wt("/w/api/.wt/feat", "feat", ACTIVE)]);
     const s = snapshot({
       repos: [API],
-      lists: new Map([[API.root, nested]]),
+      lists: new Map([[repoKey(API), nested]]),
       spaces: [space("s1", "/w/api/.wt/feat/src")],
       search: "main",
     });
@@ -763,7 +763,7 @@ describe("buildView: CI", () => {
     return read;
   };
   const withCi = (byPath: readonly (readonly [string, Ci])[], error: string | null = null) =>
-    snapshot({ ci: new Map([[API.root, ciRead(byPath, error)]]) });
+    snapshot({ ci: new Map([[repoKey(API), ciRead(byPath, error)]]) });
 
   test("each row shows its CI from the last CI read", () => {
     const s = withCi([
@@ -793,7 +793,7 @@ describe("buildView: CI", () => {
 
   test("CI that came with the list itself counts when there's no CI read", () => {
     const list = read([wt("/w/api", "main", MAIN, { ci: checks("passed") })]);
-    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    const s = snapshot({ lists: new Map([[repoKey(API), list]]) });
     expect(row(s, "/w/api").ci).toEqual(Option.some({ status: "passed", stale: false }));
   });
 
@@ -809,7 +809,7 @@ describe("buildView: CI", () => {
   test("flat rows carry CI too", () => {
     const s = snapshot({
       view: { ...DEFAULT_VIEW_STATE, show: "active" },
-      ci: new Map([[API.root, ciRead([["/w/api.new", checks("failed")]])]]),
+      ci: new Map([[repoKey(API), ciRead([["/w/api.new", checks("failed")]])]]),
     });
     const body = buildView(s).body;
     expect(body._tag === "Flat" && body.rows[0]?.ci).toEqual(

@@ -277,13 +277,15 @@ describe("findWorktree", () => {
     worktrees,
     error: Option.none(),
   });
+  /** The key of a folder on this machine. */
+  const hereKey = (folder: string) => repoKey({ machine: THIS_MACHINE, root: folder });
   const lists = new Map([
-    ["/r/app", list([wt("/r/app", "main", MAIN), FEAT])],
-    ["/r/lib", list([wt("/r/lib", "main", MAIN), wt("/r/lib.y", "y", MERGED)])],
+    [hereKey("/r/app"), list([wt("/r/app", "main", MAIN), FEAT])],
+    [hereKey("/r/lib"), list([wt("/r/lib", "main", MAIN), wt("/r/lib.y", "y", MERGED)])],
   ]);
 
   test("the worktree at a path, with its repo's machine and main checkout", () => {
-    expect(findWorktree(lists, "/r/lib.y")).toEqual(
+    expect(findWorktree(lists, hereKey("/r/lib.y"))).toEqual(
       Option.some({ machine: THIS_MACHINE, root: "/r/lib", worktree: wt("/r/lib.y", "y", MERGED) }),
     );
   });
@@ -299,12 +301,12 @@ describe("findWorktree", () => {
   });
 
   test("none for a path no list holds", () => {
-    expect(findWorktree(lists, "/r/nowhere")).toEqual(Option.none());
+    expect(findWorktree(lists, hereKey("/r/nowhere"))).toEqual(Option.none());
   });
 
   test("cleanupFor removes the merged worktrees among the paths, batched by repo", () => {
-    const more = new Map([...lists, ["/r/web", list([wt("/r/web.z", "z", MERGED)])]]);
-    expect(cleanupFor(more, ["/r/web.z", "/r/app.feat-x", "/r/lib.y"])).toEqual(
+    const more = new Map([...lists, [hereKey("/r/web"), list([wt("/r/web.z", "z", MERGED)])]]);
+    expect(cleanupFor(more, ["/r/web.z", "/r/app.feat-x", "/r/lib.y"].map(hereKey))).toEqual(
       Option.some({
         _tag: "Cleanup",
         batches: [
@@ -321,7 +323,7 @@ describe("findWorktree", () => {
       [repoKey({ machine: THIS_MACHINE, root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
       [repoKey({ machine: "linux", root: "/srv/api" }), list([wt("/srv/api.z", "z", MERGED)])],
     ]);
-    const keys = ["/r/lib.y", repoKey({ machine: "linux", root: "/srv/api.z" })];
+    const keys = [hereKey("/r/lib.y"), repoKey({ machine: "linux", root: "/srv/api.z" })];
     const batches = Option.map(cleanupFor(two, keys), (a) => a.batches.map((b) => b.machine));
     expect(batches).toEqual(Option.some([THIS_MACHINE, "linux"]));
   });
@@ -331,7 +333,7 @@ describe("findWorktree", () => {
       [repoKey({ machine: THIS_MACHINE, root: "/r/lib" }), list([wt("/r/lib.y", "y", MERGED)])],
       [repoKey({ machine: "linux", root: "/r/lib" }), list([wt("/r/lib.z", "z", MERGED)])],
     ]);
-    const keys = ["/r/lib.y", repoKey({ machine: "linux", root: "/r/lib.z" })];
+    const keys = [hereKey("/r/lib.y"), repoKey({ machine: "linux", root: "/r/lib.z" })];
     const batches = Option.map(cleanupFor(two, keys), (a) => a.batches);
     expect(batches).toEqual(
       Option.some([
@@ -342,7 +344,7 @@ describe("findWorktree", () => {
   });
 
   test("cleanupFor is none with no merged worktree among the paths", () => {
-    expect(cleanupFor(lists, ["/r/app.feat-x", "/r/nowhere"])).toEqual(Option.none());
+    expect(cleanupFor(lists, ["/r/app.feat-x", "/r/nowhere"].map(hereKey))).toEqual(Option.none());
   });
 });
 

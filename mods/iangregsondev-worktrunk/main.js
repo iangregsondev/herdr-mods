@@ -9651,6 +9651,31 @@ const fnUntraced = fnUntraced$1;
 */
 const fn = fn$1;
 
+// ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Brand.js
+/**
+* Returns a `Constructor` that **does not apply any runtime checks** and just
+* returns the provided value.
+*
+* **When to use**
+*
+* Use to create nominal types that allow distinguishing between two values
+* of the same type but with different meanings.
+*
+* @see {@link make} for constructing branded values with validation.
+* @see {@link check} for constructing branded values from schema checks.
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+function nominal() {
+	return Object.assign((input) => input, {
+		option: (input) => some(input),
+		result: (input) => succeed$3(input),
+		is: (_) => true
+	});
+}
+
 // ../../packages/worktrunk-mailbox/src/files.ts
 /** There is no file at `path`. */
 var FileMissing = class extends TaggedError("FileMissing") {};
@@ -9798,12 +9823,13 @@ const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 const THIS_MACHINE = null;
 /** What the panel calls `machine`: Herdr's name for it, or "this machine". */
 const machineName = (machine) => machine ?? "this machine";
+const RepoKey = nominal();
 /**
 * The key a repo is kept under (lists, CI, folded state): its folder on this machine, else
 * `<machine>:<folder>`. A folder is absolute, so no key from another machine starts with
 * `/` the way this machine's do.
 */
-const repoKey = (repo) => repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`;
+const repoKey = (repo) => RepoKey(repo.machine === null ? repo.root : `${repo.machine}:${repo.root}`);
 /**
 * The repo a `repoKey` names. Herdr's machine names never hold `/` (its ids use
 * `<machine>/` as a prefix), so the first `/` starts the folder.
