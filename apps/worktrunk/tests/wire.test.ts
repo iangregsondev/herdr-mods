@@ -134,6 +134,16 @@ describe("readAction", () => {
     expect(readAction(overTheWire(action))).toEqual(Option.some(action));
   });
 
+  test.each([
+    { _tag: "GoTo", machine: THIS_MACHINE, folder: "/r/app.feat", name: "feat" },
+    { _tag: "GoTo", machine: "linux", folder: "/srv/app.feat", name: "feat" },
+  ] as const)(
+    "reads back a GoTo on machine $machine, as the worktree picker sends it",
+    (action) => {
+      expect(readAction(overTheWire(action))).toEqual(Option.some(action));
+    },
+  );
+
   test("a Create that names no machine is on this machine", () => {
     expect(readAction({ _tag: "Create", main: "/r/app", name: "feat", base: null })).toEqual(
       Option.some({
@@ -296,14 +306,21 @@ describe("readTitlebarProps", () => {
 });
 
 describe("readDialogProps", () => {
-  test("the repo, the branch I'm on and the repos to pick from; a repo that isn't text is left out", () => {
+  test("the repo, the branch I'm on and the repos to pick from; a repo with no folder is left out", () => {
+    const app = { machine: THIS_MACHINE, root: "/r/app" };
     expect(
-      readDialogProps({ role: "new", repo: "/r/app", branch: "feat/a", repos: ["/r/app", 3] }),
-    ).toEqual({ repo: Option.some("/r/app"), branch: Option.some("feat/a"), repos: ["/r/app"] });
+      readDialogProps({ role: "new", repo: app, branch: "feat/a", repos: [app, { root: 3 }] }),
+    ).toEqual({
+      mode: "new",
+      repo: Option.some(app),
+      branch: Option.some("feat/a"),
+      repos: [app],
+    });
   });
 
   test("anything missing or of the wrong type reads as none", () => {
-    expect(readDialogProps({ repo: null, branch: 7, repos: "/r/app" })).toEqual({
+    expect(readDialogProps({ mode: "edit", repo: null, branch: 7, repos: "/r/app" })).toEqual({
+      mode: "new",
       repo: Option.none(),
       branch: Option.none(),
       repos: [],
@@ -341,7 +358,12 @@ describe("overlay props writers", () => {
       Option.some("titlebar"),
       { title: "Merge feat", addr: Option.some("t1") },
     ]);
-    const opened = { repo: Option.some("/r/app"), branch: Option.none(), repos: ["/r/app"] };
+    const opened = {
+      mode: "new" as const,
+      repo: Option.some({ machine: THIS_MACHINE, root: "/r/app" }),
+      branch: Option.none(),
+      repos: [{ machine: THIS_MACHINE, root: "/r/app" }],
+    };
     const dialog = overTheWire(dialogProps(opened));
     expect([roleOf(dialog), readDialogProps(dialog)]).toEqual([Option.some("new"), opened]);
     const settings = overTheWire(settingsProps('{ "depth": 3 }'));

@@ -41,13 +41,16 @@ import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import {
   flippedBase,
   highlight,
+  dialogTitle,
   linesFor,
   moved,
   openDialog,
+  repoHint,
   pick,
   retyped,
   withRead,
   type Base,
+  type DialogMode,
   type DialogState,
   type Line,
 } from "./dialog.ts";
@@ -92,6 +95,7 @@ import {
   dialogHeight,
   findWorktree,
   jobsFor,
+  spaceStep,
   menuHeight,
   repoMenu,
   rowMenu,
@@ -150,7 +154,6 @@ import {
   clickCommand,
   focusedFolder,
   goTo,
-  placeOf,
   spaceGroups,
   spacePlaces,
   spacesInGone,
@@ -585,28 +588,19 @@ export default class Worktrunk extends View {
   }
 
   /**
-   * Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
-   * offering the branch that folder is on as a base. Outside every repo, the dialog asks
-   * for one of the repos the panel lists.
+   * Opens the worktree dialog in `mode` for the repo `folder` is in, on its machine (none:
+   * the focused folder), offering the branch that folder is on as a base. Outside every
+   * repo, the dialog asks for one of the repos the panel lists, on any machine.
    */
-  openNewOrOpen(cx: AsyncContext, folder: string | null) {
+  openNewOrOpen(cx: AsyncContext, folder: Option.Option<Located>, mode: DialogMode = "new") {
     const places = spacePlaces(spaces(), panes());
-    // The dialog and the job it starts act on this machine, so a focused folder elsewhere
-    // counts as none, and it offers only this machine's repos.
-    const at =
-      folder ??
-      Option.getOrElse(
-        Option.map(
-          Option.filter(focusedFolder(focused(), places), (f) => f.machine === THIS_MACHINE),
-          (f) => f.folder,
-        ),
-        () => "",
-      );
-    const listed = this.repos
-      .filter((repo) => repo.machine === THIS_MACHINE)
-      .map((repo) => repo.root);
+    const at: Located = Option.getOrElse(
+      Option.orElse(folder, () => focusedFolder(focused(), places)),
+      (): Located => ({ machine: THIS_MACHINE, folder: "" }),
+    );
+    const listed = this.repos.map(({ machine, root }): RepoId => ({ machine, root }));
     cx.spawn(async () => {
-      const opened = await runEdge(dialogFor(at, listed), Result.fail);
+      const opened = await runEdge(dialogFor(at, listed, mode), Result.fail);
       Result.match(opened, {
         onSuccess: (props) =>
           Option.match(props, {
@@ -653,9 +647,7 @@ export default class Worktrunk extends View {
         const state = openDialog(readDialogProps(ownProps()));
         const dialog: NewDialog = { state, input: this.newInput(() => dialog, state) };
         this.copy = { _tag: "New", dialog };
-        Option.map(state.repo, (root) =>
-          this.readDialogRepo(cx, dialog, { machine: THIS_MACHINE, root }),
-        );
+        Option.map(state.repo, (repo) => this.readDialogRepo(cx, dialog, repo));
         return;
       }
     }
@@ -664,7 +656,11 @@ export default class Worktrunk extends View {
   /** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
   newInput(dialog: () => NewDialog, state: DialogState): InputState {
     const input = InputState.new({
-      placeholder: Option.isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link",
+      placeholder: Option.isNone(state.repo)
+        ? "Repo name"
+        : state.mode === "open"
+          ? "Worktree's branch"
+          : "Branch name, pr:123 or a PR link",
     });
     input.on("change", (_event, cx) => {
       dialog().state = retyped(dialog().state);
@@ -698,7 +694,7 @@ export default class Worktrunk extends View {
       case "ReadRepo":
         dialog.state = picked.state;
         dialog.input = this.newInput(() => dialog, picked.state);
-        this.readDialogRepo(cx, dialog, { machine: THIS_MACHINE, root: picked.root });
+        this.readDialogRepo(cx, dialog, picked.repo);
         cx.notify();
         return;
       case "Send":
@@ -836,7 +832,17 @@ export default class Worktrunk extends View {
         });
         return;
       case "NewOrOpen":
-        return this.openNewOrOpen(cx, action.folder);
+        return this.openNewOrOpen(
+          cx,
+          Option.map(Option.fromNullishOr(action.folder), (folder): Located => ({
+            machine: THIS_MACHINE,
+            folder,
+          })),
+        );
+      case "GoTo":
+        return onClickRow(goTo(spacePlaces(spaces(), panes()), action));
+      case "NewOrOpenAt":
+        return this.openNewOrOpen(cx, Option.some(action.at));
       case "SpaceWorktree":
         return this.forSpace(cx, action.space, action.act);
       case "Focus":
@@ -874,16 +880,18 @@ export default class Worktrunk extends View {
   forSpace(cx: AsyncContext, space: string, act: SpaceAct) {
     const warn = (body: string) =>
       notify({ title: "No worktree to act on", body, level: "warning" });
-    // Merge, Remove and the dialog act on this machine, so only its spaces have a place here.
-    const here = spacePlaces(spaces(), panes()).filter((p) => p.machine === THIS_MACHINE);
-    const found = placeOf(here, space);
-    if (Option.isNone(found)) return warn("That space has no folder on this machine.");
-    const place = found.value;
-    if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
-    cx.spawn(async () => {
-      const asked = await runEdge(spaceWorktree(act, place), Result.fail);
-      Result.match(asked, { onSuccess: ask, onFailure: warn });
-    });
+    const step = spaceStep(spacePlaces(spaces(), panes()), space, act);
+    switch (step._tag) {
+      case "NoFolder":
+        return warn("That space has no folder.");
+      case "Dialog":
+        return this.openNewOrOpen(cx, Option.some(step.at), step.mode);
+      case "Act":
+        cx.spawn(async () => {
+          const asked = await runEdge(spaceWorktree(step.act, step.at), Result.fail);
+          Result.match(asked, { onSuccess: ask, onFailure: warn });
+        });
+    }
   }
 
   /** Busy with another job: says so and gives true. */
@@ -1431,16 +1439,14 @@ export default class Worktrunk extends View {
     const lines = linesFor(state, dialog.input.value());
     const at = highlight(state, lines);
     const picking = Option.isNone(state.repo);
-    const title = Option.match(state.repo, {
-      onNone: () => "New or open worktree: pick a repo",
-      onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`,
-    });
+    const opening = state.mode === "open";
+    const title = dialogTitle(state);
     const describe = (line: Line): readonly [string, string] => {
       switch (line._tag) {
         case "Repo":
-          return [lastSegment(line.root), tildePath(line.root, home())];
+          return [lastSegment(line.repo.root), repoHint(line.repo, home())];
         case "Worktree":
-          return [line.branch, "open worktree"];
+          return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
         case "Branch":
           return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
         case "Typed":
@@ -1477,7 +1483,9 @@ export default class Worktrunk extends View {
       ? "No repo matches."
       : state.reading
         ? "Reading worktrees and branches…"
-        : "Type a branch name to create it.";
+        : opening
+          ? "No worktree matches."
+          : "Type a branch name to create it.";
     const baseOption = (key: Base, label: string) =>
       h_flex()
         .id(`base-${key}`)
@@ -1552,7 +1560,7 @@ export default class Worktrunk extends View {
             div().text_size(sizes.label).text_color(t.ansi1).child(error),
           ),
         )
-        .when(!picking, (el) =>
+        .when(!picking && !opening, (el) =>
           el.child(
             h_flex()
               .w_full()
@@ -1576,7 +1584,9 @@ export default class Worktrunk extends View {
             .child(
               picking
                 ? "↑↓ choose · Enter picks the repo · Esc closes"
-                : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
+                : opening
+                  ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes"
+                  : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes",
             ),
         ),
     );

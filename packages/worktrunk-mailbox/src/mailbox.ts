@@ -9,11 +9,15 @@ import { findModBlock } from "./layout.ts";
 /** The shared-state key the panel of the worktrunk mod `panelMod` reads requests from. */
 export const requestKey = (panelMod: string): string => `${panelMod}.request.v1`;
 
-/** What to do with a space's worktree, asked of the panel from a space's menu. */
-export type SpaceAct = "NewOrOpen" | "Merge" | "Remove";
+/**
+ * What to do with a space's worktree, asked of the panel from a space's menu: open the
+ * New-or-open dialog for its repo, pick one of its repo's worktrees to go to, or merge or
+ * remove it.
+ */
+export type SpaceAct = "NewOrOpen" | "Open" | "Merge" | "Remove";
 
 /** Every SpaceAct, for readers of a request. */
-export const SPACE_ACTS: readonly SpaceAct[] = ["NewOrOpen", "Merge", "Remove"];
+export const SPACE_ACTS: readonly SpaceAct[] = ["NewOrOpen", "Open", "Merge", "Remove"];
 
 /**
  * The requests another mod (the menus mod's items in Herdr's menus) posts. The panel's

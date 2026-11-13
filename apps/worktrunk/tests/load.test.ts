@@ -551,6 +551,8 @@ const lookups = (answers: {
   readonly list?: string;
 }) => {
   const ran: (readonly string[])[] = [];
+  /** The machine each lookup ran on, in order: null for this one. */
+  const on: (string | null)[] = [];
   const which = (body: string) =>
     body.includes("git-common-dir")
       ? "owners"
@@ -563,9 +565,10 @@ const lookups = (answers: {
             : "?";
   const api: ExecApi = {
     hc: noHc,
-    exec: (_command, args = []) => {
+    exec: (_command, args = [], options) => {
       const name = which(args[1] ?? "");
       ran.push([name, ...args.slice(3)]);
+      on.push(options?.on ?? null);
       const stdout = name === "?" ? undefined : answers[name];
       return Promise.resolve(
         stdout === undefined
@@ -574,23 +577,25 @@ const lookups = (answers: {
       );
     },
   };
-  return { api, ran };
+  return { api, ran, on };
 };
 
 describe("dialogFor", () => {
   it.effect("the focused folder's repo, the branch it is on, and the repos by folder name", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({ owners: "/r/api\t2\n", branch: "feat/a\n" });
-      const opened = yield* dialogFor("/r/api.feat", ["/w/web", "/r/api", "/p/app"]).pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const opened = yield* dialogFor(
+        { machine: THIS_MACHINE, folder: "/r/api.feat" },
+        ["/w/web", "/r/api", "/p/app"].map(here),
+      ).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(
         opened,
         Result.succeed(
           Option.some({
-            repo: Option.some("/r/api"),
+            mode: "new",
+            repo: Option.some(here("/r/api")),
             branch: Option.some("feat/a"),
-            repos: ["/r/api", "/p/app", "/w/web"],
+            repos: ["/r/api", "/p/app", "/w/web"].map(here),
           }),
         ),
       );
@@ -601,15 +606,45 @@ describe("dialogFor", () => {
     }),
   );
 
+  it.effect("a folder on another machine: its repo and branch are looked up there", () =>
+    Effect.gen(function* () {
+      const { api, on } = lookups({ owners: "/srv/api\t2\n", branch: "fix/b\n" });
+      const opened = yield* dialogFor({ machine: "linux", folder: "/srv/api.fix" }, []).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [opened, on],
+        [
+          Result.succeed(
+            Option.some({
+              mode: "new",
+              repo: Option.some({ machine: "linux", root: "/srv/api" }),
+              branch: Option.some("fix/b"),
+              repos: [],
+            }),
+          ),
+          ["linux", "linux"],
+        ],
+      );
+    }),
+  );
+
   it.effect("outside every repo: no repo, no branch looked up, and the repos to pick from", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({ owners: "" });
-      const opened = yield* dialogFor("/tmp", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      const opened = yield* dialogFor({ machine: THIS_MACHINE, folder: "/tmp" }, [
+        here("/r/web"),
+      ]).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(
         [opened, ran],
         [
           Result.succeed(
-            Option.some({ repo: Option.none(), branch: Option.none(), repos: ["/r/web"] }),
+            Option.some({
+              mode: "new",
+              repo: Option.none(),
+              branch: Option.none(),
+              repos: [here("/r/web")],
+            }),
           ),
           [["owners", "/tmp"]],
         ],
@@ -620,7 +655,9 @@ describe("dialogFor", () => {
   it.effect("no repo there and none listed: no dialog", () =>
     Effect.gen(function* () {
       const { api } = lookups({ owners: "" });
-      const opened = yield* dialogFor("/tmp", []).pipe(Effect.provide(Shell.layer(api)));
+      const opened = yield* dialogFor({ machine: THIS_MACHINE, folder: "/tmp" }, []).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(opened, Result.succeed(Option.none()));
     }),
   );
@@ -628,12 +665,19 @@ describe("dialogFor", () => {
   it.effect("no focused folder: looks nothing up, and asks for a repo", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({});
-      const opened = yield* dialogFor("", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      const opened = yield* dialogFor({ machine: THIS_MACHINE, folder: "" }, [here("/r/web")]).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(
         [opened, ran],
         [
           Result.succeed(
-            Option.some({ repo: Option.none(), branch: Option.none(), repos: ["/r/web"] }),
+            Option.some({
+              mode: "new",
+              repo: Option.none(),
+              branch: Option.none(),
+              repos: [here("/r/web")],
+            }),
           ),
           [],
         ],
@@ -644,7 +688,9 @@ describe("dialogFor", () => {
   it.effect("a repo lookup that fails is its one-line reason, not a guess", () =>
     Effect.gen(function* () {
       const { api } = lookups({});
-      const opened = yield* dialogFor("/r/api", ["/r/web"]).pipe(Effect.provide(Shell.layer(api)));
+      const opened = yield* dialogFor({ machine: THIS_MACHINE, folder: "/r/api" }, [
+        here("/r/web"),
+      ]).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(opened, Result.fail("no owners"));
     }),
   );
@@ -652,7 +698,9 @@ describe("dialogFor", () => {
   it.effect("a branch lookup that fails is its one-line reason", () =>
     Effect.gen(function* () {
       const { api } = lookups({ owners: "/r/api\t2\n" });
-      const opened = yield* dialogFor("/r/api", []).pipe(Effect.provide(Shell.layer(api)));
+      const opened = yield* dialogFor({ machine: THIS_MACHINE, folder: "/r/api" }, []).pipe(
+        Effect.provide(Shell.layer(api)),
+      );
       assert.deepStrictEqual(opened, Result.fail("no branch"));
     }),
   );
@@ -689,9 +737,10 @@ describe("spaceWorktree", () => {
   it.effect("merges the worktree a space's folder is in, from its repo's list read now", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({ owners: "/work/repo\t15\n", list: states });
-      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead/src").pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const asked = yield* spaceWorktree("Merge", {
+        machine: THIS_MACHINE,
+        folder: "/work/repo.ahead/src",
+      }).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(
         [asked, ran.map(([name]) => name)],
         [
@@ -712,12 +761,41 @@ describe("spaceWorktree", () => {
     }),
   );
 
+  it.effect(
+    "a space on another machine: its repo and list are read there, and acted on there",
+    () =>
+      Effect.gen(function* () {
+        const { api, on } = lookups({ owners: "/work/repo\t15\n", list: states });
+        const asked = yield* spaceWorktree("Remove", {
+          machine: "linux",
+          folder: "/work/repo.ahead",
+        }).pipe(Effect.provide(Shell.layer(api)));
+        assert.deepStrictEqual(
+          [asked, on],
+          [
+            Result.succeed({
+              _tag: "Remove",
+              target: {
+                machine: "linux",
+                main: "/work/repo",
+                path: "/work/repo.ahead",
+                branch: "ahead",
+              },
+              dirty: false,
+            }),
+            ["linux", "linux"],
+          ],
+        );
+      }),
+  );
+
   it.effect("a folder outside every repo says so, and reads no list", () =>
     Effect.gen(function* () {
       const { api, ran } = lookups({ owners: "", list: states });
-      const asked = yield* spaceWorktree("Remove", "/tmp/notes").pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const asked = yield* spaceWorktree("Remove", {
+        machine: THIS_MACHINE,
+        folder: "/tmp/notes",
+      }).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(
         [asked, ran.map(([name]) => name)],
         [Result.fail("/tmp/notes isn't in a git repo."), ["owners"]],
@@ -728,9 +806,10 @@ describe("spaceWorktree", () => {
   it.effect("a repo lookup that fails is its one-line reason", () =>
     Effect.gen(function* () {
       const { api } = lookups({ list: states });
-      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead").pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const asked = yield* spaceWorktree("Merge", {
+        machine: THIS_MACHINE,
+        folder: "/work/repo.ahead",
+      }).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(asked, Result.fail("no owners"));
     }),
   );
@@ -738,9 +817,10 @@ describe("spaceWorktree", () => {
   it.effect("a list that can't be read is its one-line reason", () =>
     Effect.gen(function* () {
       const { api } = lookups({ owners: "/work/repo\t15\n" });
-      const asked = yield* spaceWorktree("Merge", "/work/repo.ahead").pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const asked = yield* spaceWorktree("Merge", {
+        machine: THIS_MACHINE,
+        folder: "/work/repo.ahead",
+      }).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(asked, Result.fail("no list"));
     }),
   );
@@ -748,9 +828,10 @@ describe("spaceWorktree", () => {
   it.effect("the main checkout's space is refused with the reason", () =>
     Effect.gen(function* () {
       const { api } = lookups({ owners: "/work/repo\t15\n", list: states });
-      const asked = yield* spaceWorktree("Remove", "/work/repo").pipe(
-        Effect.provide(Shell.layer(api)),
-      );
+      const asked = yield* spaceWorktree("Remove", {
+        machine: THIS_MACHINE,
+        folder: "/work/repo",
+      }).pipe(Effect.provide(Shell.layer(api)));
       assert.deepStrictEqual(
         asked,
         Result.fail("repo's main checkout can't be merged or removed."),

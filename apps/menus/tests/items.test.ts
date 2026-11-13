@@ -22,25 +22,27 @@ const herdrSpaceItems = (git: string | null): Item[] => [
 const labels = (list: readonly Item[]) => list.map((item) => item[0]);
 
 describe("withWorktrunkItems", () => {
-  test("a space on a linked worktree: all three ours, just after Herdr's worktree items", () => {
+  test("a space on a linked worktree: all four ours, just after Herdr's worktree items", () => {
     expect(labels(withWorktrunkItems(herdrSpaceItems("linked"), SPACE, "linked"))).toEqual([
       "Rename",
       "New worktree",
       "Open worktree",
       "Remove worktree",
-      "Worktree (wt)…",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
       "Merge into main (wt)…",
       "Remove worktree (wt)…",
       "Close",
     ]);
   });
 
-  test("a space on a repo's main checkout: only Worktree (wt)…", () => {
+  test("a space on a repo's main checkout: only New and Open worktree (wt)…", () => {
     expect(labels(withWorktrunkItems(herdrSpaceItems("main"), SPACE, "main"))).toEqual([
       "Rename",
       "New worktree",
       "Open worktree",
-      "Worktree (wt)…",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
       "Close",
     ]);
   });
@@ -56,14 +58,19 @@ describe("withWorktrunkItems", () => {
     ];
     expect(labels(withWorktrunkItems(plain, SPACE, "main"))).toEqual([
       "Rename",
-      "Worktree (wt)…",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
       "Close",
     ]);
   });
 
   test("with neither worktree items nor Close, ours go last", () => {
     const bare: Item[] = [["Rename", "space.rename", { id: "sp1" }]];
-    expect(labels(withWorktrunkItems(bare, SPACE, "main"))).toEqual(["Rename", "Worktree (wt)…"]);
+    expect(labels(withWorktrunkItems(bare, SPACE, "main"))).toEqual([
+      "Rename",
+      "New worktree (wt)…",
+      "Open worktree (wt)…",
+    ]);
   });
 
   test("menus for tabs, panes and the window are left alone", () => {
@@ -86,7 +93,7 @@ describe("withWorktrunkItems", () => {
     const ours = withWorktrunkItems(herdrSpaceItems("linked"), SPACE, "linked").filter((item) =>
       item[0].endsWith("(wt)…"),
     );
-    expect(ours.map((item) => item[1])).toEqual(["worktree", "worktree", "worktree"]);
+    expect(ours.map((item) => item[1])).toEqual(["worktree", "worktree", "worktree", "worktree"]);
   });
 });
 
@@ -99,6 +106,7 @@ describe("requestOf", () => {
   test("each of our items asks the worktrunk panel to act on its space", () => {
     expect(ours("linked").map(requestOf)).toEqual([
       Option.some({ _tag: "SpaceWorktree", space: "sp1", act: "NewOrOpen" }),
+      Option.some({ _tag: "SpaceWorktree", space: "sp1", act: "Open" }),
       Option.some({ _tag: "SpaceWorktree", space: "sp1", act: "Merge" }),
       Option.some({ _tag: "SpaceWorktree", space: "sp1", act: "Remove" }),
     ]);

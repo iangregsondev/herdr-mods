@@ -9551,6 +9551,7 @@ const requestKey = (panelMod) => `${panelMod}.request.v1`;
 /** Every SpaceAct, for readers of a request. */
 const SPACE_ACTS = [
 	"NewOrOpen",
+	"Open",
 	"Merge",
 	"Remove"
 ];
@@ -10142,19 +10143,20 @@ const rank = (name, query) => {
 const choiceName = (choice) => choice._tag === "Worktree" ? choice.branch : choice.name;
 /**
 * What Enter asks the panel to run: switch to or create the choice's branch in the repo
-* at `main`. `current` is the branch I'm on; with none, the default branch is the base.
+* `repo`. `current` is the branch I'm on; with none, the default branch is the base.
 */
-const enterAction = (main, choice, base, current) => ({
+const enterAction = (repo, choice, base, current) => ({
 	_tag: "Create",
-	machine: null,
-	main,
+	machine: repo.machine,
+	main: repo.root,
 	name: choiceName(choice),
 	base: base === "current" ? getOrNull(current) : null
 });
-/** The repos (main checkouts) whose folder name matches the typed text, best first. */
-const reposFor = (typed, repos) => ranked(repos, lastSegment, typed.trim().toLowerCase());
+/** The repos whose main checkout's folder name matches the typed text, best first. */
+const reposFor = (typed, repos) => ranked(repos, (repo) => lastSegment(repo.root), typed.trim().toLowerCase());
 /** The dialog as it opens with `props`: reading its repo, unless it must ask for one. */
 const openDialog = (props) => ({
+	mode: props.mode,
 	repo: props.repo,
 	current: props.branch,
 	repos: props.repos,
@@ -10167,13 +10169,19 @@ const openDialog = (props) => ({
 });
 /** The most lines the dialog lists. */
 const LINE_LIMIT = 50;
-/** The dialog's lines for the typed text: repos while it asks for one, else choices. */
+/** The worktrees whose branch matches the typed text, best first, at most `limit`. */
+const worktreesFor = (typed, worktrees, limit) => ranked(candidates(worktrees, []), choiceName, typed.trim().toLowerCase()).slice(0, Math.max(0, limit));
+/**
+* The dialog's lines for the typed text: repos while it asks for one, else choices: the
+* repo's worktrees when picking one to open, else worktrees and branches to switch to or
+* create.
+*/
 const linesFor = (state, typed) => match$5(state.repo, {
-	onNone: () => reposFor(typed, state.repos).map((root) => ({
+	onNone: () => reposFor(typed, state.repos).map((repo) => ({
 		_tag: "Repo",
-		root
+		repo
 	})),
-	onSome: () => choicesFor(typed, state.worktrees, state.branches, 50)
+	onSome: () => state.mode === "open" ? worktreesFor(typed, state.worktrees, 50) : choicesFor(typed, state.worktrees, state.branches, 50)
 });
 /**
 * The dialog once its repo is read: the worktrees and branches, each read's failure
@@ -10212,10 +10220,10 @@ const pick = (state, line) => {
 	const taken = line.value;
 	if (taken._tag === "Repo") return {
 		_tag: "ReadRepo",
-		root: taken.root,
+		repo: taken.repo,
 		state: {
 			...state,
-			repo: some(taken.root),
+			repo: some(taken.repo),
 			current: none(),
 			reading: true,
 			at: 0
@@ -10223,12 +10231,28 @@ const pick = (state, line) => {
 	};
 	return match$5(state.repo, {
 		onNone: () => ({ _tag: "Nothing" }),
-		onSome: (main) => ({
+		onSome: (repo) => ({
 			_tag: "Send",
-			action: enterAction(main, taken, state.base, state.current)
+			action: state.mode === "open" && taken._tag === "Worktree" ? {
+				_tag: "GoTo",
+				machine: repo.machine,
+				folder: taken.path,
+				name: taken.branch
+			} : enterAction(repo, taken, state.base, state.current)
 		})
 	});
 };
+/** The dialog's title: what it is for, and the repo and machine it works in. */
+const dialogTitle = (state) => {
+	const what = state.mode === "open" ? "Open a worktree" : "New or open worktree";
+	const where = state.mode === "open" ? "of" : "in";
+	return match$5(state.repo, {
+		onNone: () => `${what}: pick a repo`,
+		onSome: ({ machine, root }) => `${what} ${where} ${lastSegment(root)}${machine === null ? "" : ` on ${machine}`}`
+	});
+};
+/** The hint beside a repo the dialog offers: where it is, and on which machine. */
+const repoHint = ({ machine, root }, home) => machine === null ? tildePath(root, home) : `${machine}: ${root}`;
 
 // src/keys.ts
 const IGNORE = { _tag: "Ignore" };
@@ -10430,8 +10454,11 @@ const cleanupAction = (repos) => {
 /** The right-click menu of `repo`. */
 const repoMenu = ({ machine, root }, worktrees) => [
 	item("New or open worktree…", {
-		_tag: "NewOrOpen",
-		folder: root
+		_tag: "NewOrOpenAt",
+		at: {
+			machine,
+			folder: root
+		}
 	}),
 	...toArray(cleanupAction([{
 		machine,
@@ -10565,6 +10592,33 @@ const jobsFor = (action, options) => {
 const busyNotice = (running) => ({
 	title: "worktrunk is busy",
 	body: `Wait for "${running}" to finish.`
+});
+/** The step for `act` on the space `space`, from where every space is now (`places`). */
+const spaceStep = (places, space, act) => match$5(fromNullishOr(places.find((p) => p.space.id === space)), {
+	onNone: () => ({ _tag: "NoFolder" }),
+	onSome: ({ machine, place }) => {
+		const at = {
+			machine,
+			folder: place
+		};
+		switch (act) {
+			case "NewOrOpen": return {
+				_tag: "Dialog",
+				mode: "new",
+				at
+			};
+			case "Open": return {
+				_tag: "Dialog",
+				mode: "open",
+				at
+			};
+			default: return {
+				_tag: "Act",
+				act,
+				at
+			};
+		}
+	}
 });
 
 // src/sync.ts
@@ -10950,17 +11004,21 @@ const lookUpCurrent = fn("lookUpCurrent")(function* (focused) {
 	return yield* repoAt(focused.folder, focused.machine);
 }, asReason);
 /**
-* What the New-or-open dialog opens with, for the repo `folder` (the focused folder when
-* empty for none) is in: that repo and the branch the folder is on, and the `listed`
-* repos to pick from, by folder name. None when there is no repo at all. A lookup that
-* fails is its one-line reason.
+* What the worktree dialog in `mode` opens with, for the repo `at` (a folder on a
+* machine; an empty folder for none) is in: that repo and the branch the folder is on,
+* and the `listed` repos to pick from, by folder name. None when there is no repo at
+* all. A lookup that fails is its one-line reason.
 */
-const dialogFor = fn("dialogFor")(function* (folder, listed) {
-	const found = yield* repoAt(folder);
-	const branch = isSome(found) ? yield* branchAt(folder) : none();
-	const repos = [...listed].sort((a, b) => lastSegment(a).localeCompare(lastSegment(b)));
+const dialogFor = fn("dialogFor")(function* ({ machine, folder }, listed, mode = "new") {
+	const found = yield* repoAt(folder, machine);
+	const branch = isSome(found) ? yield* branchAt(folder, machine) : none();
+	const repos = [...listed].sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
 	const props = {
-		repo: map$3(found, (repo) => repo.root),
+		mode,
+		repo: map$3(found, ({ machine, root }) => ({
+			machine,
+			root
+		})),
 		branch,
 		repos
 	};
@@ -10981,17 +11039,18 @@ const readList = fn("readList")(function* (repo) {
 }, asReason);
 /**
 * The Merge or Remove a space's menu asks for, of the worktree the space's folder
-* `folder` is in: found through its repo and that repo's list, read now, since the panel
-* may not list the repo (hidden, or outside the group folders). A failure, or a worktree
-* that can't be merged or removed, is its one-line reason.
+* `folder` is in on `machine`: found through its repo and that repo's list, read now on
+* that machine, since the panel may not list the repo (hidden, or outside the group
+* folders). A failure, or a worktree that can't be merged or removed, is its one-line
+* reason.
 */
-const spaceWorktree = (act, folder) => holderRepo(folder).pipe(map(flatMap$2(match$5({
+const spaceWorktree = (act, { machine, folder }) => holderRepo(folder, machine).pipe(map(flatMap$2(match$5({
 	onNone: () => fail$2(`${folder} isn't in a git repo.`),
 	onSome: ({ repo, worktrees }) => spaceWorktreeAction(act, repo, worktrees, folder)
 }))));
-/** The repo `folder` is in, with its worktrees; none outside every repo. */
-const holderRepo = fn("holderRepo")(function* (folder) {
-	const found = yield* repoAt(folder);
+/** The repo `folder` on `machine` is in, with its worktrees; none outside every repo. */
+const holderRepo = fn("holderRepo")(function* (folder, machine) {
+	const found = yield* repoAt(folder, machine);
 	if (isNone(found)) return none();
 	const worktrees = yield* wtList(found.value);
 	return some({
@@ -11383,8 +11442,6 @@ const spacePlaces = (spaces, panes) => spaces.flatMap((space) => {
 		place
 	}] : [];
 });
-/** Where the space `id` is now; none for a space with no place here. */
-const placeOf = (places, id) => fromNullishOr(places.find((p) => p.space.id === id)?.place);
 /**
 * The space on each of the worktree paths on `machine`. Only spaces on that machine
 * count: a folder of the same path elsewhere is another folder. A space sits on the
@@ -11867,8 +11924,25 @@ const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).f
 const oneOf = (options) => (value) => fromNullishOr(options.find((option) => option === value));
 const readMode = oneOf(["squash", "keep"]);
 const readAct = oneOf(SPACE_ACTS);
+const readDialogMode = oneOf(["new", "open"]);
 /** The machine a value names; no machine named is this machine. */
 const readMachine = (value) => getOrNull(text(value));
+/** A folder, and the machine it is on. */
+const readLocated = (value) => {
+	const f = fields(value);
+	return map$3(text(f.folder), (folder) => ({
+		machine: readMachine(f.machine),
+		folder
+	}));
+};
+/** A repo: its main checkout's folder, and the machine it is on. */
+const readRepoId = (value) => {
+	const f = fields(value);
+	return map$3(text(f.root), (root) => ({
+		machine: readMachine(f.machine),
+		root
+	}));
+};
 const readClick = (value) => {
 	const f = fields(value);
 	switch (f._tag) {
@@ -11950,6 +12024,18 @@ const readAction = (value) => {
 			_tag: "NewOrOpen",
 			folder
 		}));
+		case "GoTo": return map$3(all$2({
+			folder: text(f.folder),
+			name: text(f.name)
+		}), (go) => ({
+			_tag: "GoTo",
+			...go,
+			machine: readMachine(f.machine)
+		}));
+		case "NewOrOpenAt": return map$3(readLocated(f.at), (at) => ({
+			_tag: "NewOrOpenAt",
+			at
+		}));
 		case "Create": return map$3(all$2({
 			main: text(f.main),
 			name: text(f.name),
@@ -12026,9 +12112,10 @@ const readTitlebarProps = (props) => {
 const readDialogProps = (props) => {
 	const f = fields(props);
 	return {
-		repo: text(f.repo),
+		mode: getOrElse$1(readDialogMode(f.mode), () => "new"),
+		repo: readRepoId(f.repo),
 		branch: text(f.branch),
-		repos: Array.isArray(f.repos) ? f.repos.filter(isString) : []
+		repos: Array.isArray(f.repos) ? f.repos.flatMap((repo) => toArray(readRepoId(repo))) : []
 	};
 };
 /** A menu's props, for `openOverlay`; read back with `readMenuProps`. */
@@ -12049,8 +12136,9 @@ const titlebarProps = (title, addr) => ({
 	addr
 });
 /** The New-or-open dialog's props as plain JSON; read back with `readDialogProps`. */
-const dialogProps = ({ repo, branch, repos }) => ({
+const dialogProps = ({ mode, repo, branch, repos }) => ({
 	role: "new",
+	mode,
 	repo: getOrNull(repo),
 	branch: getOrNull(branch),
 	repos
@@ -12352,16 +12440,22 @@ var Worktrunk = class extends View {
 		}
 	}
 	/**
-	* Opens the New-or-open dialog for the repo `folder` is in (null: the focused folder),
-	* offering the branch that folder is on as a base. Outside every repo, the dialog asks
-	* for one of the repos the panel lists.
+	* Opens the worktree dialog in `mode` for the repo `folder` is in, on its machine (none:
+	* the focused folder), offering the branch that folder is on as a base. Outside every
+	* repo, the dialog asks for one of the repos the panel lists, on any machine.
 	*/
-	openNewOrOpen(cx, folder) {
+	openNewOrOpen(cx, folder, mode = "new") {
 		const places = spacePlaces(spaces(), panes());
-		const at = folder ?? getOrElse$1(map$3(filter(focusedFolder(focused(), places), (f) => f.machine === null), (f) => f.folder), () => "");
-		const listed = this.repos.filter((repo) => repo.machine === null).map((repo) => repo.root);
+		const at = getOrElse$1(orElse(folder, () => focusedFolder(focused(), places)), () => ({
+			machine: null,
+			folder: ""
+		}));
+		const listed = this.repos.map(({ machine, root }) => ({
+			machine,
+			root
+		}));
 		cx.spawn(async () => {
-			const opened = await runEdge(dialogFor(at, listed), fail$2);
+			const opened = await runEdge(dialogFor(at, listed, mode), fail$2);
 			match$4(opened, {
 				onSuccess: (props) => match$5(props, {
 					onNone: () => notify({
@@ -12419,17 +12513,14 @@ var Worktrunk = class extends View {
 					_tag: "New",
 					dialog
 				};
-				map$3(state.repo, (root) => this.readDialogRepo(cx, dialog, {
-					machine: null,
-					root
-				}));
+				map$3(state.repo, (repo) => this.readDialogRepo(cx, dialog, repo));
 				return;
 			}
 		}
 	}
 	/** A fresh, focused input for the dialog's step: a repo name while it asks for one, else a branch. */
 	newInput(dialog, state) {
-		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : "Branch name, pr:123 or a PR link" });
+		const input = InputState.new({ placeholder: isNone(state.repo) ? "Repo name" : state.mode === "open" ? "Worktree's branch" : "Branch name, pr:123 or a PR link" });
 		input.on("change", (_event, cx) => {
 			dialog().state = retyped(dialog().state);
 			cx.notify();
@@ -12460,10 +12551,7 @@ var Worktrunk = class extends View {
 			case "ReadRepo":
 				dialog.state = picked.state;
 				dialog.input = this.newInput(() => dialog, picked.state);
-				this.readDialogRepo(cx, dialog, {
-					machine: null,
-					root: picked.root
-				});
+				this.readDialogRepo(cx, dialog, picked.repo);
 				cx.notify();
 				return;
 			case "Send":
@@ -12589,7 +12677,12 @@ var Worktrunk = class extends View {
 					this.refresh(cx, { scan: false });
 				});
 				return;
-			case "NewOrOpen": return this.openNewOrOpen(cx, action.folder);
+			case "NewOrOpen": return this.openNewOrOpen(cx, map$3(fromNullishOr(action.folder), (folder) => ({
+				machine: null,
+				folder
+			})));
+			case "GoTo": return onClickRow(goTo(spacePlaces(spaces(), panes()), action));
+			case "NewOrOpenAt": return this.openNewOrOpen(cx, some(action.at));
 			case "SpaceWorktree": return this.forSpace(cx, action.space, action.act);
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
@@ -12628,18 +12721,18 @@ var Worktrunk = class extends View {
 			body,
 			level: "warning"
 		});
-		const here = spacePlaces(spaces(), panes()).filter((p) => p.machine === null);
-		const found = placeOf(here, space);
-		if (isNone(found)) return warn("That space has no folder on this machine.");
-		const place = found.value;
-		if (act === "NewOrOpen") return this.openNewOrOpen(cx, place);
-		cx.spawn(async () => {
-			const asked = await runEdge(spaceWorktree(act, place), fail$2);
-			match$4(asked, {
-				onSuccess: ask,
-				onFailure: warn
+		const step = spaceStep(spacePlaces(spaces(), panes()), space, act);
+		switch (step._tag) {
+			case "NoFolder": return warn("That space has no folder.");
+			case "Dialog": return this.openNewOrOpen(cx, some(step.at), step.mode);
+			case "Act": cx.spawn(async () => {
+				const asked = await runEdge(spaceWorktree(step.act, step.at), fail$2);
+				match$4(asked, {
+					onSuccess: ask,
+					onFailure: warn
+				});
 			});
-		});
+		}
 	}
 	/** Busy with another job: says so and gives true. */
 	busy() {
@@ -13010,14 +13103,12 @@ var Worktrunk = class extends View {
 		const lines = linesFor(state, dialog.input.value());
 		const at = highlight(state, lines);
 		const picking = isNone(state.repo);
-		const title = match$5(state.repo, {
-			onNone: () => "New or open worktree: pick a repo",
-			onSome: (repo) => `New or open worktree in ${lastSegment(repo)}`
-		});
+		const opening = state.mode === "open";
+		const title = dialogTitle(state);
 		const describe = (line) => {
 			switch (line._tag) {
-				case "Repo": return [lastSegment(line.root), tildePath(line.root, home())];
-				case "Worktree": return [line.branch, "open worktree"];
+				case "Repo": return [lastSegment(line.repo.root), repoHint(line.repo, home())];
+				case "Worktree": return [line.branch, opening ? lastSegment(line.path) : "open worktree"];
 				case "Branch": return [line.name, line.remote ? "on origin: new worktree" : "branch: new worktree"];
 				case "Typed": return [line.name, line.shortcut ? "ask wt" : "new branch"];
 			}
@@ -13026,7 +13117,7 @@ var Worktrunk = class extends View {
 			const [label, hint] = describe(line);
 			return h_flex().id(`line-${i}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer().when(i === at, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pickNew(cx, dialog, some(line))).child(line._tag === "Typed" && !line.shortcut ? icon("plus", 12, t.accent) : dot(line._tag === "Worktree" ? t.working : t.muted, 7, line._tag !== "Worktree")).child(div().flex_none().max_w(300).truncate().child(label)).child(div().flex_1()).child(div().min_w(0).truncate().text_size(sizes.label).text_color(t.muted).child(hint));
 		};
-		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : "Type a branch name to create it.";
+		const empty = picking ? "No repo matches." : state.reading ? "Reading worktrees and branches…" : opening ? "No worktree matches." : "Type a branch name to create it.";
 		const baseOption = (key, label) => h_flex().id(`base-${key}`).h(24).px(9).when(key === "default", (el) => el.flex_none()).min_w(0).items_center().rounded(12).cursor_pointer().border_1().border_color(state.base === key ? t.accent : t.border).bg(state.base === key ? t.selected : t.popover).text_size(sizes.label).text_color(state.base === key ? t.foreground : t.muted).on_click((_e, cx) => {
 			if (dialog.state.base !== key) dialog.state = flippedBase(dialog.state);
 			cx.notify();
@@ -13039,7 +13130,7 @@ var Worktrunk = class extends View {
 			else return;
 			cx.stop_propagation();
 			cx.notify();
-		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
+		}).child(div().text_size(sizes.title).font_semibold().child(title)).child(h_flex().h(32).flex_none().px(10).items_center().rounded(8).border_1().border_color(t.accent).child(Input.new(dialog.input).flex_1().min_w(0).h_full().text_color(t.foreground))).child(v_flex().id("lines").flex_1().min_h(0).overflow_y_scrollbar().children(lines.map(row)).when(lines.length === 0, (el) => el.child(div().p(8).text_size(sizes.small).text_color(t.muted).child(empty)))).children(toArray(state.error).map((error) => div().text_size(sizes.label).text_color(t.ansi1).child(error))).when(!picking && !opening, (el) => el.child(h_flex().w_full().min_w(0).gap(6).items_center().child(div().flex_none().text_size(sizes.label).text_color(t.muted).child("New branch from")).children(bases))).child(div().text_size(sizes.label).text_color(t.dim).child(picking ? "↑↓ choose · Enter picks the repo · Esc closes" : opening ? "↑↓ choose · Enter goes to its space, or opens one · Esc closes" : "↑↓ choose · Enter opens or creates it · Tab switches the base · Esc closes")));
 	}
 	/**
 	* The Settings dialog: group folders (name, order, remove, add), the scan's depth and
