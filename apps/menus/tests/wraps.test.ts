@@ -92,6 +92,29 @@ describe("the sidebar's copy", () => {
   });
 });
 
+/** Every text an element from a stand-in draws, in order. */
+const texts = (el: unknown): readonly string[] =>
+  typeof el === "string"
+    ? [el]
+    : ((el as { kids?: readonly unknown[] } | undefined)?.kids ?? []).flatMap(texts);
+
+describe("the sidebar's space rows", () => {
+  const T = { foreground: "#ffffff", dim: "#888888", raised: "#222222" };
+
+  test("a space's row shows its group label after its name", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLabelOf((w: { id: string }) => (w.id === "sp1" ? "Work" : null));
+    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app", "Work"]);
+  });
+
+  test("a space with no group, or a copy whose labels aren't set, shows only its name", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app"]);
+    spaces.__wtSetLabelOf(() => null);
+    expect(texts(spaces.row({ id: "sp2", name: "lib" }, T))).toEqual(["lib"]);
+  });
+});
+
 describe('the "+" menu\'s copy', () => {
   test("its menu is one row taller than Herdr's, so our row takes no room from the agents", async () => {
     const menu = await load(patched("new-menu", newMenuStandIn));
@@ -154,9 +177,17 @@ describe("patch points that no longer fit", () => {
   });
 
   test("a sidebar with the space menu call twice is a miss, with its count", () => {
-    expect(missed("spaces", spacesStandIn + spacesStandIn)).toEqual([
+    const call =
+      'openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space",';
+    const twice = spacesStandIn.replace(call, `${call} again: ${call}`);
+    expect(missed("spaces", twice)).toEqual([
       { name: "spaces: space right-click opens menu", found: 2 },
     ]);
+  });
+
+  test("a sidebar whose space row changed shape is a miss, named, so it gets no labels", () => {
+    const moved = spacesStandIn.replace("max_w(150)", "max_w(180)");
+    expect(missed("spaces", moved)).toEqual([{ name: "spaces: space row's name", found: 0 }]);
   });
 
   test("a menu whose item list was renamed is a miss, named", () => {

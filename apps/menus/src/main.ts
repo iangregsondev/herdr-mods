@@ -1,4 +1,4 @@
-// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items added.
+// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items and the sidebar's group labels added.
 // Herdr gives mods no way to add menu items (docs/adr/0003), so each copy of this mod
 // plays one of Herdr's own mods: it copies Herdr's installed `main.js` into this mod's
 // folder (patched where `wraps.ts` says), imports the copy and shows Herdr's view from it.
@@ -26,12 +26,22 @@ import {
   readTextFile,
   run,
   setShared,
+  shared,
   spaces,
   theme,
   writeTextFile,
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Predicate, Result } from "effect";
-import { at, deliveryFor, Files, requestKey, text, type MenuRequest } from "worktrunk-mailbox";
+import {
+  at,
+  deliveryFor,
+  Files,
+  groupsKey,
+  requestKey,
+  spaceGroup,
+  text,
+  type MenuRequest,
+} from "worktrunk-mailbox";
 import { loadCopy, Modules, type Copy } from "./copies.ts";
 import { newMenuAnchor, requestOf, withWorktrunkItems, type NewMenuRow } from "./items.ts";
 import { describeMisses } from "./patch.ts";
@@ -72,7 +82,8 @@ const ready = new Map<Role, Copy>();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role: Role, copy: Copy) => {
   if (copy.misses.length === 0) return;
-  const body = `Herdr's ${role} changed, so worktrunk items are left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
+  const left = role === "spaces" ? "worktrunk items and group labels are" : "worktrunk items are";
+  const body = `Herdr's ${role} changed, so ${left} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
   console.error(`${__MOD_ID__}: ${body}`);
   notify({ title: "worktrunk menus: patch point not found", body, level: "warning" });
 };
@@ -280,6 +291,20 @@ function newMenuWithOurItem(copy: Copy): ViewClass {
   return WithOurItem as unknown as ViewClass;
 }
 
+/**
+ * Gives the sidebar copy each space's group label, read from what the worktrunk panel
+ * publishes, at every render. A copy left unpatched has no hook, so it shows no labels.
+ */
+const withGroupLabels = (copy: Copy) => {
+  const setLabelOf = copy.exports.__wtSetLabelOf;
+  if (!Predicate.isFunction(setLabelOf)) return;
+  setLabelOf((space: unknown) =>
+    Option.getOrNull(
+      Option.flatMap(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id)),
+    ),
+  );
+};
+
 /** Our own members, never overwritten by Herdr's. */
 const OWN = new Set(["constructor", "init", "render", "close", "wtRole", "wtView", "wtFailure"]);
 
@@ -357,6 +382,7 @@ export default class Menus extends View {
           : role === "new-menu"
             ? newMenuWithOurItem(copy)
             : viewOf(copy);
+      if (role === "spaces") withGroupLabels(copy);
       adopt(this, view);
       callOn(view, "init", this, props(), cx);
       this.wtView = view;
