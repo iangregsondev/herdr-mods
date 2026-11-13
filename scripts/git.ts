@@ -47,6 +47,19 @@ const runGit = Effect.fnUntraced(function* (
 /** git's NUL-separated output (from `-z`) as a list, without the empty tail. */
 const nulList = (out: string): ReadonlyArray<string> => out.split("\0").filter((s) => s !== "");
 
+/**
+ * The paths HEAD's branch changed since it left `base` (`base...HEAD`), each rename as
+ * a delete and an add, narrowed by `filter` (extra `git diff` options).
+ */
+const branchDiff = (
+  repo: string,
+  base: string,
+  filter: ReadonlyArray<string>,
+): Effect.Effect<ReadonlyArray<string>, GitError> =>
+  runGit(repo, ["diff", "--name-only", "--no-renames", ...filter, "-z", `${base}...HEAD`]).pipe(
+    Effect.map(nulList),
+  );
+
 const TAG_REF = "refs/tags/";
 
 /** The tag names in `git ls-remote --tags` output: one `<sha>\trefs/tags/<name>` per line. */
@@ -85,20 +98,9 @@ export class Git extends Context.Service<
 >()("herdr-mods/Git") {
   /** Runs the `git` on PATH. */
   static readonly layer = Layer.succeed(this, {
-    changedFiles: (repo, base) =>
-      runGit(repo, ["diff", "--name-only", "--no-renames", "-z", `${base}...HEAD`]).pipe(
-        Effect.map(nulList),
-      ),
+    changedFiles: (repo, base) => branchDiff(repo, base, []),
     // `--no-renames` reports a rename as a delete and an add, so its new path is listed.
-    addedFiles: (repo, base) =>
-      runGit(repo, [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "--diff-filter=A",
-        "-z",
-        `${base}...HEAD`,
-      ]).pipe(Effect.map(nulList)),
+    addedFiles: (repo, base) => branchDiff(repo, base, ["--diff-filter=A"]),
     // `--refs` drops the peeled `^{}` lines annotated tags add.
     originTags: (repo) =>
       runGit(repo, ["ls-remote", "--tags", "--refs", "origin"]).pipe(Effect.map(tagNames)),
