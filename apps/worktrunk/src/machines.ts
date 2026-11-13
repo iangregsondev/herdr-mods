@@ -7,6 +7,9 @@ export type Machine = string | null;
 /** This machine: the one the Herdr app runs on. */
 export const THIS_MACHINE: Machine = null;
 
+/** Each machine's home folder, read on that machine. */
+export type Homes = ReadonlyMap<Machine, string>;
+
 /** A repo's identity: the machine it lives on and its main checkout's folder there. */
 export interface RepoId {
   readonly machine: Machine;

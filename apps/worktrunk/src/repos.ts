@@ -2,7 +2,7 @@
 // imports. The folder scan and the open spaces' repos are found by shell scripts; this
 // module reads their output.
 import { Option } from "effect";
-import { repoKey, type Machine, type RepoId } from "./machines.ts";
+import { repoKey, type Homes, type Machine, type RepoId } from "./machines.ts";
 import { expandHome, lastSegment, type GroupFolder } from "./settings.ts";
 
 export { expandHome };
@@ -14,10 +14,31 @@ export const isUnder = (path: string, root: string): boolean =>
 /** The group of a repo inside no group folder. */
 export const OTHER = "Other";
 
-/** The repo's group: the deepest group folder that holds it, else Other. */
-export const groupOf = (root: string, folders: readonly GroupFolder[], home: string): string =>
+/**
+ * The folder `folder` names on its machine: `~` is that machine's home in `homes`. None
+ * for a `~` folder whose machine's home isn't known.
+ */
+export const folderOn = (folder: GroupFolder, homes: Homes): Option.Option<string> =>
+  folder.path === "~" || folder.path.startsWith("~/")
+    ? Option.map(Option.fromNullishOr(homes.get(folder.machine)), (home) =>
+        expandHome(folder.path, home),
+      )
+    : Option.some(folder.path);
+
+/**
+ * The repo's group: the deepest group folder that holds it, else Other. A folder's `~` is
+ * its machine's home in `homes`.
+ */
+export const groupOf = (
+  { machine, root }: RepoId,
+  folders: readonly GroupFolder[],
+  homes: Homes,
+): string =>
   folders
-    .map((folder) => ({ name: folder.name, path: expandHome(folder.path, home) }))
+    .filter((folder) => folder.machine === machine)
+    .flatMap((folder) =>
+      Option.toArray(folderOn(folder, homes)).map((path) => ({ name: folder.name, path })),
+    )
     .filter((folder) => isUnder(root, folder.path))
     .reduce<Option.Option<{ readonly name: string; readonly path: string }>>(
       (best, folder) =>
@@ -88,14 +109,14 @@ export const reposFrom = (
   scanned: readonly FoundRepo[],
   owners: readonly FoundRepo[],
   folders: readonly GroupFolder[],
-  home: string,
+  homes: Homes,
 ): readonly Repo[] =>
   Array.from(new Map([...scanned, ...owners].map((repo) => [repoKey(repo), repo])).values())
     .map(({ machine, root, count: n }) => ({
       machine,
       root,
       count: n,
-      group: groupOf(root, folders, home),
+      group: groupOf({ machine, root }, folders, homes),
     }))
     .sort((a, b) => lastSegment(a.root).localeCompare(lastSegment(b.root)));
 

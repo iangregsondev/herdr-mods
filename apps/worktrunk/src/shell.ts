@@ -147,7 +147,11 @@ export const wtCi = Effect.fn("wtCi")(function* (root: string) {
 /** The repos the folder scan finds in the settings' group folders, and those that don't exist. */
 export const scanRepos = Effect.fn("scanRepos")(function* (settings: Settings, home: string) {
   if (settings.folders.length === 0) return { repos: [], missing: [] } satisfies Scan;
-  const run = yield* runScript("the folder scan", SCAN_SCRIPT, scanArgs(settings, home));
+  const run = yield* runScript(
+    "the folder scan",
+    SCAN_SCRIPT,
+    scanArgs(settings, THIS_MACHINE, new Map([[THIS_MACHINE, home]])),
+  );
   const scan: Scan = {
     repos: parseScan(run.stdout, THIS_MACHINE),
     missing: missingFolders(run.stdout),

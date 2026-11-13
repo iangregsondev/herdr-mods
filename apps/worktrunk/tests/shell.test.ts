@@ -264,7 +264,11 @@ describe("scanRepos", () => {
         missing: [],
       });
       assert.deepStrictEqual(calls, [
-        ["sh", shArgs(SCAN_SCRIPT, scanArgs(settings, "/h")), { timeout: 60_000 }],
+        [
+          "sh",
+          shArgs(SCAN_SCRIPT, scanArgs(settings, THIS_MACHINE, new Map([[THIS_MACHINE, "/h"]]))),
+          { timeout: 60_000 },
+        ],
       ]);
     }),
   );

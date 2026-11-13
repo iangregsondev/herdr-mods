@@ -24,7 +24,7 @@ describe("scanArgs", () => {
       depth: 3,
       skip: ["node_modules", ".cache"],
     };
-    expect(scanArgs(settings, "/home/me")).toEqual([
+    expect(scanArgs(settings, THIS_MACHINE, new Map([[THIS_MACHINE, "/home/me"]]))).toEqual([
       "3",
       "/node_modules//.cache/",
       "/home/me/work",
@@ -110,5 +110,22 @@ describe("reading hc's and wt's answers", () => {
   test("no answer, or one without a branch and folder, switched to nothing", () => {
     expect(switchedTo("")).toEqual(Option.none());
     expect(switchedTo('{"branch":"feat-x"}')).toEqual(Option.none());
+  });
+});
+
+describe("scanArgs on a machine", () => {
+  test("only the group folders on that machine, ~ as its home", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      folders: [
+        { name: "Work", path: "~/work", machine: THIS_MACHINE },
+        { name: "Box", path: "~/code", machine: "linux" },
+      ],
+    };
+    const homes = new Map([
+      [THIS_MACHINE, "/Users/me"],
+      ["linux", "/home/ian"],
+    ]);
+    expect(scanArgs(settings, "linux", homes).slice(2)).toEqual(["/home/ian/code"]);
   });
 });

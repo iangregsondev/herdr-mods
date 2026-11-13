@@ -38,7 +38,6 @@ import {
   writeTextFile,
 } from "herdr";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import { scanArgs } from "./commands.ts";
 import {
   flippedBase,
   highlight,
@@ -119,7 +118,7 @@ import {
   type RefreshAsk,
   type RepoList,
 } from "./reads.ts";
-import { repoKey, repoOfKey, type RepoId } from "./machines.ts";
+import { repoKey, repoOfKey, THIS_MACHINE, type RepoId } from "./machines.ts";
 import type { Repo, Scan } from "./repos.ts";
 import {
   DEFAULT_SETTINGS,
@@ -941,7 +940,12 @@ export default class Worktrunk extends View {
 
   /** The Current repo, with its group; Looking while it is first being looked up. */
   currentRepo(): CurrentRepo {
-    return currentRepoOf(this.follow.found, this.repos, this.settings.folders, home());
+    return currentRepoOf(
+      this.follow.found,
+      this.repos,
+      this.settings.folders,
+      new Map([[THIS_MACHINE, home()]]),
+    );
   }
 
   /**
@@ -1025,7 +1029,8 @@ export default class Worktrunk extends View {
     this.settingsError = loaded.parsed.error;
 
     const now = Date.now();
-    const key = JSON.stringify(scanArgs(this.settings, home()));
+    const { folders, depth, skip } = this.settings;
+    const key = JSON.stringify({ folders, depth, skip });
     const due = scanDue(this.lastScan, { forced: scan, key, now, every: SCAN_EVERY });
     const places = localPlaces(spaces(), panes()).map((p) => p.place);
     const found = await runEdge(

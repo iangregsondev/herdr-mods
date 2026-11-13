@@ -3,14 +3,17 @@
 // spliced into the script text, so no path or name needs quoting.
 import { Option, Predicate, Result } from "effect";
 import { at, finite, parseJson, text } from "worktrunk-mailbox";
-import { expandHome } from "./repos.ts";
+import type { Homes, Machine } from "./machines.ts";
+import { folderOn } from "./repos.ts";
 import type { Settings } from "./settings.ts";
 
-/** The scan's arguments for these settings. */
-export const scanArgs = (settings: Settings, home: string): readonly string[] => [
+/** The scan's arguments for these settings' group folders on `machine`, `~` from `homes`. */
+export const scanArgs = (settings: Settings, machine: Machine, homes: Homes): readonly string[] => [
   String(settings.depth),
   settings.skip.map((name) => `/${name}/`).join(""),
-  ...settings.folders.map((folder) => expandHome(folder.path, home)),
+  ...settings.folders
+    .filter((folder) => folder.machine === machine)
+    .flatMap((folder) => Option.toArray(folderOn(folder, homes))),
 ];
 
 /** argv[0] for `sh -c`: the name the scripts report errors under. */

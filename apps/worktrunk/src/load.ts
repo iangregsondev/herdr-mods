@@ -7,7 +7,7 @@ import { newScript, switchedTo } from "./commands.ts";
 import type { Branch, DialogProps } from "./dialog.ts";
 import { Files, type FileError, type FileMissing } from "worktrunk-mailbox";
 import { spaceWorktreeAction, type Action, type JobSpec } from "./menus.ts";
-import type { RepoId } from "./machines.ts";
+import { THIS_MACHINE, type RepoId } from "./machines.ts";
 import {
   DEFAULT_SETTINGS,
   lastSegment,
@@ -151,7 +151,7 @@ export const findRepos = Effect.fn("findRepos")(function* (
     scanned.repos,
     [...owners, ...Option.toArray(current)],
     settings.folders,
-    home,
+    new Map([[THIS_MACHINE, home]]),
   );
   const found: Found = { scanned, repos: withoutHidden(repos, settings.hidden) };
   return found;

@@ -1,7 +1,7 @@
 // When the panel reads what, and how each read's answer is kept: the decisions behind
 // the shell's refreshes. Pure: no `herdr` or `gpui` imports.
 import { Option, Result } from "effect";
-import { repoKey } from "./machines.ts";
+import { repoKey, type Homes } from "./machines.ts";
 import { groupOf, type FoundRepo, type Repo } from "./repos.ts";
 import type { GroupFolder } from "./settings.ts";
 import type { Ci, Worktree } from "./worktrees.ts";
@@ -179,7 +179,7 @@ export const currentRepoOf = (
   found: CurrentLookup,
   repos: readonly Repo[],
   folders: readonly GroupFolder[],
-  home: string,
+  homes: Homes,
 ): CurrentRepo =>
   Option.match(found, {
     onNone: (): CurrentRepo => ({ _tag: "Looking" }),
@@ -191,7 +191,7 @@ export const currentRepoOf = (
           _tag: "InRepo",
           repo: repos.find((listed) => repoKey(listed) === repoKey(repo)) ?? {
             ...repo,
-            group: groupOf(repo.root, folders, home),
+            group: groupOf(repo, folders, homes),
           },
         }),
       }),

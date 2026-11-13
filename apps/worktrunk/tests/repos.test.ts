@@ -12,6 +12,9 @@ import {
 import { THIS_MACHINE } from "../src/machines.ts";
 
 const HOME = "/home/me";
+const HOMES = new Map([[THIS_MACHINE, HOME]]);
+/** A repo on this machine. */
+const here = (root: string) => ({ machine: THIS_MACHINE, root });
 const folders = [
   { name: "Work", path: "~/dev/work", machine: THIS_MACHINE },
   { name: "Clients", path: "~/dev/work/clients", machine: THIS_MACHINE },
@@ -28,25 +31,25 @@ describe("expandHome", () => {
 
 describe("groupOf", () => {
   test("the group folder that holds the repo", () => {
-    expect(groupOf("/home/me/dev/work/api", folders, HOME)).toBe("Work");
-    expect(groupOf("/srv/code/x", folders, HOME)).toBe("Abs");
+    expect(groupOf(here("/home/me/dev/work/api"), folders, HOMES)).toBe("Work");
+    expect(groupOf(here("/srv/code/x"), folders, HOMES)).toBe("Abs");
   });
 
   test("the deepest group folder wins when they nest", () => {
-    expect(groupOf("/home/me/dev/work/clients/acme", folders, HOME)).toBe("Clients");
+    expect(groupOf(here("/home/me/dev/work/clients/acme"), folders, HOMES)).toBe("Clients");
   });
 
   test("a sibling with the same prefix is not inside", () => {
-    expect(groupOf("/home/me/dev/workshop/x", folders, HOME)).toBe(OTHER);
+    expect(groupOf(here("/home/me/dev/workshop/x"), folders, HOMES)).toBe(OTHER);
   });
 
   test("a repo that is the group folder itself belongs to it", () => {
-    expect(groupOf("/srv/code", folders, HOME)).toBe("Abs");
+    expect(groupOf(here("/srv/code"), folders, HOMES)).toBe("Abs");
   });
 
   test("in no group folder: Other", () => {
-    expect(groupOf("/tmp/x", folders, HOME)).toBe("Other");
-    expect(groupOf("/tmp/x", [], HOME)).toBe("Other");
+    expect(groupOf(here("/tmp/x"), folders, HOMES)).toBe("Other");
+    expect(groupOf(here("/tmp/x"), [], HOMES)).toBe("Other");
   });
 });
 
@@ -109,7 +112,7 @@ describe("reposFrom", () => {
         { machine: THIS_MACHINE, root: "/tmp/mid", count: 1 },
       ],
       folders,
-      HOME,
+      HOMES,
     );
     expect(repos).toEqual([
       { machine: THIS_MACHINE, root: "/home/me/dev/work/alpha", count: 4, group: "Work" },
@@ -127,8 +130,8 @@ describe("reposFrom across machines", () => {
         { machine: "linux", root: "/srv/code/api", count: 3 },
       ],
       [{ machine: "linux", root: "/srv/code/api", count: 4 }],
-      folders,
-      HOME,
+      [...folders, { name: "Abs", path: "/srv/code", machine: "linux" }],
+      HOMES,
     );
     expect(repos).toEqual([
       { machine: THIS_MACHINE, root: "/srv/code/api", count: 2, group: "Abs" },
@@ -164,5 +167,31 @@ describe("withoutHidden across machines", () => {
     expect(withoutHidden(repos, [{ machine: "linux", root: "/w/old" }])).toEqual([
       { machine: THIS_MACHINE, root: "/w/old", count: 1 },
     ]);
+  });
+});
+
+describe("groupOf across machines", () => {
+  test("a group folder holds only repos on its own machine", () => {
+    const box = [{ name: "Box", path: "/srv/code", machine: "linux" }];
+    expect(groupOf(here("/srv/code/api"), box, HOMES)).toBe(OTHER);
+    expect(groupOf({ machine: "linux", root: "/srv/code/api" }, box, HOMES)).toBe("Box");
+  });
+});
+
+describe("groupOf with each machine's home", () => {
+  test("~ in a group folder is its own machine's home", () => {
+    const box = [{ name: "Box", path: "~/code", machine: "linux" }];
+    const homes = new Map([
+      [THIS_MACHINE, "/Users/me"],
+      ["linux", "/home/ian"],
+    ]);
+    expect(groupOf({ machine: "linux", root: "/home/ian/code/api" }, box, homes)).toBe("Box");
+    expect(groupOf({ machine: "linux", root: "/Users/me/code/api" }, box, homes)).toBe(OTHER);
+  });
+
+  test("a ~ folder on a machine whose home isn't known yet holds nothing", () => {
+    const box = [{ name: "Box", path: "~/code", machine: "linux" }];
+    const homes = new Map([[THIS_MACHINE, "/home/ian"]]);
+    expect(groupOf({ machine: "linux", root: "/home/ian/code/api" }, box, homes)).toBe(OTHER);
   });
 });
