@@ -1,9 +1,10 @@
-// Checks that a PR carries the changesets its changes need. Every mod with a changed file
-// under apps/<name>/ must be named in a changeset the PR adds, unless the PR deletes the
-// mod; a change under packages/ needs at least one changeset the PR adds, an empty one
-// included; other files need nothing. The changesets version PR (head branch
-// changeset-release/main) is skipped. Exits 1 naming each mod missing a changeset, and
-// the command to add one.
+// Checks that every PR carries a changeset. The PR must add at least one .changeset/*.md
+// (not the folder's README); an empty changeset counts, and is the answer when the PR
+// releases nothing. Editing or deleting a pending changeset doesn't count. On top of that,
+// every mod with a changed file under apps/<name>/ must be named in a changeset the PR
+// adds, unless the PR deletes the mod. Two PRs are skipped: the changesets version PR
+// (head branch changeset-release/main) and Dependabot PRs (head branch dependabot/...).
+// Exits 1 naming what is missing, and the command to add a changeset.
 //
 //   vp run check:changesets   (CI, on pull_request; compares with origin/<base branch>)
 import { existsSync, readFileSync } from "node:fs";
@@ -57,7 +58,10 @@ export interface ChangesetCheckOptions {
   readonly repo?: string;
   /** The ref the PR merges into; the PR's changes are `base...HEAD`. Default: `origin/main`. */
   readonly base?: string;
-  /** The PR's head branch, when known. The version branch (`VERSION_BRANCH`) is skipped. */
+  /**
+   * The PR's head branch, when known. The version branch (`VERSION_BRANCH`) and Dependabot
+   * branches (`DEPENDABOT_PREFIX`) are skipped.
+   */
   readonly headBranch?: string;
 }
 
@@ -117,9 +121,29 @@ const PREFIX = "changeset-check:";
  */
 export const VERSION_BRANCH = "changeset-release/main";
 
+/**
+ * The prefix of every Dependabot head branch. Dependabot here only bumps SHA-pinned
+ * GitHub Actions, which never release a mod, so the check skips its PRs.
+ */
+export const DEPENDABOT_PREFIX = "dependabot/";
+
+/** Why the check skips the PR from `headBranch`, if it does. */
+const skipReason = (headBranch: string | undefined): Option.Option<string> =>
+  headBranch === VERSION_BRANCH
+    ? Option.some(`${VERSION_BRANCH} is the changesets version branch`)
+    : headBranch?.startsWith(DEPENDABOT_PREFIX) === true
+      ? Option.some(`${headBranch} is a Dependabot branch`)
+      : Option.none();
+
 const PACKAGES_PROBLEM =
   "packages/ changed, so the PR needs a changeset: name the mods it reaches, " +
   "or add an empty one (vp exec changeset --empty)";
+
+const NO_CHANGESET_PROBLEM =
+  "the PR adds no changeset, and every PR needs one: when it releases nothing, " +
+  "add an empty one (vp exec changeset --empty)";
+
+const PASSED = "the PR adds a changeset, as every PR must, and it names every changed mod";
 
 /** Exit 1 with `message` on stderr. */
 const failure = (message: string): ScriptResult => scriptFailure(PREFIX, [message]);
@@ -137,12 +161,9 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
 ): Effect.fn.Return<ScriptResult> {
   const repo = options.repo ?? ".";
   const base = options.base ?? "origin/main";
-  if (options.headBranch === VERSION_BRANCH) {
-    return {
-      code: 0,
-      stdout: `${PREFIX} skipped: ${VERSION_BRANCH} is the changesets version branch\n`,
-      stderr: "",
-    };
+  const skip = skipReason(options.headBranch);
+  if (Option.isSome(skip)) {
+    return { code: 0, stdout: `${PREFIX} skipped: ${skip.value}\n`, stderr: "" };
   }
   return yield* Effect.gen(function* () {
     const git = yield* Git;
@@ -158,14 +179,18 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
     );
     const packagesUncovered =
       files.some((file) => file.startsWith("packages/")) && changesets.length === 0;
-    const problems = [
+    const specific = [
       ...(missing.length > 0
         ? [`no changeset names these changed mods: ${missing.join(", ")}`]
         : []),
       ...(packagesUncovered ? [PACKAGES_PROBLEM] : []),
     ];
+    // Every PR adds a changeset. A changed mod or packages/ change already asks for one,
+    // so this problem shows only when neither does.
+    const problems =
+      changesets.length === 0 && specific.length === 0 ? [NO_CHANGESET_PROBLEM] : specific;
     return problems.length === 0
-      ? { code: 0, stdout: `${PREFIX} every changed mod and package has a changeset\n`, stderr: "" }
+      ? { code: 0, stdout: `${PREFIX} ${PASSED}\n`, stderr: "" }
       : failureWithAddHint(problems);
   }).pipe(
     Effect.provide(Git.layer),
