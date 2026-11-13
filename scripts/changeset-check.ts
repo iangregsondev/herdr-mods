@@ -77,8 +77,8 @@ const changedMods = (files: ReadonlyArray<string>): ReadonlyArray<string> =>
  * package.json, and changesets can't name a package that no longer exists, so it needs
  * no changeset.
  */
-const modExists = (repo: string, name: string): boolean =>
-  existsSync(join(repo, "apps", name, "package.json"));
+const modExists = (repo: string, name: string): Effect.Effect<boolean> =>
+  Effect.sync(() => existsSync(join(repo, "apps", name, "package.json")));
 
 /** A changeset file the PR adds that couldn't be read. */
 export class ChangesetUnreadable extends Data.TaggedError("ChangesetUnreadable")<{
@@ -152,7 +152,10 @@ export const runChangesetCheck = Effect.fn("runChangesetCheck")(function* (
       readChangeset(repo, file),
     );
     const named = new Set(changesets.flatMap((bumps) => Object.keys(bumps)));
-    const missing = changedMods(files).filter((mod) => modExists(repo, mod) && !named.has(mod));
+    const missing = yield* Effect.filter(
+      changedMods(files).filter((mod) => !named.has(mod)),
+      (mod) => modExists(repo, mod),
+    );
     const packagesUncovered =
       files.some((file) => file.startsWith("packages/")) && changesets.length === 0;
     const problems = [
