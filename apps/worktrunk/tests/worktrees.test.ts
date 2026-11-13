@@ -45,10 +45,6 @@ describe("parseList", () => {
       _tag: "Merged",
       reason: Option.some("ancestor"),
     });
-    expect(byBranch("states", "emptynow").state).toEqual({
-      _tag: "Merged",
-      reason: Option.some("same_commit"),
-    });
     expect(byBranch("states", "mergeaddsnothing").state).toEqual({
       _tag: "Merged",
       reason: Option.some("merge_adds_nothing"),
@@ -64,6 +60,36 @@ describe("parseList", () => {
     expect(byBranch("ci", "chore/dev-loop").state).toEqual({
       _tag: "Merged",
       reason: Option.some("patch_id_match"),
+    });
+  });
+
+  test("a worktree at main's tip with no changes of its own is New", () => {
+    expect(byBranch("states", "emptynow").state).toEqual({ _tag: "New" });
+  });
+
+  test("an empty worktree with uncommitted changes is Merged, not New", () => {
+    const item = {
+      branch: "fresh",
+      worktree: { path: "/work/repo.fresh", changes: { modified: true } },
+      display: { state: "empty" },
+      default_branch: { integration: { reason: "same_commit" } },
+    };
+    expect(Result.getOrThrow(parseList(JSON.stringify([item])))[0]?.state).toEqual({
+      _tag: "Merged",
+      reason: Option.some("same_commit"),
+    });
+  });
+
+  test("an empty worktree left behind while main moved on is Merged, not New", () => {
+    const item = {
+      branch: "stale",
+      worktree: { path: "/work/repo.stale" },
+      display: { state: "empty" },
+      default_branch: { behind: 5, integration: { reason: "ancestor" } },
+    };
+    expect(Result.getOrThrow(parseList(JSON.stringify([item])))[0]?.state).toEqual({
+      _tag: "Merged",
+      reason: Option.some("ancestor"),
     });
   });
 

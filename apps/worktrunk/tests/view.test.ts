@@ -41,6 +41,7 @@ const wt = (
 const MAIN: WorktreeState = { _tag: "Main" };
 const ACTIVE: WorktreeState = { _tag: "Active" };
 const CONFLICT: WorktreeState = { _tag: "Conflict" };
+const NEW: WorktreeState = { _tag: "New" };
 const merged = (reason: string | null): WorktreeState => ({
   _tag: "Merged",
   reason: Option.fromNullishOr(reason),
@@ -168,6 +169,20 @@ describe("buildView: the Repos tree", () => {
     ]);
   });
 
+  test("a New worktree counts with Active: In progress, an active dot, the Active view", () => {
+    const list = read([
+      wt("/w/api", "main", MAIN),
+      wt("/w/api.wip", "wip", ACTIVE, { committedAt: Option.some(NOW - 2 * HOUR) }),
+      wt("/w/api.fresh", "fresh", NEW),
+    ]);
+    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    expect(repo(s, "api").sections.map((x) => [x.kind, x.count])).toEqual([["active", 2]]);
+    expect(row(s, "/w/api.fresh").tone).toBe("active");
+    const active = buildView({ ...s, view: { ...s.view, show: "active" } }).body;
+    if (active._tag !== "Flat") expect.fail(`expected a flat list, got ${active._tag}`);
+    expect(active.rows.map((r) => r.label)).toEqual(["fresh", "wip"]);
+  });
+
   test("empty sections are left out", () => {
     expect(repo(snapshot(), "web").sections).toEqual([]);
   });
@@ -265,6 +280,15 @@ describe("buildView: rows", () => {
     const r = row(snapshot({ lists: new Map([[API.root, list]]) }), "/w/api.d");
     expect(r.label).toBe("(detached)");
     expect(r.click).toEqual({ _tag: "New", name: "api.d", folder: "/w/api.d" });
+  });
+
+  test("a New worktree carries a new badge; no other row has one", () => {
+    const list = read([...API_WORKTREES, wt("/w/api.fresh", "fresh", NEW)]);
+    const s = snapshot({ lists: new Map([[API.root, list]]) });
+    expect(row(s, "/w/api.fresh").badge).toEqual(Option.some("new"));
+    for (const path of ["/w/api", "/w/api.old", "/w/api.new", "/w/api.fight"]) {
+      expect(row(s, path).badge).toEqual(Option.none());
+    }
   });
 
   test("uncommitted changes show as dirty", () => {
@@ -486,14 +510,14 @@ describe("buildView: views", () => {
   const show = (view: Snapshot["view"]["show"], more: Partial<Snapshot> = {}) =>
     both({ view: { ...DEFAULT_VIEW_STATE, only: false, show: view }, ...more });
 
-  test("the view picker lists every view, the selected one marked", () => {
+  test("the view picker lists every view, Current first, the selected one marked", () => {
     expect(buildView(show("active")).views).toEqual([
+      { show: "current", label: "Current", selected: false },
       { show: "repos", label: "Repos", selected: false },
       { show: "merged", label: "Clean up", selected: false },
       { show: "active", label: "Active", selected: true },
       { show: "conflict", label: "Conflicts", selected: false },
       { show: "open", label: "Open", selected: false },
-      { show: "current", label: "Current", selected: false },
     ]);
   });
 

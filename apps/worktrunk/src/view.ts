@@ -23,12 +23,12 @@ export type Show = "repos" | "merged" | "active" | "conflict" | "open" | "curren
 
 /** Every view, in the picker's order, with its label. */
 export const SHOWS: readonly (readonly [Show, string])[] = [
+  ["current", "Current"],
   ["repos", "Repos"],
   ["merged", "Clean up"],
   ["active", "Active"],
   ["conflict", "Conflicts"],
   ["open", "Open"],
-  ["current", "Current"],
 ];
 
 /** How the list is sliced; remembered across restarts. */
@@ -101,6 +101,8 @@ export interface RowView {
   readonly current: boolean;
   /** The line under the branch name. */
   readonly subline: string;
+  /** A word beside the branch name: "new" for a New worktree. */
+  readonly badge: Option.Option<string>;
   /** None when CI wasn't asked for, or there is no PR and no checks. */
   readonly ci: Option.Option<CiBadge>;
   readonly click: Click;
@@ -195,6 +197,7 @@ const kindOf = (worktree: Worktree): Option.Option<SectionKind> => {
       return Option.none();
     case "Merged":
       return Option.some("merged");
+    case "New":
     case "Active":
       return Option.some("active");
     case "Conflict":
@@ -302,6 +305,7 @@ const rowView = (
   open: Option.isSome(space),
   current: Option.exists(space, (s) => s.active),
   subline: subline(worktree, snapshot.now),
+  badge: worktree.state._tag === "New" ? Option.some("new") : Option.none(),
   ci: badgeOf(ciOf(snapshot, repo, worktree)),
   click: Option.match(space, {
     onNone: (): Click => ({
