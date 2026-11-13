@@ -4,23 +4,32 @@
 //   vp run herdr:sync
 //
 // Reads <app home>/layouts/main.json (Herdr's default) and writes:
-//   <app home>/layouts/<namespace>.json   Herdr's default plus my additions
-//   <app home>/<namespace>-sync.json      the Herdr version it was built from
+//   <app home>/layouts/workbench.json     Herdr's default plus my additions
+//   <app home>/<namespace>-sync.json      the layout and the Herdr version it was built from
 // The worktrunk panel compares that record with the installed version and asks for a
 // new sync when Herdr has moved on. Re-run it after every Herdr update.
 //
-// It never edits Herdr's own files, never switches layouts, and keeps none of Herdr's
-// code in this repo: it reads the installed files on this machine each time.
+// When the record names another layout (an earlier sync's, under an older name), that
+// layout is removed, and if Herdr was showing it, Herdr switches to the new one first.
+// A layout the record doesn't name is never removed. It never edits Herdr's own files,
+// never switches layouts otherwise, and keeps none of Herdr's code in this repo: it
+// reads the installed files on this machine each time.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { modId, NAMESPACE } from "../mod-pack.ts";
-import { herdrHome, shippedLayouts, type LayoutNode } from "./herdr-slots.ts";
+import {
+  herdrHome,
+  layoutFromStatus,
+  shippedLayouts,
+  type HerdrStatus,
+  type LayoutNode,
+} from "./herdr-slots.ts";
 
 /** The layout Herdr ships as its default, which mine is built from. */
 export const DEFAULT_LAYOUT = "main";
-/** My layout's name. */
-export const LAYOUT_NAME = NAMESPACE;
+/** My layout's name: what it is, not whose. */
+export const LAYOUT_NAME = "workbench";
 /** The record of the Herdr version the layout was built from, in the app home. */
 export const RECORD_FILE = `${NAMESPACE}-sync.json`;
 
@@ -231,7 +240,7 @@ const writeIfChanged = (path: string, text: string): void => {
 };
 
 export interface SyncResult {
-  /** The exit code: 1 when nothing was written, 0 otherwise. */
+  /** The exit code: 0 when the sync finished, 1 when it stopped. */
   readonly code: 0 | 1;
   /** Lines for stdout. */
   readonly out: readonly string[];
@@ -262,17 +271,43 @@ const installedVersion = (herdrApp: (args: readonly string[]) => string): string
   }
 };
 
+/** `herdr-app status` run through `herdrApp`; a failed run means Herdr isn't running. */
+const statusThrough = (herdrApp: (args: readonly string[]) => string): HerdrStatus => {
+  try {
+    return { _tag: "Running", text: herdrApp(["status"]) };
+  } catch {
+    return { _tag: "NotRunning" };
+  }
+};
+
+/** The layout Herdr shows, from `status`; null when Herdr isn't running or names none. */
+const shownLayout = (shown: HerdrStatus): string | null =>
+  shown._tag === "Running" ? layoutFromStatus(shown.text) : null;
+
+/** Asks Herdr to show `layout`; false when `herdr-app` fails. */
+const switchTo = (herdrApp: (args: readonly string[]) => string, layout: string): boolean => {
+  try {
+    herdrApp(["do", "layout.switch", "--name", layout]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export interface SyncOptions {
   /** The Herdr app home. Defaults to `herdrHome()`. */
   readonly home?: string;
   /** Runs `herdr-app` and returns its stdout. Defaults to the real command. */
   readonly herdrApp?: (args: readonly string[]) => string;
+  /** Gives `herdr-app status`. Defaults to running it through `herdrApp`. */
+  readonly status?: () => HerdrStatus;
 }
 
 /** Builds my layout and the version record in the Herdr app at `home`. */
 export function herdrSync({
   home = herdrHome(),
   herdrApp = runHerdrApp,
+  status = () => statusThrough(herdrApp),
 }: SyncOptions = {}): SyncResult {
   const basePath = join(home, "layouts", `${DEFAULT_LAYOUT}.json`);
   const base = readBase(basePath);
@@ -282,7 +317,8 @@ export function herdrSync({
     return fail("can't find the Herdr version: is `herdr-app --version` on PATH?");
   }
 
-  if (shippedLayouts(home).has(LAYOUT_NAME)) {
+  const shipped = shippedLayouts(home);
+  if (shipped.has(LAYOUT_NAME)) {
     return fail(`a layout named "${LAYOUT_NAME}" ships with Herdr; refusing to overwrite it.`);
   }
   const installed = (mod: string) => existsSync(join(home, "mods", mod, "main.js"));
@@ -295,7 +331,26 @@ export function herdrSync({
       `Herdr's default layout has changed, so this patch point no longer fits: ${built.reason}.`,
     );
   }
+  const previous = syncedLayout(home);
+  // Only a layout the record names was built by sync; any other file is the person's,
+  // and a layout Herdr ships is Herdr's.
+  const retired =
+    previous !== null && previous !== LAYOUT_NAME && !shipped.has(previous) ? previous : null;
   writeIfChanged(join(home, "layouts", `${LAYOUT_NAME}.json`), json(built.node));
+  // Herdr moves off the old layout first, so it never shows a layout that's gone.
+  const switching = retired !== null && shownLayout(status()) === retired;
+  if (switching && !switchTo(herdrApp, LAYOUT_NAME)) {
+    // The record keeps naming the old layout, so the next run retires it.
+    return {
+      code: 1,
+      out: [],
+      err: [
+        `herdr-sync: wrote layout "${LAYOUT_NAME}", but couldn't switch Herdr to it from "${retired}", so "${retired}" is kept.`,
+        `herdr-sync: switch with herdr-app do layout.switch --name ${LAYOUT_NAME}, then sync again.`,
+      ],
+    };
+  }
+  if (retired !== null) rmSync(join(home, "layouts", `${retired}.json`), { force: true });
   writeIfChanged(
     join(home, RECORD_FILE),
     json({ layout: LAYOUT_NAME, from: DEFAULT_LAYOUT, version }),
@@ -304,7 +359,12 @@ export function herdrSync({
     code: 0,
     out: [
       `herdr-sync: wrote layout "${LAYOUT_NAME}" from Herdr's "${DEFAULT_LAYOUT}" (Herdr ${version}).`,
-      `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${LAYOUT_NAME}`,
+      ...(retired === null
+        ? []
+        : [`herdr-sync: removed layout "${retired}", which an earlier sync built.`]),
+      switching
+        ? `herdr-sync: switched Herdr from "${retired}" to "${LAYOUT_NAME}".`
+        : `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${LAYOUT_NAME}`,
       ...missing.map(
         (mod) =>
           `herdr-sync: ${mod} isn't installed, so the layout keeps Herdr's own blocks for it. Install it (or run its dev build), then sync again.`,

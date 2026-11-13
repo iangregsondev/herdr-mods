@@ -2,7 +2,7 @@
 // Pure: no `herdr` or `gpui` imports.
 //
 // The record is a JSON file in the Herdr app home:
-//   { "layout": "iangregsondev", "from": "main", "version": "0.1.14" }
+//   { "layout": "workbench", "from": "main", "version": "0.1.14" }
 // `version` is the Herdr app version the layout was built from.
 import { Option, Result } from "effect";
 import { at, parseJson, text } from "worktrunk-mailbox";
