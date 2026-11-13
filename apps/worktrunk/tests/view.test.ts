@@ -372,11 +372,6 @@ describe("buildView: sublines", () => {
 });
 
 describe("buildView: header, banners and empty states", () => {
-  test("the spinner shows while loading", () => {
-    expect(buildView(snapshot({ loading: true })).loading).toBe(true);
-    expect(buildView(snapshot()).loading).toBe(false);
-  });
-
   test("a settings error shows as a banner saying defaults are in use", () => {
     expect(buildView(snapshot()).banners).toEqual([]);
     const s = snapshot({ settingsError: Option.some("iangregsondev-worktrunk.json: bad") });

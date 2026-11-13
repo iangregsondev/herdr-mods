@@ -235,9 +235,7 @@ export interface MachineChoice {
 }
 
 export interface PanelView {
-  /** Show the spinner. */
-  readonly loading: boolean;
-  /** The spinner's hover label, while it shows. */
+  /** The spinner's hover label: some while a refresh runs, so the spinner shows. */
   readonly spinnerTip: Option.Option<string>;
   /** The machine filter: All, then each machine. */
   readonly machineFilter: readonly MachineChoice[];
@@ -792,7 +790,6 @@ export const buildView = (whole: Snapshot): PanelView => {
   };
   const places = spacePlaces(snapshot.spaces, snapshot.panes);
   return {
-    loading: snapshot.loading,
     spinnerTip: snapshot.loading ? Option.some("Refreshing worktrees") : Option.none(),
     machineFilter: machineFilterOf(whole),
     chips: chipsOf(snapshot),

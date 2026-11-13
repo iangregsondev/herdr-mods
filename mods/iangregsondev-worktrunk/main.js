@@ -12597,7 +12597,6 @@ const buildView = (whole) => {
 	};
 	const places = spacePlaces(snapshot.spaces, snapshot.panes);
 	return {
-		loading: snapshot.loading,
 		spinnerTip: snapshot.loading ? some("Refreshing worktrees") : none(),
 		machineFilter: machineFilterOf(whole),
 		chips: chipsOf(snapshot),
