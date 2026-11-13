@@ -53,7 +53,9 @@ describe("quote", () => {
 
 describe("jobArgs", () => {
   test("starts the job wrapper as a background terminal in the folder, printing JSON", () => {
-    expect(jobArgs({ cwd: "/r/app", shell: "/bin/zsh", body: "wt list" })).toEqual([
+    expect(
+      jobArgs({ cwd: "/r/app", shell: "/bin/zsh", body: "wt list", on: THIS_MACHINE }),
+    ).toEqual([
       "run",
       "--json",
       "--bg",
@@ -68,6 +70,12 @@ describe("jobArgs", () => {
       "/bin/zsh",
       "wt list",
     ]);
+  });
+
+  test("a job on another machine starts there, through hc's --on", () => {
+    expect(
+      jobArgs({ cwd: "/srv/api", shell: "/bin/bash", body: "wt list", on: "linux" }).slice(0, 8),
+    ).toEqual(["run", "--json", "--bg", "--no-parent", "--on", "linux", "--cwd", "/srv/api"]);
   });
 });
 

@@ -4,6 +4,7 @@
 import { Option, Result } from "effect";
 import { isShortcut } from "./commands.ts";
 import type { Action } from "./menus.ts";
+import { THIS_MACHINE } from "./machines.ts";
 import { lastSegment } from "./settings.ts";
 import type { Worktree } from "./worktrees.ts";
 
@@ -117,6 +118,8 @@ export const enterAction = (
   current: Option.Option<string>,
 ): Action => ({
   _tag: "Create",
+  // The dialog lists and reads this machine's repos only.
+  machine: THIS_MACHINE,
   main,
   name: choiceName(choice),
   base: base === "current" ? Option.getOrNull(current) : null,

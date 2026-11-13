@@ -128,23 +128,27 @@ describe("spacesInGone", () => {
       space("s4", "/r/app.feat-x", ["t4"]),
     ];
     const panes = [pane("t1", "/r/app.feat-x/src"), pane("t4", "/r/app.feat-x")];
-    expect(spacesInGone(spaces, panes, ["/r/app.feat-x"])).toEqual(["s1", "s4"]);
+    expect(spacesInGone(spaces, panes, THIS_MACHINE, ["/r/app.feat-x"])).toEqual(["s1", "s4"]);
   });
 
   test("a space made in a removed worktree closes though its terminal followed the folder elsewhere", () => {
     // wt moves a removed worktree into a trash folder, and the shell inside goes with it.
     const spaces = [space("s1", "/r/app.feat-x", ["t1"])];
     const panes = [pane("t1", "/r/app/.git/wt/trash/app.feat-x-123")];
-    expect(spacesInGone(spaces, panes, ["/r/app.feat-x"])).toEqual(["s1"]);
+    expect(spacesInGone(spaces, panes, THIS_MACHINE, ["/r/app.feat-x"])).toEqual(["s1"]);
   });
 
-  test("spaces on other machines are never closed", () => {
-    const remote = space("s1", "/r/app.feat-x", ["t1"], { machine: "box" });
-    expect(spacesInGone([remote], [], ["/r/app.feat-x"])).toEqual([]);
+  test("the spaces on the gone folders' machine close; the same path on another machine stays", () => {
+    const spaces = [
+      space("box/s1", "/r/app.feat-x", ["box/t1"], { machine: "box" }),
+      space("s2", "/r/app.feat-x", ["t2"]),
+      space("other/s3", "/r/app.feat-x", ["other/t3"], { machine: "other" }),
+    ];
+    expect(spacesInGone(spaces, [], "box", ["/r/app.feat-x"])).toEqual(["box/s1"]);
   });
 
   test("nothing gone, nothing to close", () => {
-    expect(spacesInGone([space("s1", "/r/app", ["t1"])], [], [])).toEqual([]);
+    expect(spacesInGone([space("s1", "/r/app", ["t1"])], [], THIS_MACHINE, [])).toEqual([]);
   });
 });
 

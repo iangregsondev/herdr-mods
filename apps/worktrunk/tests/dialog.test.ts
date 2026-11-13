@@ -1,3 +1,4 @@
+import { THIS_MACHINE } from "../src/machines.ts";
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import {
@@ -157,16 +158,21 @@ describe("enterAction", () => {
       enterAction("/r/app", worktree, "default", on),
       enterAction("/r/app", branch, "default", on),
     ]).toEqual([
-      { _tag: "Create", main: "/r/app", name: "feat/login", base: null },
-      { _tag: "Create", main: "/r/app", name: "spike", base: null },
+      { _tag: "Create", machine: THIS_MACHINE, main: "/r/app", name: "feat/login", base: null },
+      { _tag: "Create", machine: THIS_MACHINE, main: "/r/app", name: "spike", base: null },
     ]);
   });
 
   const typed: Choice = { _tag: "Typed", name: "new", shortcut: false };
 
+  test("the dialog's repos are this machine's, so its Create runs on this machine", () => {
+    expect(enterAction("/r/app", typed, "default", on)).toHaveProperty("machine", THIS_MACHINE);
+  });
+
   test("the default branch as the base leaves the base to wt", () => {
     expect(enterAction("/r/app", typed, "default", on)).toEqual({
       _tag: "Create",
+      machine: THIS_MACHINE,
       main: "/r/app",
       name: "new",
       base: null,
@@ -176,6 +182,7 @@ describe("enterAction", () => {
   test("the branch I'm on as the base", () => {
     expect(enterAction("/r/app", typed, "current", on)).toEqual({
       _tag: "Create",
+      machine: THIS_MACHINE,
       main: "/r/app",
       name: "new",
       base: "feat/a",
@@ -185,6 +192,7 @@ describe("enterAction", () => {
   test("the branch I'm on, when there is none, falls back to the default branch", () => {
     expect(enterAction("/r/app", typed, "current", Option.none())).toEqual({
       _tag: "Create",
+      machine: THIS_MACHINE,
       main: "/r/app",
       name: "new",
       base: null,
@@ -376,7 +384,13 @@ describe("pick", () => {
     const typed: Choice = { _tag: "Typed", name: "new", shortcut: false };
     expect(pick(inRepo, Option.some(typed))).toEqual({
       _tag: "Send",
-      action: { _tag: "Create", main: "/r/app", name: "new", base: "feat/a" },
+      action: {
+        _tag: "Create",
+        machine: THIS_MACHINE,
+        main: "/r/app",
+        name: "new",
+        base: "feat/a",
+      },
     });
   });
 

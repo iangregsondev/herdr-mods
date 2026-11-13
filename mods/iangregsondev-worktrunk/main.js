@@ -9427,8 +9427,8 @@ var WriteConflict = class extends TaggedError("WriteConflict") {};
 var PickerFailed = class extends TaggedError("PickerFailed") {};
 var Files = class Files extends Service()("worktrunk-mailbox/Files") {
 	static layer = (api) => {
-		const read = (path) => tryPromise({
-			try: () => api.readTextFile(path),
+		const read = (path, on = null) => tryPromise({
+			try: () => on === null ? api.readTextFile(path) : api.readTextFile(path, { on }),
 			catch: (cause) => new FileError({
 				path,
 				cause
@@ -10027,12 +10027,16 @@ fi
 exit "$rc"`;
 /** Prints each folder argument that no longer exists, one per line. */
 const GONE_SCRIPT = `for dir in "$@"; do [ -e "$dir" ] || printf '%s\\n' "$dir"; done`;
-/** `hc` arguments that start `job` as a background terminal, printing its address as JSON. */
-const jobArgs = ({ cwd, shell, body }) => [
+/**
+* `hc` arguments that start `job` as a background terminal, printing its address as
+* JSON. A job on another machine starts there (`--on`); this machine's needs no flag.
+*/
+const jobArgs = ({ cwd, shell, body, on }) => [
 	"run",
 	"--json",
 	"--bg",
 	"--no-parent",
+	...on === null ? [] : ["--on", on],
 	"--cwd",
 	cwd,
 	"--",
@@ -10140,6 +10144,7 @@ const choiceName = (choice) => choice._tag === "Worktree" ? choice.branch : choi
 */
 const enterAction = (main, choice, base, current) => ({
 	_tag: "Create",
+	machine: null,
 	main,
 	name: choiceName(choice),
 	base: base === "current" ? getOrNull(current) : null
@@ -10314,6 +10319,10 @@ const noticeFor = (step) => {
 };
 
 // src/menus.ts
+/** How many worktrees `batches` remove. */
+const removedBy = (batches) => batches.reduce((n, batch) => n + batch.paths.length, 0);
+/** How many worktrees a clean up removes. */
+const cleanupCount = (action) => removedBy(action.batches);
 const item = (label, action, danger = false) => ({
 	label,
 	danger,
@@ -10324,9 +10333,10 @@ const revealOn = (machine, path) => machine === null ? [item("Reveal in Finder",
 	_tag: "Reveal",
 	path
 })] : [];
-const mergeOf = (root, worktree, branch, mode) => ({
+const mergeOf = ({ machine, root }, worktree, branch, mode) => ({
 	_tag: "Merge",
 	target: {
+		machine,
 		main: root,
 		path: worktree.path,
 		branch
@@ -10335,9 +10345,10 @@ const mergeOf = (root, worktree, branch, mode) => ({
 	dirty: worktree.dirty
 });
 /** Removing a linked worktree: by its branch, or by its folder when it has none. */
-const removeOf = (root, worktree) => ({
+const removeOf = ({ machine, root }, worktree) => ({
 	_tag: "Remove",
 	target: {
+		machine,
 		main: root,
 		path: worktree.path,
 		branch: getOrElse$1(worktree.branch, () => worktree.path)
@@ -10345,13 +10356,13 @@ const removeOf = (root, worktree) => ({
 	dirty: worktree.dirty
 });
 /** The right-click menu of a worktree of `repo`. */
-const rowMenu = ({ machine, root }, worktree, click) => {
-	const remove = item("Remove…", removeOf(root, worktree), true);
+const rowMenu = (repo, worktree, click) => {
+	const remove = item("Remove…", removeOf(repo, worktree), true);
 	const linked = worktree.state._tag === "Main" ? [] : match$5(worktree.branch, {
 		onNone: () => [remove],
 		onSome: (branch) => [
-			item("Merge into main (squash)", mergeOf(root, worktree, branch, "squash")),
-			item("Merge, keeping every commit", mergeOf(root, worktree, branch, "keep")),
+			item("Merge into main (squash)", mergeOf(repo, worktree, branch, "squash")),
+			item("Merge, keeping every commit", mergeOf(repo, worktree, branch, "keep")),
 			remove
 		]
 	});
@@ -10365,22 +10376,24 @@ const rowMenu = ({ machine, root }, worktree, click) => {
 			_tag: "CopyPath",
 			path: worktree.path
 		}),
-		...revealOn(machine, worktree.path)
+		...revealOn(repo.machine, worktree.path)
 	];
 };
 /**
-* Merging (squashed) or removing the worktree of the repo at `root` that holds `folder`,
-* as a space's menu asks: the deepest of `worktrees` containing it. Fails, saying why,
-* for the main checkout, a detached worktree's merge, or a folder in none of them.
+* Merging (squashed) or removing the worktree of `repo` that holds `folder` (on the
+* repo's machine), as a space's menu asks: the deepest of `worktrees` containing it.
+* Fails, saying why, for the main checkout, a detached worktree's merge, or a folder in
+* none of them.
 */
-const spaceWorktreeAction = (act, root, worktrees, folder) => {
+const spaceWorktreeAction = (act, repo, worktrees, folder) => {
+	const root = repo.root;
 	const holder = worktrees.filter((w) => isUnder(folder, w.path)).reduce((best, w) => best && best.path.length >= w.path.length ? best : w, void 0);
 	if (holder === void 0) return fail$2(`${folder} isn't in a worktree of ${lastSegment(root)}.`);
 	if (holder.state._tag === "Main") return fail$2(`${lastSegment(root)}'s main checkout can't be merged or removed.`);
-	if (act === "Remove") return succeed$3(removeOf(root, holder));
+	if (act === "Remove") return succeed$3(removeOf(repo, holder));
 	return match$5(holder.branch, {
 		onNone: () => fail$2(`${lastSegment(holder.path)} has no branch to merge.`),
-		onSome: (branch) => succeed$3(mergeOf(root, holder, branch, "squash"))
+		onSome: (branch) => succeed$3(mergeOf(repo, holder, branch, "squash"))
 	});
 };
 /** One menu row's height, in px. */
@@ -10391,9 +10404,10 @@ const MENU_CHROME = 40;
 const menuHeight = (items) => 40 + items * 30;
 /** Removing every merged worktree of `repos`, batched by repo; none when there are none. */
 const cleanupAction = (repos) => {
-	const found = repos.flatMap(({ root, worktrees }) => {
+	const found = repos.flatMap(({ machine, root, worktrees }) => {
 		const merged = worktrees.filter((w) => w.state._tag === "Merged");
 		return merged.length === 0 ? [] : [{
+			machine,
 			root,
 			merged
 		}];
@@ -10402,11 +10416,12 @@ const cleanupAction = (repos) => {
 	const all = found.flatMap(({ merged }) => merged);
 	return some({
 		_tag: "Cleanup",
-		batches: found.map(({ root, merged }) => ({
+		batches: found.map(({ machine, root, merged }) => ({
+			machine,
 			main: root,
-			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path))
+			branches: merged.map((w) => getOrElse$1(w.branch, () => w.path)),
+			paths: merged.map((w) => w.path)
 		})),
-		paths: all.map((w) => w.path),
 		dirty: all.filter((w) => w.dirty).length
 	});
 };
@@ -10417,9 +10432,10 @@ const repoMenu = ({ machine, root }, worktrees) => [
 		folder: root
 	}),
 	...toArray(cleanupAction([{
+		machine,
 		root,
 		worktrees
-	}])).map((action) => item(`Clean up ${action.paths.length} merged…`, action, true)),
+	}])).map((action) => item(`Clean up ${cleanupCount(action)} merged…`, action, true)),
 	item("Refresh", { _tag: "Refresh" }),
 	...revealOn(machine, root),
 	item("Hide this repo", {
@@ -10449,9 +10465,12 @@ const findWorktree = (lists, key) => {
 */
 const cleanupFor = (lists, keys) => {
 	const found = keys.flatMap((key) => toArray(findWorktree(lists, key)));
-	const repos = Array.from(new Map(found.map((f) => [repoKey(f), f.root])));
-	return cleanupAction(repos.map(([key, root]) => ({
-		root,
+	const repos = Array.from(new Map(found.map((f) => [repoKey(f), {
+		machine: f.machine,
+		root: f.root
+	}])));
+	return cleanupAction(repos.map(([key, repo]) => ({
+		...repo,
 		worktrees: found.filter((f) => repoKey(f) === key).map((f) => f.worktree)
 	})));
 };
@@ -10482,7 +10501,7 @@ const confirmFor = (action) => {
 			danger: true
 		});
 		case "Cleanup": {
-			const count = action.batches.reduce((n, batch) => n + batch.branches.length, 0);
+			const count = cleanupCount(action);
 			return some({
 				title: `Remove ${count} merged worktree${count === 1 ? "" : "s"}?`,
 				lines: [
@@ -10499,28 +10518,45 @@ const confirmFor = (action) => {
 };
 /** The confirm dialog's height for `lines` lines of text, in px, never taller than 560. */
 const dialogHeight = (lines) => Math.min(560, 132 + lines * 22);
-/** The job for `action`; none for actions that aren't jobs (Create is built with its temp file). */
-const jobFor = (action, options) => {
+/** The clean up of `batches`, all on `machine`, as one job; none for no batches. */
+const cleanupJob = (batches, machine, title, options) => toArray(map$3(fromNullishOr(batches[0]), (first) => ({
+	title,
+	cwd: first.main,
+	body: cleanupScript(batches, options),
+	gone: batches.flatMap((batch) => batch.paths),
+	on: machine
+})));
+/**
+* The jobs for `action`, in the order they run; none for actions that aren't jobs
+* (Create is built with its temp file). Each job runs on its repo's machine. A job runs
+* on one machine, so a clean up is one job per machine its repos are on, in the order the
+* machines first appear, each named after its machine when there are several.
+*/
+const jobsFor = (action, options) => {
 	switch (action._tag) {
-		case "Merge": return some({
+		case "Merge": return [{
 			title: `Merge ${action.target.branch} into main`,
 			cwd: action.target.main,
 			body: mergeScript(action.target, action.mode, options),
-			gone: [action.target.path]
-		});
-		case "Remove": return some({
+			gone: [action.target.path],
+			on: action.target.machine
+		}];
+		case "Remove": return [{
 			title: `Remove ${action.target.branch}`,
 			cwd: action.target.main,
 			body: removeScript(action.target.main, [action.target.branch], options),
-			gone: [action.target.path]
-		});
-		case "Cleanup": return map$3(fromNullishOr(action.batches[0]), (first) => ({
-			title: `Clean up ${action.paths.length} merged`,
-			cwd: first.main,
-			body: cleanupScript(action.batches, options),
-			gone: action.paths
-		}));
-		default: return none();
+			gone: [action.target.path],
+			on: action.target.machine
+		}];
+		case "Cleanup": {
+			const machines = Array.from(new Set(action.batches.map((batch) => batch.machine)));
+			return machines.flatMap((machine) => {
+				const batches = action.batches.filter((batch) => batch.machine === machine);
+				const where = machines.length > 1 ? ` on ${machineName(machine)}` : "";
+				return cleanupJob(batches, machine, `Clean up ${removedBy(batches)} merged${where}`, options);
+			});
+		}
+		default: return [];
 	}
 };
 /** What to say when a job is asked for while `running` (its title) still runs. */
@@ -10754,12 +10790,14 @@ const lastLine = (text) => text.trim().split("\n").filter(Boolean).at(-1) ?? "";
 * `reason` says why.
 */
 var LoginShellUnknown = class extends TaggedError("LoginShellUnknown") {};
+/** The options that run a command on `machine`: none for this machine. */
+const runOn = (machine) => machine === null ? void 0 : { on: machine };
 /**
-* The person's login shell, from `$SHELL`. A read that fails is `LoginShellUnknown`:
-* another shell would run the job with another PATH.
+* The person's login shell on `machine`, from `$SHELL` there. A read that fails is
+* `LoginShellUnknown`: another shell would run the job with another PATH.
 */
-const loginShell = fn("loginShell")(function* () {
-	const found = (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""]).pipe(mapError((failed) => new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` })))).stdout.trim();
+const loginShell = fn("loginShell")(function* (machine = null) {
+	const found = (yield* (yield* Shell).exec("sh", ["-c", "printf %s \"$SHELL\""], runOn(machine)).pipe(mapError((failed) => new LoginShellUnknown({ reason: `couldn't read $SHELL: ${failureText(failed)}` })))).stdout.trim();
 	if (found === "") return yield* new LoginShellUnknown({ reason: "$SHELL is empty" });
 	return found;
 });
@@ -10790,10 +10828,10 @@ const waitForJob = (addr) => gen(function* () {
 		case "Running": return yield* waitForJob(addr);
 	}
 });
-/** Which of `folders` no longer exist. */
-const goneFolders = fn("goneFolders")(function* (folders) {
+/** Which of `folders` on `machine` no longer exist, checked there. */
+const goneFolders = fn("goneFolders")(function* (folders, machine = null) {
 	if (folders.length === 0) return [];
-	return (yield* runScript("the removed folders' check", GONE_SCRIPT, folders)).stdout.split("\n").filter((line) => line !== "");
+	return (yield* runScript("the removed folders' check", GONE_SCRIPT, folders, { on: machine })).stdout.split("\n").filter((line) => line !== "");
 });
 /** Stops the job in terminal `addr`. */
 const stopJob = fn("stopJob")(function* (addr) {
@@ -10803,9 +10841,9 @@ const stopJob = fn("stopJob")(function* (addr) {
 const reveal = fn("reveal")(function* (path) {
 	yield* (yield* Shell).exec("open", [path]);
 });
-/** A new private temp folder (`mktemp -d`), for a job's answer file. */
-const makeTempDir = fn("makeTempDir")(function* () {
-	const dir = (yield* (yield* Shell).exec("mktemp", ["-d"])).stdout.trim();
+/** A new private temp folder (`mktemp -d`) on `machine`, for a job's answer file. */
+const makeTempDir = fn("makeTempDir")(function* (machine = null) {
+	const dir = (yield* (yield* Shell).exec("mktemp", ["-d"], runOn(machine))).stdout.trim();
 	if (dir === "") return yield* new CommandFailed({
 		command: "mktemp",
 		code: 0,
@@ -10813,9 +10851,9 @@ const makeTempDir = fn("makeTempDir")(function* () {
 	});
 	return dir;
 });
-/** Removes the folder at `dir` and everything in it. */
-const removeDir = fn("removeDir")(function* (dir) {
-	yield* (yield* Shell).exec("rm", ["-rf", dir]);
+/** Removes the folder at `dir` on `machine` and everything in it. */
+const removeDir = fn("removeDir")(function* (dir, machine = null) {
+	yield* (yield* Shell).exec("rm", ["-rf", dir], runOn(machine));
 });
 /** Removes the ended job's terminal from herdr-core. */
 const removeTerminal = fn("removeTerminal")(function* (addr) {
@@ -10947,16 +10985,15 @@ const readList = fn("readList")(function* (repo) {
 */
 const spaceWorktree = (act, folder) => holderRepo(folder).pipe(map(flatMap$2(match$5({
 	onNone: () => fail$2(`${folder} isn't in a git repo.`),
-	onSome: ({ root, worktrees }) => spaceWorktreeAction(act, root, worktrees, folder)
+	onSome: ({ repo, worktrees }) => spaceWorktreeAction(act, repo, worktrees, folder)
 }))));
 /** The repo `folder` is in, with its worktrees; none outside every repo. */
 const holderRepo = fn("holderRepo")(function* (folder) {
 	const found = yield* repoAt(folder);
 	if (isNone(found)) return none();
-	const root = found.value.root;
 	const worktrees = yield* wtList(found.value);
 	return some({
-		root,
+		repo: found.value,
 		worktrees
 	});
 }, asReason);
@@ -11016,21 +11053,23 @@ const fileFailureText = (failed) => failed._tag === "FileMissing" ? `${failed.pa
 /** A step that failed as its one line, `what` went wrong and why; nothing when it worked. */
 const problemOf = (step, what) => isFailure(step) ? [`${what}: ${failureText(step.failure)}`] : [];
 /**
-* Runs `spec` as a job in the person's login shell, in a background terminal: `shown`
-* gets its address as soon as it starts (to open its window), then this waits for it to
-* end, removes its terminal and checks which of its folders are gone.
+* Runs `spec` as a job on its machine, in the person's login shell there, in a
+* background terminal: `shown` gets its address as soon as it starts (to open its
+* window), then this waits for it to end, removes its terminal and checks, on that
+* machine, which of its folders are gone.
 */
 const runJob = fn("runJob")(function* (spec, shown) {
-	const shell = yield* loginShell();
+	const shell = yield* loginShell(spec.on);
 	const addr = yield* startJob({
 		cwd: spec.cwd,
 		shell,
-		body: spec.body
+		body: spec.body,
+		on: spec.on
 	});
 	yield* sync(() => shown(addr));
 	const waited = yield* result(waitForJob(addr));
 	const removed = yield* result(removeTerminal(addr));
-	const checked = yield* result(goneFolders(spec.gone));
+	const checked = yield* result(goneFolders(spec.gone, spec.on));
 	return {
 		_tag: "Ended",
 		code: getOrElse(waited, () => none()),
@@ -11041,7 +11080,7 @@ const runJob = fn("runJob")(function* (spec, shown) {
 			...problemOf(checked, "Couldn't check which folders went, so no space was closed")
 		]
 	};
-}, catchTags({
+}, (effect, spec) => effect.pipe(catchTags({
 	JobNotStarted: (failed) => succeed({
 		_tag: "NotStarted",
 		reason: failed.reason
@@ -11054,19 +11093,31 @@ const runJob = fn("runJob")(function* (spec, shown) {
 		_tag: "NotStarted",
 		reason: `couldn't find your login shell: ${failed.reason}`
 	})
-}));
+}), map((outcome) => outcomeOn(spec.on, outcome))));
+/** `text` named as `machine`'s, so a failure says where to look; this machine's as is. */
+const onMachineText = (machine, text) => machine === null ? text : `On ${machineName(machine)}: ${text}`;
+/** `outcome` with its reason or problems named as `machine`'s. */
+const outcomeOn = (machine, outcome) => outcome._tag === "NotStarted" ? {
+	...outcome,
+	reason: onMachineText(machine, outcome.reason)
+} : {
+	...outcome,
+	problems: outcome.problems.map((line) => onMachineText(machine, line))
+};
 /** The worktree wt's answer file names, from its `read`, or the one line saying why not. */
 const switchedFrom = (read) => match$4(read, {
 	onFailure: (failed) => fail$2(`Couldn't read wt's answer, so no space was opened: ${fileFailureText(failed)}`),
 	onSuccess: (text) => fromOption$2(switchedTo(text), () => `wt's answer names no branch and folder, so no space was opened: ${text.trim()}`)
 });
 /**
-* Switches to or creates the worktree for `name` in the repo at `main` as a job (see
-* `runJob`), its JSON answer written to a private temp folder that is removed after.
+* Switches to or creates the worktree for `name` in the repo at `main` on `machine` as a
+* job (see `runJob`), its JSON answer written to a private temp folder there, read back
+* from there, and removed after. The folder must be on the job's machine: wt writes it
+* there, and Herdr reads files on any machine.
 */
 const newWorktree = fn("newWorktree")(function* (target, shown) {
 	const disk = yield* Files;
-	const dir = yield* makeTempDir().pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
+	const dir = yield* makeTempDir(target.machine).pipe(mapError((failed) => new JobNotStarted({ reason: `couldn't make a temp folder: ${failureText(failed)}` })));
 	const out = `${dir}/switch.json`;
 	const spec = {
 		title: `Open or create ${target.name}`,
@@ -11076,25 +11127,26 @@ const newWorktree = fn("newWorktree")(function* (target, shown) {
 			base: fromNullishOr(target.base),
 			out
 		}),
-		gone: []
+		gone: [],
+		on: target.machine
 	};
 	const outcome = yield* runJob(spec, shown);
-	const read = outcome._tag === "Ended" && contains(outcome.code, 0) ? some(yield* result(disk.read(out))) : none();
-	const removed = yield* result(removeDir(dir));
+	const read = outcome._tag === "Ended" && contains(outcome.code, 0) ? some(yield* result(disk.read(out, target.machine))) : none();
+	const removed = yield* result(removeDir(dir, target.machine));
 	const switched = map$3(read, switchedFrom);
 	return {
 		outcome,
 		switched: flatMap$3(switched, getSuccess),
-		problems: [...toArray(flatMap$3(switched, getFailure)), ...problemOf(removed, `Couldn't remove the temp folder ${dir}`)]
+		problems: [...toArray(flatMap$3(switched, getFailure)), ...problemOf(removed, `Couldn't remove the temp folder ${dir}`)].map((line) => onMachineText(target.machine, line))
 	};
-}, catchTag("JobNotStarted", (failed) => succeed({
+}, (effect, target) => effect.pipe(catchTag("JobNotStarted", (failed) => succeed({
 	outcome: {
 		_tag: "NotStarted",
-		reason: failed.reason
+		reason: onMachineText(target.machine, failed.reason)
 	},
 	switched: none(),
 	problems: []
-})));
+}))));
 /** The group folder picked in the system's folder picker (none if cancelled), or why it couldn't open. */
 const pickGroupFolder = fn("pickGroupFolder")(function* () {
 	const picked = yield* (yield* Files).pickFolder("Add group folder");
@@ -11353,15 +11405,16 @@ const spacesOnWorktrees = (places, machine, paths) => places.filter((place) => p
 	return new Map([...on, [path, space]]);
 }, /* @__PURE__ */ new Map());
 /**
-* The ids of the spaces on this machine whose folder (where the space was made) or
-* place (where its first terminal is now) is one of the `gone` folders, or inside one.
+* The ids of the spaces on `machine` whose folder (where the space was made) or place
+* (where its first terminal is now) is one of the `gone` folders there, or inside one. A
+* space on another machine never matches: the same path there is another folder.
 * Both count because wt moves a removed worktree into a trash folder and a shell inside
 * it moves too, so the place alone can point somewhere that still exists.
 */
-const spacesInGone = (spaces, panes, gone) => {
+const spacesInGone = (spaces, panes, machine, gone) => {
 	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
 	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-	return spaces.filter((space) => space.machine === null).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
+	return spaces.filter((space) => space.machine === machine).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
 };
 /**
 * The folder the person is working in, on the focused space's machine: the focused
@@ -11800,6 +11853,8 @@ const readFolded = (value) => Object.fromEntries(Object.entries(fields(value)).f
 const oneOf = (options) => (value) => fromNullishOr(options.find((option) => option === value));
 const readMode = oneOf(["squash", "keep"]);
 const readAct = oneOf(SPACE_ACTS);
+/** The machine a value names; no machine named is this machine. */
+const readMachine = (value) => getOrNull(text(value));
 const readClick = (value) => {
 	const f = fields(value);
 	switch (f._tag) {
@@ -11813,25 +11868,32 @@ const readClick = (value) => {
 		}), (click) => ({
 			_tag: "New",
 			...click,
-			machine: getOrNull(text(f.machine))
+			machine: readMachine(f.machine)
 		}));
 		default: return none();
 	}
 };
 const readLinked = (value) => {
 	const f = fields(value);
-	return all$2({
+	return map$3(all$2({
 		main: text(f.main),
 		path: text(f.path),
 		branch: text(f.branch)
-	});
+	}), (linked) => ({
+		machine: readMachine(f.machine),
+		...linked
+	}));
 };
 const readBatch = (value) => {
 	const f = fields(value);
-	return all$2({
+	return map$3(all$2({
 		main: text(f.main),
-		branches: listOf$2(f.branches, text)
-	});
+		branches: listOf$2(f.branches, text),
+		paths: listOf$2(f.paths, text)
+	}), (batch) => ({
+		machine: readMachine(f.machine),
+		...batch
+	}));
 };
 /** An Action, as `send` posts it or a menu item carries it; none for anything else. */
 const readAction = (value) => {
@@ -11858,7 +11920,6 @@ const readAction = (value) => {
 		}));
 		case "Cleanup": return map$3(all$2({
 			batches: listOf$2(f.batches, readBatch),
-			paths: listOf$2(f.paths, text),
 			dirty: finite(f.dirty)
 		}), (cleanup) => ({
 			_tag: "Cleanup",
@@ -11881,7 +11942,8 @@ const readAction = (value) => {
 			base: textOrNull(f.base)
 		}), (create) => ({
 			_tag: "Create",
-			...create
+			...create,
+			machine: readMachine(f.machine)
 		}));
 		case "CopyPath": return map$3(text(f.path), (path) => ({
 			_tag: "CopyPath",
@@ -12516,7 +12578,7 @@ var Worktrunk = class extends View {
 			case "Focus":
 				map$3(this.searchBox, (box) => box.focus());
 				return;
-			case "Create": return this.createWorktree(cx, action.main, action.name, action.base);
+			case "Create": return this.createWorktree(cx, action);
 			case "Settings":
 				cx.spawn(async () => {
 					const text = await runEdge(settingsText(settingsFile()), fail$2);
@@ -12537,7 +12599,7 @@ var Worktrunk = class extends View {
 					});
 				});
 				return;
-			default: map$3(jobFor(action, this.settings), (spec) => this.runJob(cx, spec));
+			default: this.runJobs(cx, jobsFor(action, this.settings));
 		}
 	}
 	/**
@@ -12577,58 +12639,64 @@ var Worktrunk = class extends View {
 		});
 	}
 	/**
-	* What every job does once it has ended: say why it never started, or close spaces and
-	* say what went wrong around it.
+	* What every job does once it has ended: say why it never started, or close the spaces
+	* on its removed folders (on its machine) and say what went wrong around it.
 	*/
-	jobEnded(cx, title, outcome) {
+	jobEnded(title, machine, outcome) {
 		if (outcome._tag === "NotStarted") notify({
 			title: `Couldn't start: ${title}`,
 			body: outcome.reason,
 			level: "error"
 		});
 		else {
-			spacesInGone(spaces(), panes(), outcome.gone).forEach((id) => run("space.close", {
+			spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) => run("space.close", {
 				id,
 				confirmed: true
 			}));
 			jobProblems(title, outcome.problems);
 		}
+	}
+	/** No job runs any more: the panel says so and reads the list again. */
+	jobsDone(cx) {
 		this.job = none();
 		cx.notify();
 		this.refresh(cx, { scan: false });
 	}
 	/**
-	* Runs `spec` as a terminal job in a floating window, one job at a time. The window
-	* closes when the job ends; a failed job waits for Enter first, so it stays open with
-	* its exit code. Then spaces on removed folders close and the list is read again.
+	* Runs `specs` one after another as terminal jobs, each in a floating window on its
+	* machine, one job at a time. A window closes when its job ends; a failed job waits
+	* for Enter first, so it stays open with its exit code. After each, spaces on its
+	* removed folders close; after the last, the list is read again.
 	*/
-	runJob(cx, spec) {
-		if (this.busy()) return;
-		this.job = some(spec.title);
+	runJobs(cx, specs) {
+		const [first] = specs;
+		if (first === void 0 || this.busy()) return;
+		this.job = some(first.title);
 		cx.notify();
 		cx.spawn(async (cx) => {
-			const outcome = await runEdge(runJob(spec, (addr) => openJobWindow(spec.title, addr)), (defect) => ({
-				_tag: "NotStarted",
-				reason: defect
-			}));
-			this.jobEnded(cx, spec.title, outcome);
+			for (const spec of specs) {
+				this.job = some(spec.title);
+				cx.notify();
+				const outcome = await runEdge(runJob(spec, (addr) => openJobWindow(spec.title, addr)), (defect) => ({
+					_tag: "NotStarted",
+					reason: defect
+				}));
+				this.jobEnded(spec.title, spec.on, outcome);
+			}
+			this.jobsDone(cx);
 		});
 	}
 	/**
-	* Switches to or creates the worktree for `name` as a job, then opens a space on it, or
-	* selects the one already there.
+	* Switches to or creates the worktree `create` asks for as a job on its repo's machine,
+	* then opens a space on it there, or selects the one already there.
 	*/
-	createWorktree(cx, main, name, base) {
+	createWorktree(cx, create) {
 		if (this.busy()) return;
-		const title = `Open or create ${name}`;
+		const title = `Open or create ${create.name}`;
 		this.job = some(title);
 		cx.notify();
 		cx.spawn(async (cx) => {
-			const made = await runEdge(newWorktree({
-				main,
-				name,
-				base
-			}, (addr) => openJobWindow(title, addr)), (defect) => ({
+			const made = await runEdge(newWorktree(create, (addr) => openJobWindow(title, addr)), (defect) => ({
 				outcome: {
 					_tag: "NotStarted",
 					reason: defect
@@ -12638,11 +12706,12 @@ var Worktrunk = class extends View {
 			}));
 			jobProblems(title, made.problems);
 			map$3(made.switched, ({ branch, path }) => onClickRow(goTo(spacePlaces(spaces(), panes()), {
-				machine: null,
+				machine: create.machine,
 				folder: path,
 				name: branch
 			})));
-			this.jobEnded(cx, title, made.outcome);
+			this.jobEnded(title, create.machine, made.outcome);
+			this.jobsDone(cx);
 		});
 	}
 	/** The repos the view shows: the only ones worth reading. */
@@ -13023,7 +13092,7 @@ var Worktrunk = class extends View {
 			case "Message": return div().p(16).text_size(sizes.small).text_color(t.muted).child(body.text);
 			case "NotInRepo": return v_flex().child(div().px(14).pt(12).text_size(sizes.small).font_semibold().text_color(t.muted).child(body.text)).child(this.renderBody(style, body.open));
 			case "Tree": return v_flex().pb(16).children(body.repos.map((repo) => this.renderRepo(style, repo)));
-			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${action.paths.length}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
+			case "Flat": return v_flex().pt(6).pb(16).children(toArray(body.summary).map((summary) => h_flex().px(14).pt(4).pb(4).gap(8).items_center().text_size(sizes.label).child(div().flex_1().min_w(0).font_semibold().text_color(t.done).child(summary)).children(toArray(cleanupFor(this.lists, body.rows.map((row) => row.key))).map((action) => div().id("cleanup-all").flex_none().px(8).py(2).rounded(6).cursor_pointer().text_color(t.ansi1).hover((s) => s.bg(t.hover)).on_click(() => ask(action)).child(`Clean up all ${cleanupCount(action)}`))))).children(body.rows.map((row) => this.renderRow(style, row)));
 		}
 	}
 	/** The tab-bar button: shows and hides the panel's block. */
@@ -13034,7 +13103,7 @@ var Worktrunk = class extends View {
 	}
 	renderRepo({ t, sizes }, repo) {
 		const head = h_flex().id(`repo-${repo.key}`).min_h(36).px(10).mt(6).gap(8).items_center().when(repo.foldable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => toggleFold(repo.key))).on_mouse_down("right", () => this.openRepoMenu(repo.key)).child(icon(repo.folded ? "chevron-right" : "chevron-down", 14, t.muted)).child(div().min_w(0).truncate().font_semibold().child(repo.name)).children(toArray(repo.machine).map((machine) => div().flex_none().px(6).rounded(4).border(1).border_color(t.border).text_size(sizes.label - 1).text_color(t.muted).child(machine))).children(toArray(repo.group).map((group) => div().flex_none().px(6).rounded(4).bg(t.chrome).text_size(sizes.label - 1).text_color(t.dim).child(group))).child(div().flex_1()).children(toArray(cleanupAction([{
-			root: repoOfKey(repo.key).root,
+			...repoOfKey(repo.key),
 			worktrees: this.worktreesOf(repo.key)
 		}])).map((action) => div().id(`cleanup-${repo.key}`).flex_none().px(6).rounded(4).text_size(sizes.label).text_color(t.done).hover((s) => s.bg(t.raised)).on_click((_event, cx) => {
 			cx.stop_propagation();

@@ -263,14 +263,18 @@ export class LoginShellUnknown extends Data.TaggedError("LoginShellUnknown")<{
   readonly reason: string;
 }> {}
 
+/** The options that run a command on `machine`: none for this machine. */
+const runOn = (machine: Machine): ExecOptions | undefined =>
+  machine === THIS_MACHINE ? undefined : { on: machine };
+
 /**
- * The person's login shell, from `$SHELL`. A read that fails is `LoginShellUnknown`:
- * another shell would run the job with another PATH.
+ * The person's login shell on `machine`, from `$SHELL` there. A read that fails is
+ * `LoginShellUnknown`: another shell would run the job with another PATH.
  */
-export const loginShell = Effect.fn("loginShell")(function* () {
+export const loginShell = Effect.fn("loginShell")(function* (machine: Machine = THIS_MACHINE) {
   const shell = yield* Shell;
   const out = yield* shell
-    .exec("sh", ["-c", 'printf %s "$SHELL"'])
+    .exec("sh", ["-c", 'printf %s "$SHELL"'], runOn(machine))
     .pipe(
       Effect.mapError(
         (failed) =>
@@ -318,10 +322,15 @@ export const waitForJob = (addr: string): Effect.Effect<Option.Option<number>, S
     }
   });
 
-/** Which of `folders` no longer exist. */
-export const goneFolders = Effect.fn("goneFolders")(function* (folders: readonly string[]) {
+/** Which of `folders` on `machine` no longer exist, checked there. */
+export const goneFolders = Effect.fn("goneFolders")(function* (
+  folders: readonly string[],
+  machine: Machine = THIS_MACHINE,
+) {
   if (folders.length === 0) return [];
-  const run = yield* runScript("the removed folders' check", GONE_SCRIPT, folders);
+  const run = yield* runScript("the removed folders' check", GONE_SCRIPT, folders, {
+    on: machine,
+  });
   return run.stdout.split("\n").filter((line) => line !== "");
 });
 
@@ -337,10 +346,10 @@ export const reveal = Effect.fn("reveal")(function* (path: string) {
   yield* shell.exec("open", [path]);
 });
 
-/** A new private temp folder (`mktemp -d`), for a job's answer file. */
-export const makeTempDir = Effect.fn("makeTempDir")(function* () {
+/** A new private temp folder (`mktemp -d`) on `machine`, for a job's answer file. */
+export const makeTempDir = Effect.fn("makeTempDir")(function* (machine: Machine = THIS_MACHINE) {
   const shell = yield* Shell;
-  const run = yield* shell.exec("mktemp", ["-d"]);
+  const run = yield* shell.exec("mktemp", ["-d"], runOn(machine));
   const dir = run.stdout.trim();
   if (dir === "") {
     return yield* new CommandFailed({
@@ -352,10 +361,13 @@ export const makeTempDir = Effect.fn("makeTempDir")(function* () {
   return dir;
 });
 
-/** Removes the folder at `dir` and everything in it. */
-export const removeDir = Effect.fn("removeDir")(function* (dir: string) {
+/** Removes the folder at `dir` on `machine` and everything in it. */
+export const removeDir = Effect.fn("removeDir")(function* (
+  dir: string,
+  machine: Machine = THIS_MACHINE,
+) {
   const shell = yield* Shell;
-  yield* shell.exec("rm", ["-rf", dir]);
+  yield* shell.exec("rm", ["-rf", dir], runOn(machine));
 });
 
 /** Removes the ended job's terminal from herdr-core. */
