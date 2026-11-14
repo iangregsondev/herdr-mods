@@ -16,9 +16,15 @@
 // reads the installed files on this machine each time.
 import { Effect } from "effect";
 import { modId, NAMESPACE } from "../mod-pack.ts";
-import { causeText, HerdrHost, type HostUnreachable, type TransportError } from "./herdr-host.ts";
+import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import {
-  herdrHome,
+  causeText,
+  HerdrHost,
+  hostLayer,
+  type HostUnreachable,
+  type TransportError,
+} from "./herdr-host.ts";
+import {
   herdrStatus,
   layoutFromStatus,
   shippedOnHost,
@@ -28,8 +34,6 @@ import {
 
 /** The layout Herdr ships as its default, which mine is built from. */
 export const DEFAULT_LAYOUT = "main";
-/** My layout's name: what it is, not whose. */
-export const LAYOUT_NAME = "workbench";
 /** The record of the Herdr version the layout was built from, in the app home. */
 export const RECORD_FILE = `${NAMESPACE}-sync.json`;
 
@@ -309,6 +313,7 @@ const switchTo = (layout: string) =>
  * layout is to be retired.
  */
 export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
+  layout: string,
   status: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = herdrStatus,
 ): Effect.fn.Return<SyncResult, TransportError | HostUnreachable, HerdrHost> {
   const host = yield* HerdrHost;
@@ -322,8 +327,8 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
   }
 
   const shipped = yield* shippedOnHost;
-  if (shipped.has(LAYOUT_NAME)) {
-    return fail(`a layout named "${LAYOUT_NAME}" ships with Herdr; refusing to overwrite it.`);
+  if (shipped.has(layout)) {
+    return fail(`a layout named "${layout}" ships with Herdr; refusing to overwrite it.`);
   }
   const needed = [...new Set(LAYOUT_EDITS.flatMap((e) => (e.needs ? [e.needs] : [])))];
   const present = yield* Effect.forEach(needed, (mod) =>
@@ -342,35 +347,35 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
   // Only a layout the record names was built by sync; any other file is the person's,
   // and a layout Herdr ships is Herdr's.
   const retired =
-    previous !== null && previous !== LAYOUT_NAME && !shipped.has(previous) ? previous : null;
-  yield* writeIfChanged(layoutFile(LAYOUT_NAME), json(built.node));
+    previous !== null && previous !== layout && !shipped.has(previous) ? previous : null;
+  yield* writeIfChanged(layoutFile(layout), json(built.node));
   // Herdr moves off the old layout first, so it never shows a layout that's gone.
   const shown = retired === null ? null : yield* status;
   const switching =
     retired !== null && shown?._tag === "Running" && layoutFromStatus(shown.text) === retired;
-  if (switching && !(yield* switchTo(LAYOUT_NAME))) {
+  if (switching && !(yield* switchTo(layout))) {
     // The record keeps naming the old layout, so the next run retires it.
     return {
       code: 1,
       out: [],
       err: [
-        `herdr-sync: wrote layout "${LAYOUT_NAME}", but couldn't switch Herdr to it from "${retired}", so "${retired}" is kept.`,
-        `herdr-sync: switch with herdr-app do layout.switch --name ${LAYOUT_NAME}, then sync again.`,
+        `herdr-sync: wrote layout "${layout}", but couldn't switch Herdr to it from "${retired}", so "${retired}" is kept.`,
+        `herdr-sync: switch with herdr-app do layout.switch --name ${layout}, then sync again.`,
       ],
     };
   }
   if (retired !== null) yield* host.removeFile(layoutFile(retired));
-  yield* writeIfChanged(RECORD_FILE, json({ layout: LAYOUT_NAME, from: DEFAULT_LAYOUT, version }));
+  yield* writeIfChanged(RECORD_FILE, json({ layout: layout, from: DEFAULT_LAYOUT, version }));
   return {
     code: 0,
     out: [
-      `herdr-sync: wrote layout "${LAYOUT_NAME}" from Herdr's "${DEFAULT_LAYOUT}" (Herdr ${version}).`,
+      `herdr-sync: wrote layout "${layout}" from Herdr's "${DEFAULT_LAYOUT}" (Herdr ${version}).`,
       ...(retired === null
         ? []
         : [`herdr-sync: removed layout "${retired}", which an earlier sync built.`]),
       switching
-        ? `herdr-sync: switched Herdr from "${retired}" to "${LAYOUT_NAME}".`
-        : `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${LAYOUT_NAME}`,
+        ? `herdr-sync: switched Herdr from "${retired}" to "${layout}".`
+        : `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${layout}`,
       ...missing.map(
         (mod) =>
           `herdr-sync: ${mod} isn't installed, so the layout keeps Herdr's own blocks for it. Install it (or run its dev build), then sync again.`,
@@ -380,17 +385,30 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
   };
 });
 
-if (import.meta.main) {
-  const result = await Effect.runPromise(
-    herdrSyncOnHost().pipe(
-      Effect.provide(HerdrHost.local(herdrHome())),
-      Effect.catchTags({
-        HostUnreachable: (error) => Effect.succeed(fail(error.message)),
-        TransportError: ({ operation, cause }) =>
-          Effect.succeed(fail(`couldn't ${operation} (${causeText(cause)})`)),
-      }),
+/**
+ * Runs the sync on the dev target's Herdr host. Never fails: a host that can't be
+ * reached, a file it can't read or write, or a dev config that can't be read is
+ * exit 1 with a line saying so.
+ */
+export const runHerdrSync = Effect.fn("runHerdrSync")(function* (
+  options: LoadOptions = {},
+): Effect.fn.Return<SyncResult> {
+  return yield* loadDevTarget(options).pipe(
+    Effect.flatMap((target) =>
+      herdrSyncOnHost(target.layout).pipe(Effect.provide(hostLayer(target))),
     ),
+    Effect.catchTags({
+      HostUnreachable: (error) => Effect.succeed(fail(error.message)),
+      TransportError: ({ operation, cause }) =>
+        Effect.succeed(fail(`couldn't ${operation} (${causeText(cause)})`)),
+      DevConfigInvalid: (error) => Effect.succeed(fail(devConfigProblem(error))),
+      DevConfigUnreadable: (error) => Effect.succeed(fail(devConfigProblem(error))),
+    }),
   );
+});
+
+if (import.meta.main) {
+  const result = await Effect.runPromise(runHerdrSync());
   result.out.forEach((line) => console.log(line));
   result.err.forEach((line) => console.error(line));
   process.exitCode = result.code;
