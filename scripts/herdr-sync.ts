@@ -1,19 +1,25 @@
-// Builds my own Herdr layout from Herdr's current default layout, so I get my mods and
-// Herdr's design together and keep Herdr's later improvements.
+// Builds the repo's Herdr layout from Herdr's current default layout, so the mods and
+// Herdr's design come together and keep Herdr's later improvements.
 //
 //   vp run herdr:sync
 //
-// Reads <app home>/layouts/main.json (Herdr's default) and writes:
-//   <app home>/layouts/workbench.json     Herdr's default plus my additions
+// It works on the dev target's Herdr host (herdr-dev.json: local, or remote over SSH),
+// through HerdrHost. Reads <app home>/layouts/main.json (Herdr's default, never edited)
+// and writes:
+//   <app home>/layouts/<layout>.json      Herdr's default plus the repo's additions
 //   <app home>/<namespace>-sync.json      the layout and the Herdr version it was built from
+// <layout> is the dev config's `layout`, Workbench by default. The same layout shows
+// finished mods and dev builds, and the dev loop adds panels only to it.
 // The worktrunk panel compares that record with the installed version and asks for a
 // new sync when Herdr has moved on. Re-run it after every Herdr update.
 //
+// It refuses a name Herdr ships, or the name of a layout it didn't build, ignoring case.
 // When the record names another layout (an earlier sync's, under an older name), that
 // layout is removed, and if Herdr was showing it, Herdr switches to the new one first.
-// A layout the record doesn't name is never removed. It never edits Herdr's own files,
-// never switches layouts otherwise, and keeps none of Herdr's code in this repo: it
-// reads the installed files on this machine each time.
+// A name that changes only in case is renamed instead, since on a file system that
+// ignores case the old and new names are one file. A layout the record doesn't name is
+// never removed. It never edits Herdr's own files, never switches layouts otherwise,
+// and keeps none of Herdr's code in this repo: it reads the installed files each time.
 import { Effect } from "effect";
 import { modId, NAMESPACE } from "../mod-pack.ts";
 import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
