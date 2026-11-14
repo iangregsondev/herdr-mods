@@ -1,6 +1,6 @@
 {
   "name": "worktrunk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Herdr mod: your repos and their worktrunk worktrees in a side panel.",
   "type": "module",
