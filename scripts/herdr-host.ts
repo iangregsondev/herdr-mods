@@ -15,7 +15,10 @@ import { Context, Data, Effect, Layer, Predicate } from "effect";
 import type { DevTarget } from "./dev-config.ts";
 
 /** How to reach a Herdr host over SSH, and where Herdr lives on it. */
-export type RemoteTarget = Omit<Extract<DevTarget, { readonly _tag: "Remote" }>, "_tag" | "file">;
+export type RemoteTarget = Omit<
+  Extract<DevTarget, { readonly _tag: "Remote" }>,
+  "_tag" | "file" | "layout"
+>;
 
 /**
  * Marks a folder in the Herdr app as a dev build from this repo. Hidden, so

@@ -136,7 +136,7 @@ function useLocalTarget(home: string): DevTarget {
   onTestFinished(() => {
     vi.unstubAllEnvs();
   });
-  return DevTarget.Local({ herdrHome: home, file: config, found: true });
+  return DevTarget.Local({ herdrHome: home, file: config, found: true, layout: "Workbench" });
 }
 
 /** A temp Herdr home with an empty mods/ folder, made the local dev target. */

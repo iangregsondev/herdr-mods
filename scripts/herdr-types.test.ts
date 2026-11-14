@@ -19,7 +19,7 @@ const fakeApp = (dir: string, files: ReadonlyArray<string>): string => {
 
 /** A local dev target whose Herdr home is `home`. */
 const local = (home: string): DevTarget =>
-  DevTarget.Local({ herdrHome: home, file: "herdr-dev.json", found: false });
+  DevTarget.Local({ herdrHome: home, file: "herdr-dev.json", found: false, layout: "Workbench" });
 
 /** What `path` is: a link (with its target), a real file, or nothing. */
 const entry = (path: string): string => {

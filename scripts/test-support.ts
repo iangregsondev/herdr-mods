@@ -235,6 +235,7 @@ export interface FakeHerdrHost {
     readonly herdrHome: string;
     readonly herdrApp: string;
     readonly file: string;
+    readonly layout: string;
   };
   /** One line per `ssh` call: its arguments, space-joined. Read with `loggedLines`. */
   readonly sshLog: string;
@@ -307,7 +308,7 @@ export function fakeHerdrHost(options: { readonly unreachable?: boolean } = {}):
     root,
     home: join(root, ".config/herdr-app"),
     appBin: join(root, ".local/bin"),
-    target: { ...remote, file: config },
+    target: { ...remote, file: config, layout: "Workbench" },
     sshLog,
     rsyncLog,
     config,

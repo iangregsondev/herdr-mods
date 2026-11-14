@@ -642,7 +642,12 @@ describe("hostLayer", () => {
   it.effect("uses the Herdr app on this machine for a local dev target", () => {
     const home = tempDir();
     writeFile(home, "layouts/work.json", "local");
-    const target = DevTarget.Local({ herdrHome: home, file: "herdr-dev.json", found: false });
+    const target = DevTarget.Local({
+      herdrHome: home,
+      file: "herdr-dev.json",
+      found: false,
+      layout: "Workbench",
+    });
     return Effect.gen(function* () {
       const host = yield* HerdrHost;
       assert.strictEqual(yield* host.readFile("layouts/work.json"), "local");

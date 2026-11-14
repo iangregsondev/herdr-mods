@@ -22,7 +22,9 @@ describe("decodeDevConfig", () => {
   it("decodes an empty object to local, with the local Herdr home", () => {
     assert.deepStrictEqual(
       decodeDevConfig("{}", { file, localHome }),
-      Result.succeed(DevTarget.Local({ herdrHome: localHome, file, found: true })),
+      Result.succeed(
+        DevTarget.Local({ herdrHome: localHome, file, found: true, layout: "Workbench" }),
+      ),
     );
   });
 
@@ -38,9 +40,63 @@ describe("decodeDevConfig", () => {
           herdrHome: "~/.config/herdr-app",
           herdrApp: "~/.local/bin/herdr-app",
           file,
+          layout: "Workbench",
         }),
       ),
     );
+  });
+
+  it("names the layout Workbench when the file doesn't set one", () => {
+    const result = decodeDevConfig('{ "target": "local" }', { file, localHome });
+    assert.strictEqual(Result.getOrUndefined(result)?.layout, "Workbench");
+  });
+
+  it("takes the layout name the file sets, for either target", () => {
+    const local = decodeDevConfig('{ "layout": "My Workbench" }', { file, localHome });
+    const remote = decodeDevConfig(
+      JSON.stringify({ target: "remote", remote: { host: "h", user: "u" }, layout: "Mine" }),
+      { file, localHome },
+    );
+    assert.strictEqual(Result.getOrUndefined(local)?.layout, "My Workbench");
+    assert.strictEqual(Result.getOrUndefined(remote)?.layout, "Mine");
+  });
+
+  it("rejects an empty layout name, naming the field", () => {
+    const result = decodeDevConfig('{ "layout": "" }', { file, localHome });
+    const error = Result.isFailure(result) ? result.failure : undefined;
+    assert.strictEqual(error?.field, "layout");
+  });
+
+  it("accepts line and block comments and trailing commas (JSONC)", () => {
+    const text = [
+      "// where dev builds go",
+      "{",
+      '  "target": "remote", /* the Herdr host */',
+      '  "remote": { "host": "herdr-host", "user": "dev", },',
+      "}",
+    ].join("\n");
+    assert.deepStrictEqual(
+      decodeDevConfig(text, { file, localHome }),
+      Result.succeed(
+        DevTarget.Remote({
+          host: "herdr-host",
+          user: "dev",
+          port: 22,
+          herdrHome: "~/.config/herdr-app",
+          herdrApp: "~/.local/bin/herdr-app",
+          file,
+          layout: "Workbench",
+        }),
+      ),
+    );
+  });
+
+  it("names the line and column where the file stops parsing", () => {
+    const text = ["{", '  "target": "local"', '  "remote": {}', "}"].join("\n");
+    const result = decodeDevConfig(text, { file, localHome });
+    const error = Result.isFailure(result) ? result.failure : undefined;
+    assert.strictEqual(error?.field, "(whole file)");
+    assert.match(error?.message ?? "", /line 3, column 3/);
   });
 
   const remote = { host: "herdr-host", user: "dev" };
@@ -127,6 +183,7 @@ describe("loadDevTarget", () => {
           herdrHome: "~/.config/herdr-app",
           herdrApp: "~/.local/bin/herdr-app",
           file: path,
+          layout: "Workbench",
         }),
       );
     }),
@@ -141,7 +198,12 @@ describe("loadDevTarget", () => {
       assert.deepStrictEqual(
         result,
         Result.succeed(
-          DevTarget.Local({ herdrHome: "/apps/herdr", file: "herdr-dev.json", found: false }),
+          DevTarget.Local({
+            herdrHome: "/apps/herdr",
+            file: "herdr-dev.json",
+            found: false,
+            layout: "Workbench",
+          }),
         ),
       );
     }),
@@ -158,6 +220,7 @@ describe("loadDevTarget", () => {
             herdrHome: join(homedir(), ".config", "herdr-app"),
             file: "herdr-dev.json",
             found: false,
+            layout: "Workbench",
           }),
         );
       }),
@@ -173,7 +236,12 @@ describe("loadDevTarget", () => {
       });
       assert.deepStrictEqual(
         target,
-        DevTarget.Local({ herdrHome: "/apps/herdr", file: "herdr-dev.json", found: true }),
+        DevTarget.Local({
+          herdrHome: "/apps/herdr",
+          file: "herdr-dev.json",
+          found: true,
+          layout: "Workbench",
+        }),
       );
     }),
   );
@@ -213,7 +281,12 @@ describe("loadDevTarget", () => {
       });
       assert.deepStrictEqual(
         target,
-        DevTarget.Local({ herdrHome: "/apps/herdr", file: other, found: true }),
+        DevTarget.Local({
+          herdrHome: "/apps/herdr",
+          file: other,
+          found: true,
+          layout: "Workbench",
+        }),
       );
     }),
   );
@@ -234,12 +307,22 @@ describe("loadDevTarget", () => {
 
 describe("describeDevTarget", () => {
   it("says local with no file when there is no config file", () => {
-    const target = DevTarget.Local({ herdrHome: localHome, file, found: false });
+    const target = DevTarget.Local({
+      herdrHome: localHome,
+      file,
+      found: false,
+      layout: "Workbench",
+    });
     assert.strictEqual(describeDevTarget(target), "target: local (no herdr-dev.json)");
   });
 
   it("names the file when a local target comes from it", () => {
-    const target = DevTarget.Local({ herdrHome: localHome, file, found: true });
+    const target = DevTarget.Local({
+      herdrHome: localHome,
+      file,
+      found: true,
+      layout: "Workbench",
+    });
     assert.strictEqual(describeDevTarget(target), "target: local (herdr-dev.json)");
   });
 
@@ -251,6 +334,7 @@ describe("describeDevTarget", () => {
       herdrHome: "~/.config/herdr-app",
       herdrApp: "~/.local/bin/herdr-app",
       file,
+      layout: "Workbench",
     });
     assert.strictEqual(
       describeDevTarget(target),
