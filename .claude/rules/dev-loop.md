@@ -26,7 +26,7 @@ The loop acts on the **dev target**: `local` (the Herdr app on this machine) or 
    - `vp run herdr status`: `errors` must be `[]`.
    - `vp run herdr shot .scratch/<file>.png --crop x,y,w,h`, then read the image. Shoot once without `--crop` to find the panel's pixel box, then again cropped to it. The screenshot is the evidence a change works.
    - On a build error: `vp run herdr check <folder>`, with the dev build's absolute path on the Herdr host. This machine's shell expands a `~`, so it would name this machine's home.
-4. When done: stop the watch (TaskStop) **before** `vp run dev:remove <name>`. Removing while it runs makes it error and rewrite the folder. It leaves the layout `herdr:sync` built (the configured one, `Workbench` by default) as it is, so no sync is needed afterwards to restore that layout; `docs/develop.md` ("Layouts", "Your layout") says when one is. Herdr's `main` is never edited.
+4. When done: stop the watch (TaskStop) **before** `vp run dev:remove <name>`. Removing while it runs makes it error and rewrite the folder. It leaves the layout `herdr:sync` built (the configured one, `Workbench` by default) as it is, so no sync is needed afterwards to restore that layout; `docs/develop.md` ("Layouts", "Your layout") says when one is. Herdr's `main` is never edited. Removing the dev build leaves no copy of the mod: if the person wants it to stay, tell them to install the finished copy (`docs/develop.md`, "Dev build or installed mod"), and for `menus` warn that the layout loses its tab bar and sidebar until then.
 5. Before committing: `vp run -r build`, `vp run verify` (check, every test, config audit), `vp run check:mods`, and commit `mods/` with the source.
 
 ## Never

@@ -51,7 +51,7 @@ The slot is what shows the panel. Files with no slot show nothing. A slot with n
 3. After the first good build (remote: the first good copy), it checks your layout (`Workbench` unless you renamed it; see [Layouts](#layouts)), whichever layout Herdr is showing. If the mod has no slot there, it adds one at the edge `mod.json`'s `"place"` names (`"right"` or `"left"`), at its `"size"`. If that layout doesn't exist yet, it says to run `vp run herdr:sync` and adds nothing.
 4. On every save it rebuilds. Herdr notices the changed files and reloads the panel.
 
-**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back. The one layout it leaves alone is the one `herdr:sync` builds (see [Layouts](#layouts)), and it says so.
+**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back. The one layout it leaves alone is yours, the one `herdr:sync` builds (see [Layouts](#layouts)), and it says so. It ends by saying the mod is now gone from Herdr (see [Dev build or installed mod](#dev-build-or-installed-mod)).
 
 ## See what Herdr sees: `vp run herdr`
 
@@ -92,6 +92,8 @@ vp run herdr shot panel.png --crop 3800,120,1300,900  # only that box, in pixels
 | For       | working on the mod         | using a finished mod                                        |
 
 Use one or the other for a mod, never both: the watch won't build over an installed mod, and Herdr's install never overwrites, so installing over a dev build adds a renamed second copy.
+
+**Removing a dev build leaves no copy of the mod.** The dev build sits in the folder an installed copy would use, so after `vp run dev:remove <name>` the mod is gone from Herdr. Herdr may keep its panel running from memory, but its icons go and `vp run herdr status` reports the mod folder missing; for `menus`, your layout loses its tab bar and sidebar. If the mod should stay, install the finished copy (the agent prompt below) after `dev:remove`; your layout still names the mod, so its panel comes back. `dev:remove` ends by saying so.
 
 To install a copy, paste this into your coding agent:
 
