@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Effect, Layer } from "effect";
 import { onTestFinished, vi } from "vite-plus/test";
+import { DEFAULT_LAYOUT } from "./dev-config.ts";
 import { CommandFailed, HerdrHost } from "./herdr-host.ts";
 import type { LayoutNode } from "./herdr-slots.ts";
 
@@ -311,7 +312,7 @@ export function fakeHerdrHost(options: { readonly unreachable?: boolean } = {}):
     root,
     home: join(root, ".config/herdr-app"),
     appBin: join(root, ".local/bin"),
-    target: { ...remote, file: config, layout: "Workbench" },
+    target: { ...remote, file: config, layout: DEFAULT_LAYOUT },
     sshLog,
     rsyncLog,
     config,
