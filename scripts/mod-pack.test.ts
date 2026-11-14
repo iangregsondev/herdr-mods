@@ -672,14 +672,14 @@ describe("modPack, remote watch", () => {
     expect(readFileSync(join(onHost(host.home, name), "main.js"), "utf8")).toBe("second build");
   });
 
-  test("adds the slot to the host's shown layout once, after the first good sync", async () => {
+  test("adds the slot to the configured layout once, after the first good sync, asking Herdr nothing", async () => {
     const host = remoteHerdrHost();
     const name = stagedModName();
     const appLog = join(host.root, "herdr-app.log");
     fakeLoggingBin(host.appBin, "herdr-app", { log: appLog, output: '{"layout":"work"}' });
-    const work = writeFile(
+    const workbench = writeFile(
       host.home,
-      "layouts/work.json",
+      "layouts/Workbench.json",
       JSON.stringify({ type: "row", children: [slot("other")] }),
     );
     const log = silencedLog();
@@ -689,10 +689,10 @@ describe("modPack, remote watch", () => {
     await runOnSuccess(config);
     await runOnSuccess(config);
 
-    expect(loggedLines(appLog)).toEqual(["status"]);
-    const children = readLayout(work).children ?? [];
+    expect(loggedLines(appLog)).toEqual([]);
+    const children = readLayout(workbench).children ?? [];
     expect(children.map((child) => child.content?.mod)).toEqual([modId(name), "other"]);
-    expect(log).toHaveBeenCalledWith(`herdr-slots: added ${modId(name)} to "work" (left).`);
+    expect(log).toHaveBeenCalledWith(`herdr-slots: added ${modId(name)} to "Workbench" (left).`);
   });
 
   test("prints a failed slot step, keeps going, and tries the slot again on the next build", async () => {
@@ -702,9 +702,9 @@ describe("modPack, remote watch", () => {
       log: join(host.root, "herdr-app.log"),
       output: '{"layout":"work"}',
     });
-    const work = writeFile(
+    const workbench = writeFile(
       host.home,
-      "layouts/work.json",
+      "layouts/Workbench.json",
       JSON.stringify({ type: "row", children: [] }),
     );
     const modDir = tempDir();
@@ -717,11 +717,11 @@ describe("modPack, remote watch", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(`couldn't put ${modId(name)}'s slot back`),
     );
-    expect(readLayout(work).children).toEqual([]);
+    expect(readLayout(workbench).children).toEqual([]);
 
     writeFile(modDir, "assets/mod.json", "{}");
     await runOnSuccess(config);
-    expect(hasSlot(readLayout(work), modId(name))).toBe(true);
+    expect(hasSlot(readLayout(workbench), modId(name))).toBe(true);
   });
 
   test("runs one build's sync and slot step at a time when builds overlap", async () => {
@@ -729,9 +729,9 @@ describe("modPack, remote watch", () => {
     const name = stagedModName();
     const appLog = join(host.root, "herdr-app.log");
     fakeLoggingBin(host.appBin, "herdr-app", { log: appLog, output: '{"layout":"work"}' });
-    const work = writeFile(
+    const workbench = writeFile(
       host.home,
-      "layouts/work.json",
+      "layouts/Workbench.json",
       JSON.stringify({ type: "row", children: [] }),
     );
     silencedLog();
@@ -739,8 +739,10 @@ describe("modPack, remote watch", () => {
 
     await Promise.all([runOnSuccess(config), runOnSuccess(config)]);
 
-    expect(loggedLines(appLog)).toEqual(["status"]);
-    expect(readLayout(work).children?.map((child) => child.content?.mod)).toEqual([modId(name)]);
+    expect(loggedLines(appLog)).toEqual([]);
+    expect(readLayout(workbench).children?.map((child) => child.content?.mod)).toEqual([
+      modId(name),
+    ]);
   });
 
   test("stages in a folder git ignores", () => {

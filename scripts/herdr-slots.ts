@@ -294,22 +294,17 @@ export function removeSlots(
 }
 
 /**
- * Makes sure the shown layout has a slot for `mod`, adding one from its
- * mod.json `place` (default "right") and `size` if not. Returns a line for the
- * person. `status` gives `herdr-app status` (default: running it on the host).
+ * Makes sure `layout`, the dev config's layout, has a slot for `mod`, adding one
+ * from its mod.json `place` (default "right") and `size` if not. Which layout
+ * Herdr shows doesn't matter: the dev loop edits only this one. Returns a line
+ * for the person.
  */
 export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
   mod: string,
   modJson: ModJson,
-  status: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = herdrStatus,
+  layout: string,
 ) {
   const host = yield* HerdrHost;
-  const shown = yield* status;
-  if (shown._tag === "NotInstalled") {
-    return `herdr-slots: herdr-app not found on PATH; install the Herdr app to see ${mod}.`;
-  }
-  const layout = shown._tag === "Running" ? layoutFromStatus(shown.text) : null;
-  if (!layout) return `herdr-slots: Herdr isn't running; open it to see ${mod}.`;
   if ((yield* shippedOnHost).has(layout)) {
     return `herdr-slots: "${layout}" ships with Herdr and can't take new slots; clone it, or add ${mod} by hand.`;
   }
@@ -317,7 +312,9 @@ export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
     Effect.map((found): string | null => found),
     Effect.catchTag("FileMissing", () => Effect.succeed(null)),
   );
-  if (text === null) return `herdr-slots: no file for layout "${layout}"; add ${mod} by hand.`;
+  if (text === null) {
+    return `herdr-slots: there is no layout "${layout}" yet; run vp run herdr:sync to build it, then save again to add ${mod}.`;
+  }
   const root = parseLayout(text);
   if (hasSlot(root, mod)) return `herdr-slots: ${mod} already has a slot in "${layout}".`;
   const place = modJson.place ?? "right";
@@ -331,19 +328,14 @@ export const ensureSlotOnHost = Effect.fn("ensureSlotOnHost")(function* (
 
 /**
  * `ensureSlotOnHost` against the Herdr app on this machine. `home` is the Herdr
- * app's home (default `herdrHome()`); `status` stands in for `herdr-app status`
- * (default: the real command), and tests pass a fake.
+ * app's home (default `herdrHome()`); `layout` is the layout to add the slot to.
  */
 export function ensureSlot(
   mod: string,
   modJson: ModJson,
-  {
-    home = herdrHome(),
-    status,
-  }: { readonly home?: string; readonly status?: () => HerdrStatus } = {},
+  { home = herdrHome(), layout }: { readonly home?: string; readonly layout: string },
 ): string {
-  const shown = status === undefined ? herdrStatus : Effect.sync(status);
   return Effect.runSync(
-    ensureSlotOnHost(mod, modJson, shown).pipe(Effect.provide(HerdrHost.local(home))),
+    ensureSlotOnHost(mod, modJson, layout).pipe(Effect.provide(HerdrHost.local(home))),
   );
 }
