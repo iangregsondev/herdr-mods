@@ -19,7 +19,7 @@ mods/iangregsondev-<name>/  BUILD OUTPUT, committed: the folder Herdr users inst
 layouts/<name>.json       hand-written layouts (the window; they reference mods)
 mod-pack.ts               shared vp pack settings for every mod: the namespace, the out folder (watch mode builds into Herdr, or stages in node_modules/.herdr-dev/ and syncs to a remote Herdr host), the version stamp in the built RECIPE.md
 mod-env.d.ts              declares __MOD_ID__ and __NAMESPACE__, the constants the build gives each mod
-herdr-dev.example.json    template for herdr-dev.json (git-ignored): the dev target, local or a remote Herdr host
+herdr-dev.example.json    template for herdr-dev.json (git-ignored; JSONC, a comment on each field): the dev target, local or a remote Herdr host, and the layout name
 .config/wt.toml           worktrunk hooks: a new worktree gets the main checkout's herdr-dev.json
 .changeset/               changesets waiting for the next version PR, and config.json (the changesets settings); see docs/develop.md, "Releases"
 .github/workflows/ci.yml  CI: vp run verify, the build, mods/ up to date; on a PR, vp run check:changesets
@@ -27,7 +27,7 @@ herdr-dev.example.json    template for herdr-dev.json (git-ignored): the dev tar
 scripts/changeset-check.ts  vp run check:changesets: CI fails a PR that adds no changeset, or changes a mod (or packages/) without one for it
 scripts/check-mods.ts     vp run check:mods: herdr-app check on every built mod, on the dev target's Herdr host
 scripts/copy-dev-config.sh  copies herdr-dev.json into a new worktree (run by .config/wt.toml)
-scripts/dev-config.ts     reads the dev target from herdr-dev.json (or HERDR_DEV_CONFIG)
+scripts/dev-config.ts     reads the dev target and the layout name from herdr-dev.json (JSONC; or HERDR_DEV_CONFIG)
 scripts/dev-remove.ts     removes a mod's dev build and its panel from the dev target's Herdr host
 scripts/git.ts            Git: the Effect service for git in a repo folder (files changed since a base ref, tags on origin)
 scripts/mod-folders.ts    a mod's package.json (name and version, read with Schema) and the folders under apps/ or mods/
@@ -37,10 +37,10 @@ scripts/release-tags.ts   vp run release:tags: the publish script of the release
 scripts/herdr-host.ts     HerdrHost: the Effect service for all Herdr home IO and herdr-app calls (local, or remote over SSH)
 scripts/herdr.ts          vp run herdr <args…>: herdr-app on the dev target's Herdr host; `shot <file> [--crop x,y,w,h]` copies a (cropped) screenshot back
 scripts/herdr-types.ts    vp run types: puts Herdr's type files into .herdr-types/ from the dev target's Herdr host (docs/types.md)
-scripts/herdr-slots.ts    adds and removes a mod's slot in Herdr's layout files
-scripts/herdr-sync.ts     builds my layout from Herdr's default (vp run herdr:sync; docs/develop.md)
+scripts/herdr-slots.ts    adds a mod's slot to the configured layout, and removes it from Herdr's layout files
+scripts/herdr-sync.ts     builds the configured layout (Workbench by default) from Herdr's main, on the dev target (vp run herdr:sync; docs/develop.md, "Layouts")
 scripts/require-vp.sh     preinstall guard: installs must go through vp
-scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, git commits, Vite+ bin folders, a fake Herdr host, run sh
+scripts/test-support.ts   test helpers for scripts and hooks: temp folders, fake commands, git commits, Vite+ bin folders, a fake Herdr host, a local Herdr host with a fake herdr-app (and macOS-like case rules), run sh
 scripts/*.test.ts         tests of the root scripts, mod-pack.ts, .claude/hooks/ and mods' shell scripts
 scripts/tsconfig.json     Node types for the root scripts (docs/types.md)
 scripts/oxlint-functional.ts  lint rules: functional style in src/ (not main.ts); explained casts in src/, scripts/, mod-pack.ts

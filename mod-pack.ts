@@ -81,7 +81,7 @@ export function watchFromArgv(argv: readonly string[]): boolean {
   return argv.includes("--watch") || argv.includes("-w");
 }
 
-/** Puts `mod`'s slot back in the dev target's shown layout; gives a line for the person. */
+/** Puts `mod`'s slot back in the dev config's layout on the dev target; gives a line for the person. */
 export type EnsureSlot = (
   mod: string,
   modJson: ModJson,
@@ -95,8 +95,10 @@ export type EnsureSlot = (
  */
 const ensureSlotOnTarget: EnsureSlot = (mod, modJson, target) =>
   target._tag === "Local"
-    ? ensureSlot(mod, modJson, { home: target.herdrHome })
-    : Effect.runPromise(ensureSlotOnHost(mod, modJson).pipe(Effect.provide(hostLayer(target))));
+    ? ensureSlot(mod, modJson, { home: target.herdrHome, layout: target.layout })
+    : Effect.runPromise(
+        ensureSlotOnHost(mod, modJson, target.layout).pipe(Effect.provide(hostLayer(target))),
+      );
 
 export interface ModPackOptions {
   /** Build into the Herdr app (watch mode). Defaults to `--watch` or `-w` in argv. */
@@ -109,7 +111,7 @@ export interface ModPackOptions {
    */
   modDir?: string;
   /**
-   * Puts the mod's slot back in the shown layout after the first watch build.
+   * Puts the mod's slot back in the dev config's layout after the first watch build.
    * Defaults to `ensureSlotOnHost` from `scripts/herdr-slots.ts`, on the dev target.
    */
   ensureSlot?: EnsureSlot;

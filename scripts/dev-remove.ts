@@ -3,13 +3,15 @@
 // It takes the short name, as `#dev` does, and adds the namespace (mod-pack.ts).
 // A folder without the dev marker is a real installed mod: it and its slots are left alone.
 // It acts on the dev target's Herdr host: this machine for `local`, over SSH for `remote`.
-// The layout `vp run herdr:sync` built (named in its record) is left alone too: its slots
-// belong to the sync, which rebuilds it.
+// The layout `vp run herdr:sync` built (named in its record) and the configured layout
+// (herdr-dev.json's `layout`) are left alone too: their slots belong to the sync, which
+// rebuilds them. A dev build is the mod's only copy, so after removing one it says the
+// mod is gone from Herdr and how to install the finished copy.
 //
 //   vp run dev:remove <name>
 import { Effect } from "effect";
 import { modId } from "../mod-pack.ts";
-import { devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
+import { DEFAULT_LAYOUT, devConfigProblem, type LoadOptions, loadDevTarget } from "./dev-config.ts";
 import {
   causeText,
   HerdrHost,
@@ -45,6 +47,7 @@ const failed = (message: string): DevRemoveResult => ({
 /** Removes the dev build whose short name is in `args` from the Herdr host. */
 export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   args: readonly string[],
+  layout: string = DEFAULT_LAYOUT,
 ): Effect.fn.Return<DevRemoveResult, TransportError | HostUnreachable, HerdrHost> {
   const name = args[0];
   if (!name || args.length > 1 || name.includes("/") || name.startsWith(".")) return usage;
@@ -54,12 +57,16 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
   const dir = host.location(`mods/${id}`);
   // Every layout is read before anything on the host changes, so a host that
   // can't be reached, or drops while being read, leaves it all as it was.
-  // The layout the sync built is kept: a record that's missing or names no layout keeps none.
+  // The layout the sync built is kept, and so is the configured one, which the sync
+  // builds next even before its record names it.
   const synced = yield* host.readFile(RECORD_FILE).pipe(
     Effect.map(layoutFromRecord),
     Effect.catchTag("FileMissing", () => Effect.succeed(null)),
   );
-  const plan = yield* planSlotRemoval(id, synced === null ? [] : [synced]);
+  const plan = yield* planSlotRemoval(id, [
+    layout,
+    ...(synced === null || synced === layout ? [] : [synced]),
+  ]);
   const removed = yield* host
     .removeDevBuild(id)
     .pipe(Effect.catchTag("InstalledModInTheWay", () => Effect.succeed("Installed" as const)));
@@ -85,7 +92,15 @@ export const devRemoveOnHost = Effect.fn("devRemoveOnHost")(function* (
     (name) =>
       `dev-remove: left "${name}" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)`,
   );
-  const out = [files, panel, ...left];
+  // The dev build was the only copy: a finished one is never installed beside it.
+  const gone =
+    removed === "Removed"
+      ? [
+          `dev-remove: ${id} is gone from Herdr now: no copy of it is installed.`,
+          `dev-remove: to keep using it, install the finished copy (docs/develop.md, "Dev build or installed mod").`,
+        ]
+      : [];
+  const out = [files, panel, ...left, ...gone];
 
   return skipped.length > 0
     ? {
@@ -106,7 +121,9 @@ export const runDevRemove = Effect.fn("runDevRemove")(function* (
   options: LoadOptions = {},
 ): Effect.fn.Return<DevRemoveResult> {
   return yield* loadDevTarget(options).pipe(
-    Effect.flatMap((target) => devRemoveOnHost(args).pipe(Effect.provide(hostLayer(target)))),
+    Effect.flatMap((target) =>
+      devRemoveOnHost(args, target.layout).pipe(Effect.provide(hostLayer(target))),
+    ),
     Effect.catchTags({
       HostUnreachable: (error) => Effect.succeed(failed(error.message)),
       TransportError: ({ operation, cause }) =>
@@ -118,8 +135,12 @@ export const runDevRemove = Effect.fn("runDevRemove")(function* (
 });
 
 /** `devRemoveOnHost` against the Herdr app on this machine, at `home`. */
-export function devRemove(args: readonly string[], home: string): DevRemoveResult {
-  return Effect.runSync(devRemoveOnHost(args).pipe(Effect.provide(HerdrHost.local(home))));
+export function devRemove(
+  args: readonly string[],
+  home: string,
+  layout: string = DEFAULT_LAYOUT,
+): DevRemoveResult {
+  return Effect.runSync(devRemoveOnHost(args, layout).pipe(Effect.provide(HerdrHost.local(home))));
 }
 
 if (import.meta.main) {

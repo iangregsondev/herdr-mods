@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, onTestFinished, test, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, test, vi } from "@effect/vitest";
 import { spawnSync } from "node:child_process";
 import { Effect, Result } from "effect";
 import {
@@ -9,6 +9,7 @@ import {
   git,
   isolatedGitEnv,
   linkTools,
+  localHerdrHost,
   loggedLines,
   readLayout,
   runSh,
@@ -18,6 +19,7 @@ import {
   writeFile,
 } from "./test-support.ts";
 import { DevTarget, loadDevTarget } from "./dev-config.ts";
+import { HerdrHost } from "./herdr-host.ts";
 
 /** Sets an env var for the current test only. */
 const stubEnv = (name: string, value: string): void => {
@@ -245,5 +247,56 @@ describe("fakeHerdrHost, dev config", () => {
     expect(Result.getOrUndefined(loaded)).toEqual(
       DevTarget.Remote({ ...fake.target, file: fake.config }),
     );
+  });
+});
+
+describe("localHerdrHost", () => {
+  it.effect("answers herdr-app with the fake's output", () => {
+    const host = localHerdrHost(tempDir(), { herdrApp: (args) => `ran ${args.join(" ")}\n` });
+    return Effect.gen(function* () {
+      const h = yield* HerdrHost;
+      const { stdout } = yield* h.herdrApp(["--version"]);
+      expect(stdout).toBe("ran --version\n");
+    }).pipe(Effect.provide(host));
+  });
+
+  it.effect("case-insensitive: writing another case of a name writes the existing file", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/workbench.json", "old\n");
+    return Effect.gen(function* () {
+      const h = yield* HerdrHost;
+      yield* h.writeFile("layouts/Workbench.json", "new\n");
+      expect(readdirSync(join(home, "layouts"))).toEqual(["workbench.json"]);
+      expect(readFileSync(join(home, "layouts/workbench.json"), "utf8")).toBe("new\n");
+    }).pipe(Effect.provide(localHerdrHost(home, { caseInsensitive: true })));
+  });
+
+  it.effect("case-insensitive: a rename that only changes case changes nothing", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/workbench.json", "kept\n");
+    return Effect.gen(function* () {
+      const h = yield* HerdrHost;
+      yield* h.renameFile("layouts/workbench.json", "layouts/Workbench.json");
+      expect(readdirSync(join(home, "layouts"))).toEqual(["workbench.json"]);
+    }).pipe(Effect.provide(localHerdrHost(home, { caseInsensitive: true })));
+  });
+
+  it.effect("case-insensitive: removing another case of a name removes the existing file", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/Workbench.json", "{}\n");
+    return Effect.gen(function* () {
+      const h = yield* HerdrHost;
+      yield* h.removeFile("layouts/workbench.json");
+      expect(readdirSync(join(home, "layouts"))).toEqual([]);
+    }).pipe(Effect.provide(localHerdrHost(home, { caseInsensitive: true })));
+  });
+
+  it.effect("case-insensitive: reading another case of a name reads the existing file", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/workbench.json", "found\n");
+    return Effect.gen(function* () {
+      const h = yield* HerdrHost;
+      expect(yield* h.readFile("layouts/WORKBENCH.json")).toBe("found\n");
+    }).pipe(Effect.provide(localHerdrHost(home, { caseInsensitive: true })));
   });
 });

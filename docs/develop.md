@@ -48,10 +48,10 @@ The slot is what shows the panel. Files with no slot show nothing. A slot with n
 2. It builds the **dev build**, never into the repo's `mods/iangregsondev-<name>/`:
    - `local`: straight into the Herdr home's `mods/iangregsondev-<name>/`.
    - `remote`: into a staging folder on this machine, `node_modules/.herdr-dev/iangregsondev-<name>/` (git-ignored, kept between runs). After every good build, rsync copies it into the Herdr host's `mods/iangregsondev-<name>/`. A failed build is never copied, so Herdr never loads half a mod.
-3. After the first good build (remote: the first good copy), it checks the layout Herdr is showing. If the mod has no slot there, it adds one at the edge `mod.json`'s `"place"` names (`"right"` or `"left"`), at its `"size"`.
+3. After the first good build (remote: the first good copy), it checks your layout (`Workbench` unless you renamed it; see [Layouts](#layouts)), whichever layout Herdr is showing. If the mod has no slot there, it adds one at the edge `mod.json`'s `"place"` names (`"right"` or `"left"`), at its `"size"`. If that layout doesn't exist yet, it says to run `vp run herdr:sync` and adds nothing.
 4. On every save it rebuilds. Herdr notices the changed files and reloads the panel.
 
-**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back. The one layout it leaves alone is the one `herdr:sync` builds (see "Your layout" below), and it says so.
+**`vp run dev:remove <name>`** deletes the dev build's folder and every slot for that mod in your layouts, on the dev target, so the panel goes. Run `#dev` again and it comes back. The one layout it leaves alone is yours, the one `herdr:sync` builds (see [Layouts](#layouts)), and it says so. It ends by saying the mod is now gone from Herdr (see [Dev build or installed mod](#dev-build-or-installed-mod)).
 
 ## See what Herdr sees: `vp run herdr`
 
@@ -93,6 +93,8 @@ vp run herdr shot panel.png --crop 3800,120,1300,900  # only that box, in pixels
 
 Use one or the other for a mod, never both: the watch won't build over an installed mod, and Herdr's install never overwrites, so installing over a dev build adds a renamed second copy.
 
+**Removing a dev build leaves no copy of the mod.** The dev build sits in the folder an installed copy would use, so after `vp run dev:remove <name>` the mod is gone from Herdr. Herdr may keep its panel running from memory, but its icons go and `vp run herdr status` reports the mod folder missing; for `menus`, your layout loses its tab bar and sidebar. If the mod should stay, install the finished copy (the agent prompt below) after `dev:remove`; your layout still names the mod, so its panel comes back. `dev:remove` ends by saying so.
+
 To install a copy, paste this into your coding agent:
 
 > Read ~/.config/herdr-app/AGENTS.md, then add this mod: <path-to-your-clone>/mods/iangregsondev-<name>
@@ -101,17 +103,37 @@ or, once it's pushed:
 
 > Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/iangregsondev/herdr-mods/tree/main/mods/iangregsondev-<name>
 
+## Layouts
+
+Herdr names a layout by its file, `<Herdr home>/layouts/<name>.json`. Two matter here:
+
+- **`main`** is Herdr's default layout. It ships with Herdr and is never edited.
+- **Your layout**, `Workbench` by default, is the repo's. `vp run herdr:sync` generates it from `main` (below). It shows finished mods and dev builds alike: a layout names a mod by its id, and a dev build sits in the same mod folder as the finished mod would, so one layout serves both.
+
+The dev loop only ever edits your layout: `#dev` adds a mod's panel there, whichever layout Herdr is showing. Any other layout of yours is left alone, apart from `dev:remove` taking a removed dev build's panel out of it.
+
+**Renaming it.** If you already have a layout called `Workbench`, set another name in `herdr-dev.json` (it works for both targets):
+
+```jsonc
+{
+  "layout": "My Workbench",
+}
+```
+
+Then run `vp run herdr:sync`. It builds the layout under the new name and retires the old one (below).
+
 ## Your layout: `herdr:sync`
 
-`vp run herdr:sync` builds your own layout, `workbench`, from Herdr's current default layout (`main`) plus this repo's additions: the worktrunk panel on the right, its toggle button at the end of the tab bar, and, when the `menus` mod is installed, Herdr's tab bar and sidebar swapped for the `menus` mod's copies of them, whose "+" and space menus carry worktrunk items. It writes `~/.config/herdr-app/layouts/workbench.json` and a record of the layout and the Herdr version it built from, `~/.config/herdr-app/iangregsondev-sync.json`. A file that already holds what it would write is left untouched, so Herdr reloads nothing.
+`vp run herdr:sync` builds your own layout, `Workbench` unless `herdr-dev.json` names another, from Herdr's current default layout (`main`) plus this repo's additions: the worktrunk panel on the right, its toggle button at the end of the tab bar, and, when the `menus` mod is installed, Herdr's tab bar and sidebar swapped for the `menus` mod's copies of them, whose "+" and space menus carry worktrunk items. It writes `<Herdr home>/layouts/Workbench.json` and a record of the layout and the Herdr version it built from, `<Herdr home>/iangregsondev-sync.json`, on the dev target's Herdr host, like the dev loop. A file that already holds what it would write is left untouched, so Herdr reloads nothing.
 
-- **It's safe to run any time.** It reads Herdr's files and never edits them, and keeps none of Herdr's code in this repo. Herdr's `main` stays as it is, so Herdr's usual layout switch (`layout.switch`, default `ctrl-shift-l`) moves between the two, for comparing Herdr's updates. To switch from a shell: `herdr-app do layout.switch --name workbench`.
-- **It retires the layout's old name.** The layout used to be called `iangregsondev`. When the record says an earlier sync built a layout under another name, the sync removes that layout, and if Herdr was showing it, switches Herdr to `workbench` first. That is the only time it switches your layout. A layout the record doesn't name, such as one you made by hand, is never removed. If the switch fails, the old layout is kept, the sync exits 1, and the next run tries again.
-- **It works on this machine's Herdr only.** Unlike the dev loop, it doesn't follow the dev target yet: with a `remote` target, run it on the Herdr host itself.
+- **It's safe to run any time.** It reads Herdr's files and never edits them, and keeps none of Herdr's code in this repo. Herdr's `main` stays as it is, so Herdr's usual layout switch (`layout.switch`, default `ctrl-shift-l`) moves between the two, for comparing Herdr's updates. To switch from a shell: `vp run herdr do layout.switch --name Workbench`.
+- **It retires the layout's old name.** The layout used to be called `iangregsondev`, then `workbench`. When the record says an earlier sync built a layout under another name, the sync removes that layout, and if Herdr was showing it, switches Herdr to the new one first. That is the only time it switches your layout. A layout the record doesn't name, such as one you made by hand, is never removed. If the switch fails, the old layout is kept, the sync exits 1, and the next run tries again.
+- **A name that changes only in case is renamed, not rebuilt.** macOS ignores case in file names by default, so `workbench.json` and `Workbench.json` are one file there. The sync renames that file (through a temporary name) instead of writing the new one and removing the old, which would remove both.
+- **It follows the dev target**, like the dev loop: with a `remote` target it reads and writes the layouts on the Herdr host.
 - **The worktrunk mod must be installed** (or running as a dev build) for the panel and toggle to show in the layout.
 - **`vp run dev:remove` leaves this layout alone.** Its blocks belong to the sync, so they stay when a dev build goes: after `dev:remove worktrunk` the layout still names the panel and toggle, and they come back with the next `vp run worktrunk#dev`.
 - **Worktrunk items in Herdr's menus need the repo and the sync.** Herdr gives mods no way to add menu items, so the `menus` mod plays Herdr's own `tabs`, `spaces`, `new-menu` and `menu` from copies of Herdr's installed code, patched at run time ([ADR 0003](adr/0003-extend-herdr-menus.md)). Only a layout that names it uses it, and `herdr:sync` writes that layout. The sync swaps the tab bar and sidebar only when `menus` is installed (or running as a dev build), and says so when it isn't; the items also need the worktrunk mod. After `dev:remove menus` the layout still names it, so the window has no tab bar or sidebar until `vp run menus#dev` runs again or a sync with the mod gone puts Herdr's own back.
-- **The layout is generated.** Every run rebuilds it from `main`, so hand edits to `workbench.json` are lost. Change the additions in `scripts/herdr-sync.ts` (`LAYOUT_EDITS`) instead.
+- **The layout is generated.** Every run rebuilds it from `main`, so hand edits to `Workbench.json` are lost. Change the additions in `scripts/herdr-sync.ts` (`LAYOUT_EDITS`) instead.
 
 **When to re-run it:**
 
@@ -121,7 +143,7 @@ or, once it's pushed:
 
 **When a menu patch point no longer fits** Herdr's code (after a Herdr update), the `menus` mod uses Herdr's own unpatched copy and shows a toast naming the patch point, for example `tabs: "+" button opens new-menu (not found)`. The menus then work as Herdr's, without worktrunk items. Update that patch in `apps/menus/src/wraps.ts` (test first, against the stand-ins in `apps/menus/tests/fixtures/`).
 
-**When it fails**, it writes nothing and names the patch point that no longer fits, for example `tab-bar toggle: expected exactly one block showing the "tabs" mod, found 0`. That means Herdr's default layout changed shape: update that edit in `scripts/herdr-sync.ts` (test first), then run it again. Your existing layout keeps working meanwhile. It also stops, writing nothing, when it can't read `main.json`, when `herdr-app --version` gives no version, or when Herdr itself ships a layout named `workbench`.
+**When it fails**, it writes nothing and names the patch point that no longer fits, for example `tab-bar toggle: expected exactly one block showing the "tabs" mod, found 0`. That means Herdr's default layout changed shape: update that edit in `scripts/herdr-sync.ts` (test first), then run it again. Your existing layout keeps working meanwhile. It also stops, writing nothing, when it can't read `main.json`, when `herdr-app --version` gives no version, or when the name is taken: Herdr ships a layout of that name (`main`, `terminals`, `win98`), or a layout of yours has it, ignoring case. Then set another `"layout"` in `herdr-dev.json`.
 
 ## Troubleshooting
 
@@ -130,8 +152,8 @@ or, once it's pushed:
 | `Task "dev:remove" not found`                                       | You're on a branch from before this tooling                                | Run it from a checkout that has it (`git pull` on `main`)                                                                        |
 | `... is an installed mod, not a dev build`                          | A real copy of the mod is installed                                        | Remove that copy first (or develop under another name)                                                                           |
 | `herdr-slots: ... add iangregsondev-<name> by hand`                 | `"place"` is top, bottom or none, or the layout ships with Herdr           | Add the panel yourself, or switch to your own layout (clone a shipped one)                                                       |
-| `herdr-slots: Herdr isn't running`                                  | `herdr-app status` didn't answer on the Herdr host                         | Open Herdr, then restart the watch                                                                                               |
-| `herdr-slots: herdr-app not found on PATH`                          | The Herdr app isn't installed, or its CLI isn't on your `PATH`             | Install the Herdr app, then restart the watch                                                                                    |
+| `herdr-slots: there is no layout "Workbench" yet`                   | `herdr:sync` hasn't built your layout on this Herdr host                   | `vp run herdr:sync`, then save again                                                                                             |
+| `herdr-sync: the layout name "…" is taken`                          | Herdr ships that name, or a layout of yours has it (ignoring case)         | Set another `"layout"` in `herdr-dev.json`, then sync again                                                                      |
 | `dev-remove: could not read these layouts`                          | A layout file isn't valid JSON; it was left as it is                       | Fix or delete that file, then run `dev:remove` again for its panel                                                               |
 | Saves don't change the panel                                        | Herdr isn't watching the folder (often after a symlink was used)           | Check `vp run herdr status` for errors; if none, restart Herdr once                                                              |
 | The panel shows the old version                                     | The latest build broke; Herdr keeps the last good one                      | `vp run herdr check <mod folder>` for the exact error                                                                            |
@@ -164,7 +186,7 @@ Nothing from the repo runs on the Herdr host.
    cp herdr-dev.example.json herdr-dev.json
    ```
 
-   ```json
+   ```jsonc
    {
      "target": "remote",
      "remote": {
@@ -172,12 +194,13 @@ Nothing from the repo runs on the Herdr host.
        "user": "your-user",
        "port": 22,
        "herdrHome": "~/.config/herdr-app",
-       "herdrApp": "~/.local/bin/herdr-app"
-     }
+       "herdrApp": "~/.local/bin/herdr-app",
+     },
+     "layout": "Workbench",
    }
    ```
 
-   `host` (a name or an IP) and `user` are required. `port`, `herdrHome` and `herdrApp` can be left out; the values above are their defaults. A misspelt or unknown field is an error naming that field, never a quiet fall back to `local`. `"target": "local"`, or no file at all, means `local`.
+   `host` (a name or an IP) and `user` are required. `port`, `herdrHome`, `herdrApp` and `layout` can be left out; the values above are their defaults. The file is JSONC (JSON with comments): `//` and `/* */` comments and trailing commas are fine, and the example explains each field. A file that doesn't parse is an error naming the line and column. A misspelt or unknown field is an error naming that field, never a quiet fall back to `local`. `"target": "local"`, or no file at all, means `local`.
 
 2. Run `vp run types`. It copies Herdr's type files from the Herdr host into `.herdr-types/`, so `vp check` passes here. `vp install` and every `#dev` watch do the same; run it again after updating Herdr on the host. A host that can't be reached only warns, but a broken `herdr-dev.json` makes `vp install` fail, naming the field to fix.
 3. Run `vp run worktrunk#dev`. The first line should read `target: remote <user>@<host>:<port> (herdr-dev.json)`.
