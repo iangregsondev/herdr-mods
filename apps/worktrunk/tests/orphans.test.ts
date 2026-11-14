@@ -335,9 +335,21 @@ describe("askToasts", () => {
         title: "Space on a removed worktree",
         body: "app feat is on /r/app.feat, which is gone. Something is still running in it. Click to close it.",
         level: "warning",
+        timeout: 24 * 60 * 60 * 1000,
         action: { name: "space.close", args: { id: "s1", confirmed: false } },
       },
     ]);
+  });
+
+  test("the toast stays up for a day, since Herdr fades a toast without a timeout in seconds", () => {
+    const spaces = [named("s1", "app feat", "/r/app.feat", ["t1"])];
+    const panes = [terminal("t1", "/r/app.feat", false)];
+    const { toasts } = askToasts(
+      NO_ORPHANS,
+      spaces,
+      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
+    );
+    expect(toasts.map((toast) => toast.timeout)).toEqual([24 * 60 * 60 * 1000]);
   });
 
   test("no toast for a space closed at once, where only shells run", () => {

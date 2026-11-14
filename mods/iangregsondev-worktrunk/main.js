@@ -12292,6 +12292,12 @@ const orphanSpaces = (spaces, panes, machine, gone) => {
 	}));
 };
 /**
+* How long the toast offering to close an orphan space stays up: a day. Herdr fades a
+* toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
+* day stands in for it.
+*/
+const ASK_TIMEOUT = 864e5;
+/**
 * The toasts for the `found` orphan spaces where something other than a shell runs and
 * no toast has asked before: each names the space and the gone folder it was matched by,
 * and clicking it closes the space after Herdr's own confirm. The spaces asked about are
@@ -12306,6 +12312,7 @@ const askToasts = (orphans, spaces, found) => {
 			title: "Space on a removed worktree",
 			body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
 			level: "warning",
+			timeout: ASK_TIMEOUT,
 			action: {
 				name: "space.close",
 				args: {

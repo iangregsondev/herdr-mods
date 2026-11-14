@@ -187,11 +187,19 @@ export interface NamedSpace extends SpaceLike {
   readonly name: string;
 }
 
+/**
+ * How long the toast offering to close an orphan space stays up: a day. Herdr fades a
+ * toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
+ * day stands in for it.
+ */
+const ASK_TIMEOUT = 24 * 60 * 60 * 1000;
+
 /** A toast offering to close an orphan space, shaped for `notify`. */
 export interface AskToast {
   readonly title: string;
   readonly body: string;
   readonly level: "warning";
+  readonly timeout: number;
   readonly action: {
     readonly name: "space.close";
     readonly args: { readonly id: string; readonly confirmed: false };
@@ -219,6 +227,7 @@ export const askToasts = (
           title: "Space on a removed worktree",
           body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
           level: "warning",
+          timeout: ASK_TIMEOUT,
           action: { name: "space.close", args: { id: orphan.space, confirmed: false } },
         },
       ],
