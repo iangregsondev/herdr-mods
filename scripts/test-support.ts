@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -14,8 +15,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { Effect, Layer } from "effect";
 import { onTestFinished, vi } from "vite-plus/test";
+import { CommandFailed, HerdrHost } from "./herdr-host.ts";
 import type { LayoutNode } from "./herdr-slots.ts";
 
 /** A new empty folder, removed when the current test finishes. Call it inside a test. */
@@ -332,4 +335,63 @@ export function age(path: string): number {
   const past = new Date("2020-01-01T00:00:00Z");
   utimesSync(path, past, past);
   return statSync(path).mtimeMs;
+}
+
+/** What `localHerdrHost` changes about the local Herdr host. */
+export interface LocalHerdrHostOptions {
+  /** Stands in for `herdr-app`: returns its stdout, or throws as a failed run does. */
+  readonly herdrApp?: (args: readonly string[]) => string;
+  /**
+   * Treat file names the way macOS does by default: a path names an existing file
+   * whatever its case, and that file keeps the case it was made with.
+   */
+  readonly caseInsensitive?: boolean;
+}
+
+/** HerdrHost on the Herdr home `home` on this machine, with a fake `herdr-app`. */
+export function localHerdrHost(
+  home: string,
+  options: LocalHerdrHostOptions = {},
+): Layer.Layer<HerdrHost> {
+  const { herdrApp, caseInsensitive = false } = options;
+  /** The existing file `relPath` names when case is ignored, else `relPath` itself. */
+  const existing = (relPath: string): string => {
+    const dir = join(home, dirname(relPath));
+    const name = basename(relPath).toLowerCase();
+    const found = existsSync(dir)
+      ? readdirSync(dir).find((entry) => entry.toLowerCase() === name)
+      : undefined;
+    return found === undefined ? relPath : join(dirname(relPath), found);
+  };
+  return Layer.effect(
+    HerdrHost,
+    Effect.gen(function* () {
+      const local = yield* HerdrHost;
+      return HerdrHost.of({
+        ...local,
+        ...(caseInsensitive
+          ? {
+              writeFile: (relPath, content) => local.writeFile(existing(relPath), content),
+              removeFile: (relPath) => local.removeFile(existing(relPath)),
+              readFile: (relPath) => local.readFile(existing(relPath)),
+              // A target that is the source in another case is the same file: nothing moves.
+              renameFile: (from, to) =>
+                existing(to) === existing(from)
+                  ? Effect.void
+                  : local.renameFile(existing(from), existing(to)),
+            }
+          : {}),
+        ...(herdrApp === undefined
+          ? {}
+          : {
+              herdrApp: (args) =>
+                Effect.try({
+                  try: () => ({ stdout: herdrApp(args), stderr: "" }),
+                  catch: (cause) =>
+                    new CommandFailed({ code: 1, stdout: "", stderr: String(cause) }),
+                }),
+            }),
+      });
+    }),
+  ).pipe(Layer.provide(HerdrHost.local(home)));
 }
