@@ -922,3 +922,14 @@ export const saveSettings = Effect.fn("saveSettings")(
       }),
     ),
 );
+
+/**
+ * Which of the dropped `paths` on `machine` are gone, from one folder check there; a
+ * failed check is its one-line reason, so no space closes on a guess.
+ */
+export const checkGone = Effect.fn("checkGone")(function* (
+  paths: readonly string[],
+  machine: Machine,
+) {
+  return yield* goneFolders(paths, machine);
+}, asReason);

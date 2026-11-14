@@ -68,6 +68,7 @@ import {
 import { actionFor, copiesIn, handledAtStart, noticeFor, routeCommand } from "./keys.ts";
 import {
   addGroupFolderOn,
+  checkGone,
   dialogFor,
   foundOf,
   landSearch,
@@ -94,6 +95,15 @@ import {
   type LoadedSettings,
   type Scanned,
 } from "./load.ts";
+import {
+  checked,
+  jobRemoved,
+  listsRead,
+  NO_ORPHANS,
+  orphanSteps,
+  waitingOn,
+  type Orphans,
+} from "./orphans.ts";
 import {
   ITEM_HEIGHT,
   busyNotice,
@@ -538,6 +548,10 @@ export default class Worktrunk extends View {
   discovered = false;
   discoverError: Option.Option<string> = Option.none();
   lists: ReadonlyMap<RepoKey, RepoList> = new Map();
+  /** Worktree paths dropped from their lists, waiting for a folder check on their machine. */
+  orphans: Orphans = NO_ORPHANS;
+  /** The machines whose dropped paths' folder check is running. */
+  orphanChecks: ReadonlySet<Machine> = new Set();
   /** The machines that can't be read now, and why; their repos aren't listed or read. */
   machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
@@ -966,17 +980,40 @@ export default class Worktrunk extends View {
 
   /**
    * What every job does once it has ended: say why it never started, or close the spaces
-   * on its removed folders (on its machine) and say what went wrong around it.
+   * on its removed folders (on its machine) and say what went wrong around it. Those
+   * folders never count as orphans' worktrees: their spaces are closed here.
    */
   jobEnded(title: string, machine: Machine, outcome: JobOutcome) {
     if (outcome._tag === "NotStarted") {
       notify({ title: `Couldn't start: ${title}`, body: outcome.reason, level: "error" });
     } else {
+      this.orphans = jobRemoved(this.orphans, machine, outcome.gone);
       spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) =>
         run("space.close", { id, confirmed: true }),
       );
       jobProblems(title, outcome.problems);
     }
+  }
+
+  /**
+   * Checks the worktree paths dropped on `machine` in one run there, unless none wait or
+   * a check there is still running, then closes the orphan spaces on the gone ones where
+   * only shells run. Spaces where something else runs get one toast each, never repeated,
+   * that closes the space after Herdr's own confirm when clicked.
+   */
+  checkOrphans(cx: AsyncContext, machine: Machine) {
+    const asked = waitingOn(this.orphans, machine);
+    if (asked.length === 0 || this.orphanChecks.has(machine)) return;
+    this.orphanChecks = new Set([...this.orphanChecks, machine]);
+    cx.spawn(async () => {
+      const answer = await runEdge(checkGone(asked, machine), Result.fail);
+      this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
+      const after = checked(this.orphans, machine, asked, answer);
+      const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
+      this.orphans = steps.orphans;
+      steps.closes.forEach((id) => run("space.close", { id, confirmed: true }));
+      steps.toasts.forEach((toast) => notify(toast));
+    });
   }
 
   /** No job runs any more: the panel says so and reads the list again. */
@@ -1208,6 +1245,8 @@ export default class Worktrunk extends View {
               return this.reposToRead();
             },
             (machine, answer) => {
+              this.orphans = listsRead(this.orphans, this.lists, machine, answer);
+              this.checkOrphans(cx, machine);
               const kept = keepLists(
                 { lists: this.lists, machines: this.machineStatus },
                 machine,

@@ -12059,6 +12059,13 @@ const saveSettings = fn("saveSettings")(function* (files, opened, settings) {
 	SettingsUnreadable: (failed) => succeed(fail$2(unreadableText(files.name, failed))),
 	FileError: (failed) => succeed(fail$2(unsavedText(files.name, failed)))
 })));
+/**
+* Which of the dropped `paths` on `machine` are gone, from one folder check there; a
+* failed check is its one-line reason, so no space closes on a guess.
+*/
+const checkGone = fn("checkGone")(function* (paths, machine) {
+	return yield* goneFolders(paths, machine);
+}, asReason);
 
 // src/spaces.ts
 /**
@@ -12099,17 +12106,26 @@ const spacesOnWorktrees = (places, machine, paths) => places.filter((place) => p
 	return new Map([...on, [path, space]]);
 }, /* @__PURE__ */ new Map());
 /**
-* The ids of the spaces on `machine` whose folder (where the space was made) or place
-* (where its first terminal is now) is one of the `gone` folders there, or inside one. A
-* space on another machine never matches: the same path there is another folder.
-* Both count because wt moves a removed worktree into a trash folder and a shell inside
-* it moves too, so the place alone can point somewhere that still exists.
+* The spaces on `machine` whose folder (where the space was made) or place (where its
+* first terminal is now) is one of the `gone` folders there, or inside one, each with the
+* gone folder it matched (by its folder first). A space on another machine never
+* matches: the same path there is another folder. Both count because wt moves a removed
+* worktree into a trash folder and a shell inside it moves too, so the place alone can
+* point somewhere that still exists.
 */
-const spacesInGone = (spaces, panes, machine, gone) => {
-	const inGone = (path) => gone.some((folder) => isUnder(path, folder));
+const goneSpaces = (spaces, panes, machine, gone) => {
+	const goneUnder = (path) => fromNullishOr(gone.find((folder) => isUnder(path, folder)));
 	const places = new Map(spacePlaces(spaces, panes).map(({ space, place }) => [space.id, place]));
-	return spaces.filter((space) => space.machine === machine).filter((space) => inGone(space.folder) || inGone(places.get(space.id) ?? "")).map((space) => space.id);
+	return spaces.filter((space) => space.machine === machine).flatMap((space) => match$5(orElse(goneUnder(space.folder), () => flatMap$3(fromNullishOr(places.get(space.id)), goneUnder)), {
+		onNone: () => [],
+		onSome: (folder) => [{
+			id: space.id,
+			folder
+		}]
+	}));
 };
+/** The ids of the spaces `goneSpaces` finds on the `gone` folders on `machine`. */
+const spacesInGone = (spaces, panes, machine, gone) => goneSpaces(spaces, panes, machine, gone).map((space) => space.id);
 /**
 * The folder the person is working in, on the focused space's machine: the focused
 * terminal's, else (a mod pane or the panel itself has focus) where the focused space
@@ -12183,6 +12199,147 @@ const spaceGroups = (places, repos, lists) => Object.fromEntries(places.flatMap(
 const groupsChanged = (groups, published) => {
 	const entries = Object.entries(groups);
 	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, group]) => Reflect.get(published, space) !== group);
+};
+
+// src/orphans.ts
+const NO_ORPHANS = {
+	waiting: /* @__PURE__ */ new Map(),
+	removed: /* @__PURE__ */ new Map(),
+	asked: /* @__PURE__ */ new Set()
+};
+/** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
+const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
+/**
+* The panel's own job removed the folders `gone` on `machine`: never dropped paths. Those
+* a list read already dropped stop waiting (a check running on them returns none of
+* them); the rest are left out of the next read that drops them.
+*/
+const jobRemoved = (orphans, machine, gone) => {
+	const waits = waitingOn(orphans, machine);
+	return {
+		...orphans,
+		waiting: new Map([...orphans.waiting, [machine, waits.filter((path) => !gone.includes(path))]]),
+		removed: new Map([...orphans.removed, [machine, [...orphans.removed.get(machine) ?? [], ...gone.filter((path) => !waits.includes(path))]]])
+	};
+};
+/**
+* What the panel remembers after `machine`'s batched list read answers, given each repo's
+* list from before (`old`). A folder a job removed is left out of the dropped paths, and
+* forgotten by the first fresh read of its repo, whether that read dropped it or lists it
+* again (a worktree made there anew), so its later removal in a terminal counts.
+*/
+const listsRead = (orphans, old, machine, answer) => {
+	const reads = match$4(answer, {
+		onFailure: () => [],
+		onSuccess: (lists) => Array.from(lists).flatMap(([key, list]) => match$4(list, {
+			onFailure: () => [],
+			onSuccess: (worktrees) => {
+				const now = worktrees.map((w) => w.path);
+				const before = (old.get(key)?.worktrees ?? []).map((w) => w.path);
+				return [{
+					dropped: before.filter((path) => !now.includes(path)),
+					seen: [...before, ...now]
+				}];
+			}
+		}))
+	});
+	const dropped = reads.flatMap((fresh) => fresh.dropped);
+	const seen = reads.flatMap((fresh) => fresh.seen);
+	const removed = orphans.removed.get(machine) ?? [];
+	return {
+		...orphans,
+		waiting: new Map([...orphans.waiting, [machine, [...waitingOn(orphans, machine), ...dropped.filter((path) => !removed.includes(path))]]]),
+		removed: new Map([...orphans.removed, [machine, removed.filter((path) => !seen.includes(path))]])
+	};
+};
+/**
+* The folder check of the paths `asked` on `machine` answered: the folders it found gone,
+* or why it failed. Gone paths come back for their spaces to close or be asked about; a
+* path whose folder exists is forgotten; a failed check leaves every path waiting for the
+* machine's next refresh. Paths dropped while the check ran wait on.
+*/
+const checked = (orphans, machine, asked, answer) => match$4(answer, {
+	onFailure: () => ({
+		orphans,
+		gone: []
+	}),
+	onSuccess: (gone) => ({
+		orphans: {
+			...orphans,
+			waiting: new Map([...orphans.waiting, [machine, waitingOn(orphans, machine).filter((path) => !asked.includes(path))]])
+		},
+		gone: gone.filter((path) => asked.includes(path) && waitingOn(orphans, machine).includes(path))
+	})
+});
+const closeOrAsk = (space, panes) => {
+	const tabs = new Set(space.tabs.map((tab) => tab.id));
+	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Ask";
+};
+/**
+* The orphan spaces on `machine`: every space there on one of the `gone` folders (by
+* folder or place, as `goneSpaces` matches them), each closed or asked about, with the
+* gone folder it was matched by.
+*/
+const orphanSpaces = (spaces, panes, machine, gone) => {
+	const byId = new Map(spaces.map((space) => [space.id, space]));
+	return goneSpaces(spaces, panes, machine, gone).flatMap(({ id, folder }) => match$5(fromNullishOr(byId.get(id)), {
+		onNone: () => [],
+		onSome: (space) => [{
+			space: id,
+			step: closeOrAsk(space, panes),
+			folder
+		}]
+	}));
+};
+/**
+* How long the toast offering to close an orphan space stays up: a day. Herdr fades a
+* toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
+* day stands in for it.
+*/
+const ASK_TIMEOUT = 864e5;
+/**
+* The toasts for the `found` orphan spaces where something other than a shell runs and
+* no toast has asked before: each names the space and the gone folder it was matched by,
+* and clicking it closes the space after Herdr's own confirm. The spaces asked about are
+* remembered, so a later check never asks again.
+*/
+const askToasts = (orphans, spaces, found) => {
+	const names = new Map(spaces.map((space) => [space.id, space.name]));
+	const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
+	const toasts = asks.flatMap((orphan) => match$5(fromNullishOr(names.get(orphan.space)), {
+		onNone: () => [],
+		onSome: (name) => [{
+			title: "Space on a removed worktree",
+			body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
+			level: "warning",
+			timeout: ASK_TIMEOUT,
+			action: {
+				name: "space.close",
+				args: {
+					id: orphan.space,
+					confirmed: false
+				}
+			}
+		}]
+	}));
+	return {
+		orphans: {
+			...orphans,
+			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)])
+		},
+		toasts
+	};
+};
+/**
+* The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
+* those where only shells run close at once, the others get an ask toast (`askToasts`).
+*/
+const orphanSteps = (orphans, spaces, panes, machine, gone) => {
+	const found = orphanSpaces(spaces, panes, machine, gone);
+	return {
+		...askToasts(orphans, spaces, found),
+		closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space)
+	};
 };
 
 // src/view.ts
@@ -13134,6 +13291,10 @@ var Worktrunk = class extends View {
 	discovered = false;
 	discoverError = none();
 	lists = /* @__PURE__ */ new Map();
+	/** Worktree paths dropped from their lists, waiting for a folder check on their machine. */
+	orphans = NO_ORPHANS;
+	/** The machines whose dropped paths' folder check is running. */
+	orphanChecks = /* @__PURE__ */ new Set();
 	/** The machines that can't be read now, and why; their repos aren't listed or read. */
 	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
@@ -13541,7 +13702,8 @@ var Worktrunk = class extends View {
 	}
 	/**
 	* What every job does once it has ended: say why it never started, or close the spaces
-	* on its removed folders (on its machine) and say what went wrong around it.
+	* on its removed folders (on its machine) and say what went wrong around it. Those
+	* folders never count as orphans' worktrees: their spaces are closed here.
 	*/
 	jobEnded(title, machine, outcome) {
 		if (outcome._tag === "NotStarted") notify({
@@ -13550,12 +13712,36 @@ var Worktrunk = class extends View {
 			level: "error"
 		});
 		else {
+			this.orphans = jobRemoved(this.orphans, machine, outcome.gone);
 			spacesInGone(spaces(), panes(), machine, outcome.gone).forEach((id) => run("space.close", {
 				id,
 				confirmed: true
 			}));
 			jobProblems(title, outcome.problems);
 		}
+	}
+	/**
+	* Checks the worktree paths dropped on `machine` in one run there, unless none wait or
+	* a check there is still running, then closes the orphan spaces on the gone ones where
+	* only shells run. Spaces where something else runs get one toast each, never repeated,
+	* that closes the space after Herdr's own confirm when clicked.
+	*/
+	checkOrphans(cx, machine) {
+		const asked = waitingOn(this.orphans, machine);
+		if (asked.length === 0 || this.orphanChecks.has(machine)) return;
+		this.orphanChecks = /* @__PURE__ */ new Set([...this.orphanChecks, machine]);
+		cx.spawn(async () => {
+			const answer = await runEdge(checkGone(asked, machine), fail$2);
+			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
+			const after = checked(this.orphans, machine, asked, answer);
+			const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
+			this.orphans = steps.orphans;
+			steps.closes.forEach((id) => run("space.close", {
+				id,
+				confirmed: true
+			}));
+			steps.toasts.forEach((toast) => notify(toast));
+		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */
 	jobsDone(cx) {
@@ -13762,6 +13948,8 @@ var Worktrunk = class extends View {
 					cx.notify();
 					return this.reposToRead();
 				}, (machine, answer) => {
+					this.orphans = listsRead(this.orphans, this.lists, machine, answer);
+					this.checkOrphans(cx, machine);
 					const kept = keepLists({
 						lists: this.lists,
 						machines: this.machineStatus

@@ -4,6 +4,7 @@ import { Effect, Exit, Fiber, Layer, Option, Result } from "effect";
 import { Files, type FilesApi } from "worktrunk-mailbox";
 import {
   addGroupFolderOn,
+  checkGone,
   defectAsReason,
   dialogFor,
   foundOf,
@@ -2493,5 +2494,43 @@ describe("saveSettings", () => {
           Result.fail("iangregsondev-worktrunk.json: couldn't save it (disk full)"),
         );
       }),
+  );
+});
+
+/** A Herdr API whose `exec` answers every run with `answer`, recording each run's machine. */
+const checkApi = (answer: { readonly code: number; readonly stdout: string }) => {
+  const ran: unknown[] = [];
+  const api: ExecApi = {
+    exec: (_command, args = [], options) => {
+      ran.push([options?.on ?? THIS_MACHINE, ...args.slice(3)]);
+      return Promise.resolve({ ...answer, stderr: answer.code === 0 ? "" : "ssh: no route" });
+    },
+    hc: noHc,
+  };
+  return { api, ran };
+};
+
+describe("checkGone", () => {
+  it.effect("checks the dropped paths in one run on their machine: the gone ones", () =>
+    Effect.gen(function* () {
+      const { api, ran } = checkApi({ code: 0, stdout: "/srv/app.feat\n" });
+      const gone = yield* checkGone(["/srv/app.feat", "/srv/app.fix"], "linux").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(
+        [gone, ran],
+        [Result.succeed(["/srv/app.feat"]), [["linux", "/srv/app.feat", "/srv/app.fix"]]],
+      );
+    }),
+  );
+
+  it.effect("a failed check is its reason, not a guess at what's gone", () =>
+    Effect.gen(function* () {
+      const { api } = checkApi({ code: 255, stdout: "" });
+      const gone = yield* checkGone(["/srv/app.feat"], "linux").pipe(
+        Effect.provide(Shell.layer(api)),
+      );
+      assert.deepStrictEqual(gone, Result.fail("ssh: no route"));
+    }),
   );
 });

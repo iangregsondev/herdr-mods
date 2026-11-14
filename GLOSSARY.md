@@ -89,6 +89,10 @@ _Avoid_: active repo (active means in-progress work here)
 A Herdr space: a sidebar entry that holds tabs, usually opened on one worktree's folder. Every space lives on one machine.
 _Avoid_: workspace
 
+**Orphan space**:
+A space left on a worktree that has since been removed: the worktree is gone from its repo and its folder no longer exists on the space's machine. A space on any other missing folder is not an orphan space.
+_Avoid_: leftover space, stale space, dead space
+
 **Machine**:
 A computer that Herdr's spaces live on, named as Herdr names it (`hc machine ls`). Every repo and every space is on exactly one machine. The same repo cloned on two machines is two repos.
 _Avoid_: remote, server, host (Herdr host means the computer running the Herdr app)
