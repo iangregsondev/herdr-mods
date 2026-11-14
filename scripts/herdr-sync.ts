@@ -239,6 +239,15 @@ const fail = (line: string): SyncResult => ({
 
 const layoutFile = (name: string): string => `layouts/${name}.json`;
 
+/** Where a layout waits while its name changes case; not a .json, so Herdr ignores it. */
+const RENAMING = "layouts/.herdr-sync-renaming";
+
+/**
+ * Whether two layout names are the same file on a file system that ignores case,
+ * as macOS's does by default: `workbench` and `Workbench` are one layout there.
+ */
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
 /** A file's text on the Herdr host, or null when it isn't there. */
 const readIfThere = (relPath: string) =>
   HerdrHost.use((host) =>
@@ -277,6 +286,16 @@ const installedVersion = HerdrHost.use((host) =>
 /** The layout the sync built, as its record names it; null when there is no record or it names none. */
 const syncedLayout = Effect.map(readIfThere(RECORD_FILE), (text) =>
   text === null ? null : layoutFromRecord(text),
+);
+
+/** The names of the layouts on the Herdr host; none when there is no layouts folder. */
+const layoutNames = HerdrHost.use((host) =>
+  host.listDir("layouts").pipe(
+    Effect.map((files) =>
+      files.filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)),
+    ),
+    Effect.catchTag("FileMissing", () => Effect.succeed<ReadonlyArray<string>>([])),
+  ),
 );
 
 /** Whether `mod` is installed on the Herdr host: its folder holds a main.js. */
@@ -327,8 +346,20 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
   }
 
   const shipped = yield* shippedOnHost;
-  if (shipped.has(layout)) {
-    return fail(`a layout named "${layout}" ships with Herdr; refusing to overwrite it.`);
+  const shippedClash = [...shipped].find((name) => sameName(name, layout));
+  if (shippedClash !== undefined) {
+    return fail(
+      `the layout name "${layout}" is taken: "${shippedClash}" ships with Herdr. Set another "layout" in herdr-dev.json.`,
+    );
+  }
+  const previous = yield* syncedLayout;
+  const clash = (yield* layoutNames).find(
+    (name) => sameName(name, layout) && !(previous !== null && sameName(name, previous)),
+  );
+  if (clash !== undefined) {
+    return fail(
+      `the layout name "${layout}" is taken: herdr:sync didn't build "${clash}", so it is someone's own. Set another "layout" in herdr-dev.json.`,
+    );
   }
   const needed = [...new Set(LAYOUT_EDITS.flatMap((e) => (e.needs ? [e.needs] : [])))];
   const present = yield* Effect.forEach(needed, (mod) =>
@@ -343,17 +374,28 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
       `Herdr's default layout has changed, so this patch point no longer fits: ${built.reason}.`,
     );
   }
-  const previous = yield* syncedLayout;
   // Only a layout the record names was built by sync; any other file is the person's,
   // and a layout Herdr ships is Herdr's.
-  const retired =
-    previous !== null && previous !== layout && !shipped.has(previous) ? previous : null;
+  const ours = previous !== null && previous !== layout && !shipped.has(previous) ? previous : null;
+  // A name that changes only in case is the same file where case is ignored: removing
+  // the old name there would remove the new layout too. So that file is renamed instead,
+  // in two steps, since a rename to the same name in another case can do nothing.
+  const renamed =
+    ours !== null && sameName(ours, layout) && (yield* layoutNames).includes(ours) ? ours : null;
+  const retired = ours !== null && !sameName(ours, layout) ? ours : null;
+  if (renamed !== null) {
+    yield* host.renameFile(layoutFile(renamed), RENAMING);
+    yield* host.renameFile(RENAMING, layoutFile(layout));
+  }
   yield* writeIfChanged(layoutFile(layout), json(built.node));
   // Herdr moves off the old layout first, so it never shows a layout that's gone.
-  const shown = retired === null ? null : yield* status;
+  // The name Herdr may be showing that is about to go: the retired layout, or the old case.
+  const moved = retired ?? renamed;
+  const shown = moved === null ? null : yield* status;
   const switching =
-    retired !== null && shown?._tag === "Running" && layoutFromStatus(shown.text) === retired;
-  if (switching && !(yield* switchTo(layout))) {
+    moved !== null && shown?._tag === "Running" && layoutFromStatus(shown.text) === moved;
+  const switched = switching && (yield* switchTo(layout));
+  if (switching && !switched && retired !== null) {
     // The record keeps naming the old layout, so the next run retires it.
     return {
       code: 1,
@@ -366,6 +408,17 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
   }
   if (retired !== null) yield* host.removeFile(layoutFile(retired));
   yield* writeIfChanged(RECORD_FILE, json({ layout: layout, from: DEFAULT_LAYOUT, version }));
+  if (switching && !switched) {
+    // Only the old case is gone: the layout is there under its new name.
+    return {
+      code: 1,
+      out: [],
+      err: [
+        `herdr-sync: renamed layout "${moved}" to "${layout}", but couldn't switch Herdr to it.`,
+        `herdr-sync: switch with herdr-app do layout.switch --name ${layout}`,
+      ],
+    };
+  }
   return {
     code: 0,
     out: [
@@ -373,8 +426,9 @@ export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
       ...(retired === null
         ? []
         : [`herdr-sync: removed layout "${retired}", which an earlier sync built.`]),
+      ...(renamed === null ? [] : [`herdr-sync: renamed layout "${renamed}" to "${layout}".`]),
       switching
-        ? `herdr-sync: switched Herdr from "${retired}" to "${layout}".`
+        ? `herdr-sync: switched Herdr from "${moved}" to "${layout}".`
         : `herdr-sync: nothing switched. Switch to it with Herdr's layout switch (layout.switch), or: herdr-app do layout.switch --name ${layout}`,
       ...missing.map(
         (mod) =>

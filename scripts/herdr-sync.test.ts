@@ -20,12 +20,23 @@ const herdrSync = (options: {
   readonly home: string;
   readonly herdrApp: (args: readonly string[]) => string;
   readonly status?: () => HerdrStatus;
+  /** The layout to build; Workbench, the dev config's default, when left out. */
+  readonly layout?: string;
+  /** Run against a Herdr home whose file names ignore case, as macOS's do by default. */
+  readonly caseInsensitive?: boolean;
 }): SyncResult =>
   Effect.runSync(
     herdrSyncOnHost(
-      "Workbench",
+      options.layout ?? "Workbench",
       ...(options.status === undefined ? [] : [Effect.sync(options.status)]),
-    ).pipe(Effect.provide(localHerdrHost(options.home, { herdrApp: options.herdrApp }))),
+    ).pipe(
+      Effect.provide(
+        localHerdrHost(options.home, {
+          herdrApp: options.herdrApp,
+          caseInsensitive: options.caseInsensitive ?? false,
+        }),
+      ),
+    ),
   );
 
 const MOD = "iangregsondev-worktrunk";
@@ -389,6 +400,68 @@ describe("herdrSync", () => {
     });
   });
 
+  describe("a name that changes only in case, on a file system that ignores case", () => {
+    /** A Herdr home where an earlier sync built `workbench` and recorded it. */
+    const lowerCaseBefore = (): string => {
+      const home = herdrHome();
+      writeFile(home, "layouts/workbench.json", json(defaultLayout()));
+      writeFile(
+        home,
+        "iangregsondev-sync.json",
+        json({ layout: "workbench", from: "main", version: "0.1.14" }),
+      );
+      return home;
+    };
+
+    test("keeps the layout, under its new name", () => {
+      const home = lowerCaseBefore();
+      herdrSync({ home, herdrApp: fakeHerdrApp().run, caseInsensitive: true });
+
+      expect(readdirSync(join(home, "layouts")).sort()).toEqual(["Workbench.json", "main.json"]);
+      expect(readLayout(join(home, "layouts/Workbench.json"))).toEqual(expectedLayout());
+    });
+
+    test("when Herdr showed it under the old name, switches Herdr to the new one", () => {
+      const herdrApp = fakeHerdrApp();
+      herdrSync({
+        home: lowerCaseBefore(),
+        herdrApp: herdrApp.run,
+        status: () => ({ _tag: "Running", text: JSON.stringify({ layout: "workbench" }) }),
+        caseInsensitive: true,
+      });
+
+      expect(herdrApp.calls).toContainEqual(["do", "layout.switch", "--name", "Workbench"]);
+    });
+
+    test("when Herdr can't switch, records the new name and says to switch by hand", () => {
+      const home = lowerCaseBefore();
+      const herdrApp = (args: readonly string[]): string => {
+        if (args[0] === "do") throw new Error("layout.switch failed");
+        return "herdr-app 0.1.14\n";
+      };
+      const result = herdrSync({
+        home,
+        herdrApp,
+        status: () => ({ _tag: "Running", text: JSON.stringify({ layout: "workbench" }) }),
+        caseInsensitive: true,
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.err).toEqual([
+        `herdr-sync: renamed layout "workbench" to "Workbench", but couldn't switch Herdr to it.`,
+        "herdr-sync: switch with herdr-app do layout.switch --name Workbench",
+      ]);
+      expect(readRecord(home)).toEqual({ layout: "Workbench", from: "main", version: "0.1.14" });
+    });
+
+    test("leaves only the new name on a file system that keeps case apart", () => {
+      const home = lowerCaseBefore();
+      herdrSync({ home, herdrApp: fakeHerdrApp().run });
+
+      expect(readdirSync(join(home, "layouts")).sort()).toEqual(["Workbench.json", "main.json"]);
+    });
+  });
+
   describe("with the menus mod installed", () => {
     /** `node` with every block showing `mod` changed to show `content` instead. */
     const swapped = (node: LayoutNode, mod: string, content: LayoutNode["content"]): LayoutNode =>
@@ -433,9 +506,13 @@ describe("herdrSync", () => {
   });
 
   describe("fails loudly and writes nothing", () => {
-    const failsNaming = (home: string, ...names: string[]) => {
+    const failsNaming = (home: string, ...names: string[]) =>
+      failsBuilding("Workbench", home, ...names);
+
+    /** The sync of `layout` in `home` stops with code 1, names each of `names`, and writes nothing. */
+    const failsBuilding = (layout: string, home: string, ...names: string[]) => {
       const before = snapshot(home);
-      const result = herdrSync({ home, herdrApp: fakeHerdrApp().run });
+      const result = herdrSync({ home, herdrApp: fakeHerdrApp().run, layout });
       expect(result.code).toBe(1);
       names.forEach((name) => expect(result.err.join("\n")).toContain(name));
       expect(changedFiles(before, snapshot(home))).toEqual([]);
@@ -501,6 +578,16 @@ describe("herdrSync", () => {
       writeFile(home, "installed.json", json({ "layout:main": {}, "layout:Workbench": {} }));
       writeFile(home, "layouts/Workbench.json", json(defaultLayout()));
       failsNaming(home, "ships with Herdr");
+    });
+
+    test("when a layout the sync didn't build has the name, ignoring case", () => {
+      const home = herdrHome();
+      writeFile(home, "layouts/workbench.json", json(defaultLayout()));
+      failsBuilding("Workbench", home, '"workbench"', "herdr:sync didn't build");
+    });
+
+    test("when the name is a layout Herdr ships in another case", () => {
+      failsBuilding("Main", herdrHome(), '"Main"', "ships with Herdr");
     });
   });
 });
