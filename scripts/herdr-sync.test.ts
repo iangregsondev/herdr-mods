@@ -1,9 +1,22 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { Effect } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { herdrSync } from "./herdr-sync.ts";
+import { herdrSyncOnHost, type SyncResult } from "./herdr-sync.ts";
 import type { HerdrStatus, LayoutNode } from "./herdr-slots.ts";
-import { age, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+import { age, localHerdrHost, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
+
+/** The sync against the Herdr home `home` on this machine, with a fake `herdr-app`. */
+const herdrSync = (options: {
+  readonly home: string;
+  readonly herdrApp: (args: readonly string[]) => string;
+  readonly status?: () => HerdrStatus;
+}): SyncResult =>
+  Effect.runSync(
+    herdrSyncOnHost(...(options.status === undefined ? [] : [Effect.sync(options.status)])).pipe(
+      Effect.provide(localHerdrHost(options.home, { herdrApp: options.herdrApp })),
+    ),
+  );
 
 const MOD = "iangregsondev-worktrunk";
 const MENUS = "iangregsondev-menus";

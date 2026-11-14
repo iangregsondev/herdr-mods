@@ -106,7 +106,7 @@ function shippedFrom(text: string): Set<string> {
  * Layouts that ship with Herdr: their structure can't be edited, only cloned.
  * None when installed.json is missing or isn't a JSON object.
  */
-const shippedOnHost: Effect.Effect<
+export const shippedOnHost: Effect.Effect<
   Set<string>,
   TransportError | HostUnreachable,
   HerdrHost
@@ -160,7 +160,7 @@ const notFound = (cause: unknown): boolean =>
   Predicate.hasProperty(cause, "code") && cause.code === "ENOENT";
 
 /** Runs `herdr-app status` on the Herdr host. Fails only when the host can't be reached. */
-const herdrStatus: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = Effect.gen(
+export const herdrStatus: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = Effect.gen(
   function* () {
     const host = yield* HerdrHost;
     return yield* host.herdrApp(["status"]).pipe(

@@ -14,14 +14,14 @@
 // A layout the record doesn't name is never removed. It never edits Herdr's own files,
 // never switches layouts otherwise, and keeps none of Herdr's code in this repo: it
 // reads the installed files on this machine each time.
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { Effect } from "effect";
 import { modId, NAMESPACE } from "../mod-pack.ts";
+import { causeText, HerdrHost, type HostUnreachable, type TransportError } from "./herdr-host.ts";
 import {
   herdrHome,
+  herdrStatus,
   layoutFromStatus,
-  shippedLayouts,
+  shippedOnHost,
   type HerdrStatus,
   type LayoutNode,
 } from "./herdr-slots.ts";
@@ -32,18 +32,6 @@ export const DEFAULT_LAYOUT = "main";
 export const LAYOUT_NAME = "workbench";
 /** The record of the Herdr version the layout was built from, in the app home. */
 export const RECORD_FILE = `${NAMESPACE}-sync.json`;
-
-/**
- * The layout the sync built in the Herdr app at `home`, as its record names it; null
- * when there is no record or it can't be read.
- */
-export function syncedLayout(home: string): string | null {
-  try {
-    return layoutFromRecord(readFileSync(join(home, RECORD_FILE), "utf8"));
-  } catch {
-    return null;
-  }
-}
 
 /** The layout named in the sync record's text; null when it isn't JSON or names none. */
 export function layoutFromRecord(text: string): string | null {
@@ -230,15 +218,6 @@ export function versionFrom(text: string): string | null {
   return /\b(\d+\.\d+\.\d+[\w.+-]*)/.exec(text)?.[1] ?? null;
 }
 
-/** Runs `herdr-app` with `args` and returns its stdout. */
-const runHerdrApp = (args: readonly string[]): string =>
-  execFileSync("herdr-app", [...args], { encoding: "utf8" });
-
-/** Writes `text` to `path` unless the file already holds it, so Herdr reloads nothing. */
-const writeIfChanged = (path: string, text: string): void => {
-  if (!existsSync(path) || readFileSync(path, "utf8") !== text) writeFileSync(path, text);
-};
-
 export interface SyncResult {
   /** The exit code: 0 when the sync finished, 1 when it stopped. */
   readonly code: 0 | 1;
@@ -254,92 +233,122 @@ const fail = (line: string): SyncResult => ({
   err: [`herdr-sync: ${line}`, "herdr-sync: nothing written."],
 });
 
-const readBase = (path: string): LayoutNode | null => {
+const layoutFile = (name: string): string => `layouts/${name}.json`;
+
+/** A file's text on the Herdr host, or null when it isn't there. */
+const readIfThere = (relPath: string) =>
+  HerdrHost.use((host) =>
+    host.readFile(relPath).pipe(
+      Effect.map((text): string | null => text),
+      Effect.catchTag("FileMissing", () => Effect.succeed(null)),
+    ),
+  );
+
+/** A layout file's text as a tree; null when it isn't JSON. */
+const parseBase = (text: string): LayoutNode | null => {
   try {
     // Herdr writes its layout files; the edits check the parts they rely on.
-    return JSON.parse(readFileSync(path, "utf8")) as LayoutNode;
+    return JSON.parse(text) as LayoutNode;
   } catch {
     return null;
   }
 };
 
-const installedVersion = (herdrApp: (args: readonly string[]) => string): string | null => {
-  try {
-    return versionFrom(herdrApp(["--version"]));
-  } catch {
-    return null;
-  }
-};
+/** Herdr's default layout as a tree; null when it is missing or isn't JSON. */
+const readBase = Effect.map(readIfThere(layoutFile(DEFAULT_LAYOUT)), (text) =>
+  text === null ? null : parseBase(text),
+);
 
-/** `herdr-app status` run through `herdrApp`; a failed run means Herdr isn't running. */
-const statusThrough = (herdrApp: (args: readonly string[]) => string): HerdrStatus => {
-  try {
-    return { _tag: "Running", text: herdrApp(["status"]) };
-  } catch {
-    return { _tag: "NotRunning" };
-  }
-};
+/** The installed Herdr version, or null when `herdr-app --version` fails or names none. */
+const installedVersion = HerdrHost.use((host) =>
+  host.herdrApp(["--version"]).pipe(
+    Effect.map(({ stdout }) => versionFrom(stdout)),
+    Effect.catchTags({
+      CommandFailed: () => Effect.succeed(null),
+      TransportError: () => Effect.succeed(null),
+    }),
+  ),
+);
 
-/** The layout Herdr shows, from `status`; null when Herdr isn't running or names none. */
-const shownLayout = (shown: HerdrStatus): string | null =>
-  shown._tag === "Running" ? layoutFromStatus(shown.text) : null;
+/** The layout the sync built, as its record names it; null when there is no record or it names none. */
+const syncedLayout = Effect.map(readIfThere(RECORD_FILE), (text) =>
+  text === null ? null : layoutFromRecord(text),
+);
+
+/** Whether `mod` is installed on the Herdr host: its folder holds a main.js. */
+const isInstalled = (mod: string) =>
+  HerdrHost.use((host) =>
+    host.listDir(`mods/${mod}`).pipe(
+      Effect.map((entries) => entries.includes("main.js")),
+      Effect.catchTag("FileMissing", () => Effect.succeed(false)),
+    ),
+  );
+
+/** Writes `text` to `relPath` unless the file already holds it, so Herdr reloads nothing. */
+const writeIfChanged = (relPath: string, text: string) =>
+  Effect.gen(function* () {
+    const host = yield* HerdrHost;
+    if ((yield* readIfThere(relPath)) !== text) yield* host.writeFile(relPath, text);
+  });
 
 /** Asks Herdr to show `layout`; false when `herdr-app` fails. */
-const switchTo = (herdrApp: (args: readonly string[]) => string, layout: string): boolean => {
-  try {
-    herdrApp(["do", "layout.switch", "--name", layout]);
-    return true;
-  } catch {
-    return false;
+const switchTo = (layout: string) =>
+  HerdrHost.use((host) =>
+    host.herdrApp(["do", "layout.switch", "--name", layout]).pipe(
+      Effect.as(true),
+      Effect.catchTags({
+        CommandFailed: () => Effect.succeed(false),
+        TransportError: () => Effect.succeed(false),
+      }),
+    ),
+  );
+
+/**
+ * Builds my layout and the version record on the Herdr host. `status` gives
+ * `herdr-app status` (default: running it on the host); it runs only when an old
+ * layout is to be retired.
+ */
+export const herdrSyncOnHost = Effect.fn("herdrSyncOnHost")(function* (
+  status: Effect.Effect<HerdrStatus, HostUnreachable, HerdrHost> = herdrStatus,
+): Effect.fn.Return<SyncResult, TransportError | HostUnreachable, HerdrHost> {
+  const host = yield* HerdrHost;
+  const base = yield* readBase;
+  if (base === null) {
+    return fail(`can't read Herdr's default layout, ${host.location(layoutFile(DEFAULT_LAYOUT))}.`);
   }
-};
-
-export interface SyncOptions {
-  /** The Herdr app home. Defaults to `herdrHome()`. */
-  readonly home?: string;
-  /** Runs `herdr-app` and returns its stdout. Defaults to the real command. */
-  readonly herdrApp?: (args: readonly string[]) => string;
-  /** Gives `herdr-app status`. Defaults to running it through `herdrApp`. */
-  readonly status?: () => HerdrStatus;
-}
-
-/** Builds my layout and the version record in the Herdr app at `home`. */
-export function herdrSync({
-  home = herdrHome(),
-  herdrApp = runHerdrApp,
-  status = () => statusThrough(herdrApp),
-}: SyncOptions = {}): SyncResult {
-  const basePath = join(home, "layouts", `${DEFAULT_LAYOUT}.json`);
-  const base = readBase(basePath);
-  if (base === null) return fail(`can't read Herdr's default layout, ${basePath}.`);
-  const version = installedVersion(herdrApp);
+  const version = yield* installedVersion;
   if (version === null) {
     return fail("can't find the Herdr version: is `herdr-app --version` on PATH?");
   }
 
-  const shipped = shippedLayouts(home);
+  const shipped = yield* shippedOnHost;
   if (shipped.has(LAYOUT_NAME)) {
     return fail(`a layout named "${LAYOUT_NAME}" ships with Herdr; refusing to overwrite it.`);
   }
-  const installed = (mod: string) => existsSync(join(home, "mods", mod, "main.js"));
+  const needed = [...new Set(LAYOUT_EDITS.flatMap((e) => (e.needs ? [e.needs] : [])))];
+  const present = yield* Effect.forEach(needed, (mod) =>
+    Effect.map(isInstalled(mod), (found) => (found ? [mod] : [])),
+  );
+  const installedMods = new Set(present.flat());
+  const installed = (mod: string) => installedMods.has(mod);
   const built = buildLayout(base, LAYOUT_EDITS, installed);
-  const missing = [
-    ...new Set(LAYOUT_EDITS.flatMap((e) => (e.needs && !installed(e.needs) ? [e.needs] : []))),
-  ];
+  const missing = needed.filter((mod) => !installed(mod));
   if (built._tag === "Failed") {
     return fail(
       `Herdr's default layout has changed, so this patch point no longer fits: ${built.reason}.`,
     );
   }
-  const previous = syncedLayout(home);
+  const previous = yield* syncedLayout;
   // Only a layout the record names was built by sync; any other file is the person's,
   // and a layout Herdr ships is Herdr's.
   const retired =
     previous !== null && previous !== LAYOUT_NAME && !shipped.has(previous) ? previous : null;
-  writeIfChanged(join(home, "layouts", `${LAYOUT_NAME}.json`), json(built.node));
+  yield* writeIfChanged(layoutFile(LAYOUT_NAME), json(built.node));
   // Herdr moves off the old layout first, so it never shows a layout that's gone.
-  const switching = retired !== null && shownLayout(status()) === retired;
-  if (switching && !switchTo(herdrApp, LAYOUT_NAME)) {
+  const shown = retired === null ? null : yield* status;
+  const switching =
+    retired !== null && shown?._tag === "Running" && layoutFromStatus(shown.text) === retired;
+  if (switching && !(yield* switchTo(LAYOUT_NAME))) {
     // The record keeps naming the old layout, so the next run retires it.
     return {
       code: 1,
@@ -350,11 +359,8 @@ export function herdrSync({
       ],
     };
   }
-  if (retired !== null) rmSync(join(home, "layouts", `${retired}.json`), { force: true });
-  writeIfChanged(
-    join(home, RECORD_FILE),
-    json({ layout: LAYOUT_NAME, from: DEFAULT_LAYOUT, version }),
-  );
+  if (retired !== null) yield* host.removeFile(layoutFile(retired));
+  yield* writeIfChanged(RECORD_FILE, json({ layout: LAYOUT_NAME, from: DEFAULT_LAYOUT, version }));
   return {
     code: 0,
     out: [
@@ -372,10 +378,19 @@ export function herdrSync({
     ],
     err: [],
   };
-}
+});
 
 if (import.meta.main) {
-  const result = herdrSync();
+  const result = await Effect.runPromise(
+    herdrSyncOnHost().pipe(
+      Effect.provide(HerdrHost.local(herdrHome())),
+      Effect.catchTags({
+        HostUnreachable: (error) => Effect.succeed(fail(error.message)),
+        TransportError: ({ operation, cause }) =>
+          Effect.succeed(fail(`couldn't ${operation} (${causeText(cause)})`)),
+      }),
+    ),
+  );
   result.out.forEach((line) => console.log(line));
   result.err.forEach((line) => console.error(line));
   process.exitCode = result.code;
