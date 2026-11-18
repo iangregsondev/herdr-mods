@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
@@ -10,7 +10,6 @@ import {
   removeSlots,
   withSlot,
   withoutSlots,
-  type HerdrStatus,
   type LayoutNode,
 } from "./herdr-slots.ts";
 import { age, fakeBin, readLayout, slot, tempDir, writeFile } from "./test-support.ts";
@@ -219,62 +218,28 @@ describe("removeSlots", () => {
 
 describe("ensureSlot", () => {
   const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
-  const showing = (name: string) => (): HerdrStatus => ({
-    _tag: "Running",
-    text: json({ layout: name, errors: [] }),
-  });
-
-  test("says herdr-app isn't installed when it isn't on PATH, and writes nothing", () => {
-    const home = tempDir();
-    const content = json(bare());
-    const work = writeFile(home, "layouts/work.json", content);
-
-    expect(ensureSlot("hello", {}, { home, status: () => ({ _tag: "NotInstalled" }) })).toBe(
-      "herdr-slots: herdr-app not found on PATH; install the Herdr app to see hello.",
-    );
-    expect(readFileSync(work, "utf8")).toBe(content);
-  });
-
-  test("says Herdr isn't running when herdr-app status fails, and writes nothing", () => {
-    const home = tempDir();
-    const content = json(bare());
-    const work = writeFile(home, "layouts/work.json", content);
-
-    expect(ensureSlot("hello", {}, { home, status: () => ({ _tag: "NotRunning" }) })).toBe(
-      "herdr-slots: Herdr isn't running; open it to see hello.",
-    );
-    expect(readFileSync(work, "utf8")).toBe(content);
-  });
-
-  test("says Herdr isn't running when the status names no layout, and writes nothing", () => {
-    const home = tempDir();
-    const content = json(bare());
-    const work = writeFile(home, "layouts/work.json", content);
-
-    expect(
-      ensureSlot("hello", {}, { home, status: () => ({ _tag: "Running", text: "not json" }) }),
-    ).toBe("herdr-slots: Herdr isn't running; open it to see hello.");
-    expect(readFileSync(work, "utf8")).toBe(content);
-  });
-
   test("won't add a slot to a layout that ships with Herdr", () => {
     const home = tempDir();
     writeFile(home, "installed.json", json({ "layout:work": {} }));
     const content = json(bare());
     const work = writeFile(home, "layouts/work.json", content);
 
-    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", {}, { home, layout: "work" })).toBe(
       'herdr-slots: "work" ships with Herdr and can\'t take new slots; clone it, or add hello by hand.',
     );
     expect(readFileSync(work, "utf8")).toBe(content);
   });
 
-  test("says so when the shown layout has no file", () => {
+  test("says to run herdr:sync when the configured layout doesn't exist yet, and adds nothing", () => {
     const home = tempDir();
+    const content = json(bare());
+    const other = writeFile(home, "layouts/work.json", content);
 
-    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
-      'herdr-slots: no file for layout "work"; add hello by hand.',
+    expect(ensureSlot("hello", {}, { home, layout: "Workbench" })).toBe(
+      'herdr-slots: there is no layout "Workbench" yet; run vp run herdr:sync to build it, then save again to add hello.',
     );
+    expect(readdirSync(join(home, "layouts"))).toEqual(["work.json"]);
+    expect(readFileSync(other, "utf8")).toBe(content);
   });
 
   test("leaves a layout that already has the slot unchanged", () => {
@@ -283,7 +248,7 @@ describe("ensureSlot", () => {
     const work = writeFile(home, "layouts/work.json", content);
     const mtime = age(work);
 
-    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", {}, { home, layout: "work" })).toBe(
       'herdr-slots: hello already has a slot in "work".',
     );
     expect(readFileSync(work, "utf8")).toBe(content);
@@ -295,7 +260,7 @@ describe("ensureSlot", () => {
     const content = json(bare());
     const work = writeFile(home, "layouts/work.json", content);
 
-    expect(ensureSlot("hello", { place: "top" }, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", { place: "top" }, { home, layout: "work" })).toBe(
       'herdr-slots: can\'t dock hello at "top" automatically; add it to "work" by hand.',
     );
     expect(readFileSync(work, "utf8")).toBe(content);
@@ -306,7 +271,7 @@ describe("ensureSlot", () => {
     const content = json({ ...bare(), type: "column" });
     const work = writeFile(home, "layouts/work.json", content);
 
-    expect(ensureSlot("hello", {}, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", {}, { home, layout: "work" })).toBe(
       'herdr-slots: can\'t dock hello at "right" automatically; add it to "work" by hand.',
     );
     expect(readFileSync(work, "utf8")).toBe(content);
@@ -316,7 +281,7 @@ describe("ensureSlot", () => {
     const home = tempDir();
     const work = writeFile(home, "layouts/work.json", json(bare()));
 
-    expect(ensureSlot("hello", { size: 240 }, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", { size: 240 }, { home, layout: "work" })).toBe(
       'herdr-slots: added hello to "work" (right).',
     );
     const children = childrenOf(readLayout(work));
@@ -332,7 +297,7 @@ describe("ensureSlot", () => {
     const home = tempDir();
     const work = writeFile(home, "layouts/work.json", json(bare()));
 
-    expect(ensureSlot("hello", { place: "left" }, { home, status: showing("work") })).toBe(
+    expect(ensureSlot("hello", { place: "left" }, { home, layout: "work" })).toBe(
       'herdr-slots: added hello to "work" (left).',
     );
     const children = childrenOf(readLayout(work));
@@ -342,45 +307,27 @@ describe("ensureSlot", () => {
   });
 });
 
-describe("ensureSlot, with herdr-app from PATH", () => {
+describe("ensureSlot, configured layout", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
   const bare = (): LayoutNode => withoutSlots(layout(), "hello").node;
 
-  /** Puts a folder first on PATH holding a `herdr-app` that runs `body`, or none when undefined. */
-  const herdrApp = (body: string | undefined): void => {
+  test("adds the slot to the configured layout, whatever layout Herdr shows", () => {
+    const home = tempDir();
+    const content = json(bare());
+    const work = writeFile(home, "layouts/work.json", content);
+    const workbench = writeFile(home, "layouts/Workbench.json", json(bare()));
     const bin = join(tempDir(), "bin");
-    if (body !== undefined) fakeBin(bin, "herdr-app", body);
-    vi.stubEnv("PATH", body === undefined ? bin : `${bin}:${process.env.PATH ?? ""}`);
-  };
+    fakeBin(bin, "herdr-app", `[ "$1" = status ] && echo '{"layout":"work","errors":[]}'`);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
 
-  test("reads the shown layout from herdr-app status and adds the slot", () => {
-    const home = tempDir();
-    const work = writeFile(home, "layouts/work.json", json(bare()));
-    herdrApp(`[ "$1" = status ] && echo '{"layout":"work","errors":[]}'`);
-
-    expect(ensureSlot("hello", {}, { home })).toBe('herdr-slots: added hello to "work" (right).');
-    expect(hasSlot(readLayout(work), "hello")).toBe(true);
-  });
-
-  test("says Herdr isn't running when herdr-app status exits non-zero", () => {
-    const home = tempDir();
-    herdrApp("exit 1");
-
-    expect(ensureSlot("hello", {}, { home })).toBe(
-      "herdr-slots: Herdr isn't running; open it to see hello.",
+    expect(ensureSlot("hello", {}, { home, layout: "Workbench" })).toBe(
+      'herdr-slots: added hello to "Workbench" (right).',
     );
-  });
-
-  test("says herdr-app isn't installed when it isn't on PATH", () => {
-    const home = tempDir();
-    herdrApp(undefined);
-
-    expect(ensureSlot("hello", {}, { home })).toBe(
-      "herdr-slots: herdr-app not found on PATH; install the Herdr app to see hello.",
-    );
+    expect(hasSlot(readLayout(workbench), "hello")).toBe(true);
+    expect(readFileSync(work, "utf8")).toBe(content);
   });
 });
 

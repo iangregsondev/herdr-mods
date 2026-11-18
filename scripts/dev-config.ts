@@ -7,10 +7,16 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Data, Effect, Option, Predicate, Result, Schema, SchemaIssue } from "effect";
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { causeText } from "./herdr-host.ts";
 
 export type DevTarget = Data.TaggedEnum<{
-  Local: { readonly herdrHome: string; readonly file: string; readonly found: boolean };
+  Local: {
+    readonly herdrHome: string;
+    readonly file: string;
+    readonly found: boolean;
+    readonly layout: string;
+  };
   Remote: {
     readonly host: string;
     readonly user: string;
@@ -18,6 +24,7 @@ export type DevTarget = Data.TaggedEnum<{
     readonly herdrHome: string;
     readonly herdrApp: string;
     readonly file: string;
+    readonly layout: string;
   };
 }>;
 
@@ -41,15 +48,37 @@ const RemoteFields = Schema.Struct({
   herdrApp: withDefault(Schema.NonEmptyString, "~/.local/bin/herdr-app"),
 });
 
+/** The layout `herdr:sync` builds and the dev loop adds slots to, unless the file names another. */
+export const DEFAULT_LAYOUT = "Workbench";
+
 const DevConfigFile = Schema.Struct({
   target: withDefault(Schema.Literals(["local", "remote"]), "local"),
   remote: Schema.optionalKey(RemoteFields),
+  layout: withDefault(Schema.NonEmptyString, DEFAULT_LAYOUT),
 });
 
 // Excess fields are errors, so a misspelt key never passes as a default.
-const decodeFile = Schema.decodeUnknownResult(Schema.fromJsonString(DevConfigFile), {
-  onExcessProperty: "error",
-});
+const decodeFile = Schema.decodeUnknownResult(DevConfigFile, { onExcessProperty: "error" });
+
+/**
+ * The file's text as JSONC (JSON with comments and trailing commas), the way
+ * VS Code reads its own settings. Plain JSON parses exactly as before.
+ */
+function parseJsonc(text: string): Result.Result<unknown, readonly ParseError[]> {
+  const errors: ParseError[] = [];
+  const value: unknown = parse(text, errors, { allowTrailingComma: true });
+  return errors.length === 0 ? Result.succeed(value) : Result.fail(errors);
+}
+
+/** The first parse error, placed by its line and column (both from 1). */
+function parseProblem(text: string, errors: readonly ParseError[]): string {
+  const first = errors[0];
+  if (first === undefined) return "not valid JSONC";
+  const before = text.slice(0, first.offset).split("\n");
+  const line = before.length;
+  const column = (before[line - 1]?.length ?? 0) + 1;
+  return `${printParseErrorCode(first.error)} at line ${line}, column ${column}`;
+}
 
 const formatIssue = SchemaIssue.makeFormatterStandardSchemaV1();
 
@@ -78,17 +107,29 @@ export function decodeDevConfig(
 ): Result.Result<DevTarget, DevConfigInvalid> {
   const invalid = (problem: { readonly field: string; readonly message: string }) =>
     new DevConfigInvalid({ file: options.file, ...problem });
-  return decodeFile(text).pipe(
-    Result.mapError((error) => invalid(firstProblem(error.issue))),
+  return parseJsonc(text).pipe(
+    Result.mapError((errors) =>
+      invalid({ field: "(whole file)", message: parseProblem(text, errors) }),
+    ),
+    Result.flatMap((value) =>
+      decodeFile(value).pipe(Result.mapError((error) => invalid(firstProblem(error.issue)))),
+    ),
     Result.flatMap((config): Result.Result<DevTarget, DevConfigInvalid> => {
       if (config.target === "local") {
         return Result.succeed(
-          DevTarget.Local({ herdrHome: options.localHome, file: options.file, found: true }),
+          DevTarget.Local({
+            herdrHome: options.localHome,
+            file: options.file,
+            found: true,
+            layout: config.layout,
+          }),
         );
       }
       return config.remote === undefined
         ? Result.fail(invalid({ field: "remote", message: "Missing key" }))
-        : Result.succeed(DevTarget.Remote({ ...config.remote, file: options.file }));
+        : Result.succeed(
+            DevTarget.Remote({ ...config.remote, file: options.file, layout: config.layout }),
+          );
     }),
   );
 }
@@ -142,7 +183,10 @@ export const loadDevTarget = Effect.fn("loadDevTarget")(function* (options: Load
     ? readIfPresent(path, file)
     : Effect.asSome(readText(path, file));
   return yield* Option.match(text, {
-    onNone: () => Effect.succeed(DevTarget.Local({ herdrHome: localHome, file, found: false })),
+    onNone: () =>
+      Effect.succeed(
+        DevTarget.Local({ herdrHome: localHome, file, found: false, layout: DEFAULT_LAYOUT }),
+      ),
     onSome: (text) => Effect.fromResult(decodeDevConfig(text, { file, localHome })),
   });
 });

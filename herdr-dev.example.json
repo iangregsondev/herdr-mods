@@ -1,10 +1,23 @@
+// The dev target: where dev builds go. Copy to herdr-dev.json (git-ignored) and fill in.
+// Comments and trailing commas are fine: the scripts read this file as JSONC.
 {
+  // "local": the Herdr app on this machine (the default, also with no file at all).
+  // "remote": a Herdr host reached over SSH, set up in "remote" below.
   "target": "remote",
   "remote": {
+    // The Herdr host's name or IP address. Required.
     "host": "herdr-host.example",
+    // Your user on the Herdr host; SSH logs in with your own key. Required.
     "user": "your-user",
+    // The SSH port. Default 22.
     "port": 22,
+    // The Herdr home on the Herdr host. Default ~/.config/herdr-app.
     "herdrHome": "~/.config/herdr-app",
+    // herdr-app on the Herdr host, by full path: a non-login SSH shell doesn't have it
+    // on PATH. Default ~/.local/bin/herdr-app.
     "herdrApp": "~/.local/bin/herdr-app"
-  }
+  },
+  // The layout vp run herdr:sync builds and the dev loop adds panels to, for either
+  // target. Default "Workbench". Change it when you already have a layout of that name.
+  "layout": "Workbench"
 }

@@ -21,6 +21,12 @@ const usage = "usage: vp run dev:remove <name>";
 /** The mod id `dev:remove hello` acts on: the short name with the namespace added. */
 const id = "iangregsondev-hello";
 
+/** The lines `dev:remove` ends with once it has removed a dev build: no copy is left. */
+const gone = [
+  `dev-remove: ${id} is gone from Herdr now: no copy of it is installed.`,
+  `dev-remove: to keep using it, install the finished copy (docs/develop.md, "Dev build or installed mod").`,
+];
+
 /** Writes `<home>/layouts/<name>.json`: a root row holding a slot for each mod given. */
 function writeLayout(home: string, name: string, mods: readonly string[]): string {
   const root: LayoutNode = { id: "root", type: "row", children: mods.map(slot) };
@@ -78,6 +84,7 @@ describe("devRemove", () => {
       out: [
         `dev-remove: removed ${dir}`,
         'dev-remove: removed the iangregsondev-hello panel from "work"',
+        ...gone,
       ],
       err: [],
     });
@@ -111,6 +118,16 @@ describe("devRemove", () => {
     expect(result.err).toEqual([]);
     expect(result.out[0]).toBe(`dev-remove: removed ${dir}`);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  test("ends by saying the mod is gone from Herdr and how to install the finished copy", () => {
+    const home = tempDir();
+    writeDevBuild(home, id);
+
+    expect(devRemove(["hello"], home).out.slice(-2)).toEqual([
+      `dev-remove: ${id} is gone from Herdr now: no copy of it is installed.`,
+      `dev-remove: to keep using it, install the finished copy (docs/develop.md, "Dev build or installed mod").`,
+    ]);
   });
 
   test("says there are no files when the mod has no folder", () => {
@@ -156,11 +173,22 @@ describe("devRemove", () => {
         `dev-remove: removed ${dir}`,
         'dev-remove: removed the iangregsondev-hello panel from "work"',
         'dev-remove: left "iangregsondev" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)',
+        ...gone,
       ],
       err: [],
     });
     expect(readFileSync(synced, "utf8")).toBe(syncedBefore);
     expect(hasSlot(readLayout(work), id)).toBe(false);
+  });
+
+  test("leaves the configured layout alone even when no sync record names it", () => {
+    const home = tempDir();
+    writeDevBuild(home, id);
+    const mine = writeLayout(home, "My Workbench", ["tabs", id]);
+    const before = readFileSync(mine, "utf8");
+
+    devRemove(["hello"], home, "My Workbench");
+    expect(readFileSync(mine, "utf8")).toBe(before);
   });
 
   test("cleans every layout when the sync record is missing or unreadable", () => {
@@ -181,7 +209,7 @@ describe("devRemove", () => {
     writeLayout(home, "iangregsondev", ["tabs"]);
     writeFile(home, "iangregsondev-sync.json", JSON.stringify({ layout: "iangregsondev" }));
 
-    expect(devRemove(["hello"], home).out).toHaveLength(2);
+    expect(devRemove(["hello"], home).out).toHaveLength(2 + gone.length);
   });
 
   test("says there is no panel when no layout has a slot for the mod", () => {
@@ -204,6 +232,7 @@ describe("devRemove", () => {
       out: [
         `dev-remove: removed ${dir}`,
         'dev-remove: removed the iangregsondev-hello panel from "work"',
+        ...gone,
       ],
       err: ['dev-remove: could not read these layouts, so left them alone: "bad"'],
     });
@@ -289,7 +318,12 @@ describe("dev-remove CLI", () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(
-      `dev-remove: removed ${dir}\ndev-remove: removed the iangregsondev-hello panel from "work"\n`,
+      [
+        `dev-remove: removed ${dir}`,
+        'dev-remove: removed the iangregsondev-hello panel from "work"',
+        ...gone,
+        "",
+      ].join("\n"),
     );
     expect(existsSync(dir)).toBe(false);
   });
@@ -314,6 +348,7 @@ describe("runDevRemove, remote target", () => {
         out: [
           "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/iangregsondev-hello",
           "dev-remove: no iangregsondev-hello panel in your layouts",
+          ...gone,
         ],
         err: [],
       });
@@ -373,6 +408,7 @@ describe("runDevRemove, remote target", () => {
       assert.deepStrictEqual(result.out.slice(1), [
         'dev-remove: removed the iangregsondev-hello panel from "work"',
         'dev-remove: left "iangregsondev" as it is: herdr:sync builds it (vp run herdr:sync rebuilds it)',
+        ...gone,
       ]);
       assert.strictEqual(readFileSync(synced, "utf8"), syncedBefore);
       assert.isFalse(hasSlot(readLayout(work), id));
@@ -405,6 +441,7 @@ describe("runDevRemove, remote target", () => {
         out: [
           "dev-remove: removed ann@herdr-host:~/.config/herdr-app/mods/iangregsondev-hello",
           'dev-remove: removed the iangregsondev-hello panel from "work"',
+          ...gone,
         ],
         err: ['dev-remove: could not read these layouts, so left them alone: "bad"'],
       });

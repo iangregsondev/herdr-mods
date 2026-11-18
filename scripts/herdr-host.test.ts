@@ -102,6 +102,31 @@ describe("HerdrHost.writeFile, local layer", () => {
   });
 });
 
+describe("HerdrHost.removeFile, local layer", () => {
+  it.effect("removes a file in the Herdr home", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/old.json", "{}\n");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      yield* host.removeFile("layouts/old.json");
+      assert.isFalse(existsSync(join(home, "layouts/old.json")));
+    }).pipe(Effect.provide(HerdrHost.local(home)));
+  });
+});
+
+describe("HerdrHost.renameFile, local layer", () => {
+  it.effect("moves a file to its new name in the Herdr home", () => {
+    const home = tempDir();
+    writeFile(home, "layouts/old.json", "old\n");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      yield* host.renameFile("layouts/old.json", "layouts/new.json");
+      assert.deepStrictEqual(readdirSync(join(home, "layouts")), ["new.json"]);
+      assert.strictEqual(textOf(join(home, "layouts/new.json")), "old\n");
+    }).pipe(Effect.provide(HerdrHost.local(home)));
+  });
+});
+
 describe("HerdrHost.writeFile, failure", () => {
   it.effect(
     "fails with TransportError, naming the operation, when the file can't be written",
@@ -341,6 +366,31 @@ describe("HerdrHost.writeFile, remote layer", () => {
       const outcome = Result.merge(yield* Effect.result(host.writeFile("mods/hello/x", "")));
       const error = outcome instanceof TransportError ? outcome : undefined;
       assert.strictEqual(error?.operation, "write ann@herdr-host:~/.config/herdr-app/mods/hello/x");
+    }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
+  });
+});
+
+describe("HerdrHost.removeFile, remote layer", () => {
+  it.effect("removes a file in the Herdr home on the host", () => {
+    const fake = fakeHerdrHost();
+    writeFile(fake.home, "layouts/my old.json", "{}\n");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      yield* host.removeFile("layouts/my old.json");
+      assert.isFalse(existsSync(join(fake.home, "layouts/my old.json")));
+    }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
+  });
+});
+
+describe("HerdrHost.renameFile, remote layer", () => {
+  it.effect("moves a file to its new name in the Herdr home on the host", () => {
+    const fake = fakeHerdrHost();
+    writeFile(fake.home, "layouts/my old.json", "old\n");
+    return Effect.gen(function* () {
+      const host = yield* HerdrHost;
+      yield* host.renameFile("layouts/my old.json", "layouts/My New.json");
+      assert.deepStrictEqual(readdirSync(join(fake.home, "layouts")), ["My New.json"]);
+      assert.strictEqual(textOf(join(fake.home, "layouts/My New.json")), "old\n");
     }).pipe(Effect.provide(HerdrHost.remote(fake.target)));
   });
 });
@@ -642,7 +692,12 @@ describe("hostLayer", () => {
   it.effect("uses the Herdr app on this machine for a local dev target", () => {
     const home = tempDir();
     writeFile(home, "layouts/work.json", "local");
-    const target = DevTarget.Local({ herdrHome: home, file: "herdr-dev.json", found: false });
+    const target = DevTarget.Local({
+      herdrHome: home,
+      file: "herdr-dev.json",
+      found: false,
+      layout: "Workbench",
+    });
     return Effect.gen(function* () {
       const host = yield* HerdrHost;
       assert.strictEqual(yield* host.readFile("layouts/work.json"), "local");

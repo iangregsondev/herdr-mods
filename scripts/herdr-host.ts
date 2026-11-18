@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,7 +16,10 @@ import { Context, Data, Effect, Layer, Predicate } from "effect";
 import type { DevTarget } from "./dev-config.ts";
 
 /** How to reach a Herdr host over SSH, and where Herdr lives on it. */
-export type RemoteTarget = Omit<Extract<DevTarget, { readonly _tag: "Remote" }>, "_tag" | "file">;
+export type RemoteTarget = Omit<
+  Extract<DevTarget, { readonly _tag: "Remote" }>,
+  "_tag" | "file" | "layout"
+>;
 
 /**
  * Marks a folder in the Herdr app as a dev build from this repo. Hidden, so
@@ -304,6 +308,13 @@ export class HerdrHost extends Context.Service<
       relPath: string,
       content: string,
     ) => Effect.Effect<void, TransportError | HostUnreachable>;
+    /** Removes the file at `relPath` in the Herdr home; a file that isn't there is no error. */
+    readonly removeFile: (relPath: string) => Effect.Effect<void, TransportError | HostUnreachable>;
+    /** Renames the file at `from` to `to`, both in the Herdr home, replacing any file at `to`. */
+    readonly renameFile: (
+      from: string,
+      to: string,
+    ) => Effect.Effect<void, TransportError | HostUnreachable>;
     readonly listDir: (
       relPath: string,
     ) => Effect.Effect<ReadonlyArray<string>, FileMissing | TransportError | HostUnreachable>;
@@ -372,6 +383,16 @@ export class HerdrHost extends Context.Service<
           const folder = shPath(posix.dirname(path));
           const result = yield* ssh(`mkdir -p -- ${folder} && cat > ${shPath(path)}`, content);
           yield* succeeded(`write ${location(relPath)}`, result);
+        }),
+        removeFile: Effect.fn("HerdrHost.removeFile")(function* (relPath: string) {
+          const result = yield* ssh(`rm -f -- ${shPath(remotePath(relPath))}`);
+          yield* succeeded(`remove ${location(relPath)}`, result);
+        }),
+        renameFile: Effect.fn("HerdrHost.renameFile")(function* (from: string, to: string) {
+          const result = yield* ssh(
+            `mv -f -- ${shPath(remotePath(from))} ${shPath(remotePath(to))}`,
+          );
+          yield* succeeded(`rename ${location(from)} to ${location(to)}`, result);
         }),
         listDir: Effect.fn("HerdrHost.listDir")(function* (relPath: string) {
           const path = shPath(remotePath(relPath));
@@ -483,6 +504,22 @@ export class HerdrHost extends Context.Service<
               writeFileSync(path, content);
             },
             catch: (cause) => new TransportError({ operation: `write ${path}`, cause }),
+          });
+        },
+        removeFile: (relPath) => {
+          const path = join(home, relPath);
+          return Effect.try({
+            try: () => rmSync(path, { force: true }),
+            catch: (cause) => new TransportError({ operation: `remove ${path}`, cause }),
+          });
+        },
+        renameFile: (from, to) => {
+          const source = join(home, from);
+          const target = join(home, to);
+          return Effect.try({
+            try: () => renameSync(source, target),
+            catch: (cause) =>
+              new TransportError({ operation: `rename ${source} to ${target}`, cause }),
           });
         },
         listDir: (relPath) => {
