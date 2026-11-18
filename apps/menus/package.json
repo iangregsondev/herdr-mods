@@ -1,6 +1,6 @@
 {
   "name": "menus",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Herdr mod: worktrunk items in Herdr's \"+\" and space menus, by wrapping Herdr's own menu, tab bar and sidebar mods at run time.",
   "type": "module",
