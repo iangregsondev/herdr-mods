@@ -1,6 +1,6 @@
 # worktrunk
 
-Version 0.0.0 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/worktrunk/CHANGELOG.md)
+Version 0.1.0 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/worktrunk/CHANGELOG.md)
 
 A panel docked on the right of the window that lists your git repos and their [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) worktrees, grouped by what to do next: the main checkout, then Merged (ready to clean up), In progress, and Conflicts with main. Each worktree shows how far it is from main, how it was merged, and whether a space is open on it; a click goes to that space or opens a new one. Its mod id is `iangregsondev-worktrunk`.
 
