@@ -48,7 +48,7 @@ import {
   removeDir,
   removeTerminal,
   repoAt,
-  reposOf,
+  ownersOf,
   scanRepos,
   slotsFull,
   startJob,
@@ -180,14 +180,14 @@ export interface MachineFound {
  * Searches `machine`: scans its group folders when `scan` says to (after reading its
  * home there; this machine's is `home`), else keeps the scan of its `last` search, and
  * looks up the repos its open spaces (`places`) are in and which of their own folders
- * (`folders`) are gone.
+ * (`spaceFolders`) are gone.
  */
 const searchOn = Effect.fnUntraced(function* (
   settings: Settings,
   machine: Machine,
   home: string,
   places: readonly Located[],
-  folders: readonly Located[],
+  spaceFolders: readonly Located[],
   scan: boolean,
   last: Option.Option<MachineFound>,
 ) {
@@ -201,9 +201,12 @@ const searchOn = Effect.fnUntraced(function* (
         onNone: (): Scan => ({ repos: [], missing: [] }),
         onSome: (before) => before.scan,
       });
-  const on = (located: readonly Located[]) =>
+  const foldersHere = (located: readonly Located[]) =>
     located.filter((at) => at.machine === machine && at.folder !== "").map((at) => at.folder);
-  const owners = yield* reposOf(on(places), machine, on(folders));
+  const owners = yield* ownersOf(foldersHere(places), {
+    machine,
+    spaceFolders: foldersHere(spaceFolders),
+  });
   const answer: MachineFound = {
     machine,
     home: found,
@@ -228,7 +231,7 @@ export interface MachinesAsk {
   /** The open spaces' folders, each on its machine. */
   readonly places: readonly Located[];
   /** The open spaces' own folders (where each was made), each on its machine. */
-  readonly folders: readonly Located[];
+  readonly spaceFolders: readonly Located[];
   /** Each machine's last search: one not scanned again keeps its scan. */
   readonly last: Searches;
   /** The group folders are scanned again on every machine, not only those never scanned. */
@@ -258,7 +261,7 @@ const searchMachine = (
   if (Option.isSome(held)) return Effect.succeed(Result.fail(held.value));
   const last = Option.flatMap(Option.fromNullishOr(ask.last.get(machine)), Result.getSuccess);
   const scan = ask.rescan || !Option.exists(last, (before) => Option.isSome(before.home));
-  return searchOn(ask.settings, machine, ask.home, ask.places, ask.folders, scan, last).pipe(
+  return searchOn(ask.settings, machine, ask.home, ask.places, ask.spaceFolders, scan, last).pipe(
     Effect.map((found): MachineSearch => Result.succeed(found)),
     // A machine with every exec slot taken is busy, not down: its last search that worked
     // stands until the next refresh. With none to keep, it is down with the reason.
