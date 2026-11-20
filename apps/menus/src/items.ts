@@ -1,14 +1,8 @@
 // Our items in Herdr's space and "+" menus: where they go among Herdr's, and what each
 // asks of the worktrunk panel. Pure: no `herdr` or `gpui` imports.
 import { Option } from "effect";
-import {
-  at,
-  SPACE_ACTS,
-  spaceOrphan,
-  text,
-  type MenuRequest,
-  type SpaceAct,
-} from "worktrunk-mailbox";
+import { at, SPACE_ACTS, text, type MenuRequest, type SpaceAct } from "worktrunk-mailbox";
+import { openOrphan } from "./look.ts";
 
 /** One item of Herdr's context menu: `[label, command, args]`. */
 export type Item = readonly [string, string, Readonly<Record<string, unknown>>];
@@ -99,7 +93,11 @@ const isWorktreeRow = ({ id, name }: NewMenuRow): boolean =>
 export const newMenuAnchor = (rows: readonly NewMenuRow[]): Option.Option<string> =>
   Option.map(Option.fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 
-/** The args Herdr's `space.close` takes; `confirmed: false` makes Herdr ask first. */
+/**
+ * The args our "Close orphan" item gives Herdr's `space.close`. Herdr's generated
+ * types (`.herdr-types/herdr.d.ts`) list only `space.close {id?}` and aren't ours to
+ * edit, so the type lives here: `confirmed: false` makes Herdr ask before closing.
+ */
 type SpaceCloseArgs = {
   readonly id: string;
   readonly confirmed: boolean;
@@ -107,19 +105,24 @@ type SpaceCloseArgs = {
 
 const closeOrphan = (id: string): Item => {
   const args: SpaceCloseArgs = { id, confirmed: false };
-  return ["Close orphan space", "space.close", args];
+  return ["Close orphan", "space.close", args];
 };
 
-/** Where "Close orphan space" goes: just before Herdr's close item, else last. */
-const beforeClose = (list: readonly Item[]): number => {
+/**
+ * `list` with "Close orphan" in the place of Herdr's close item, else last. Both
+ * run `space.close` for the space, so the menu keeps one close item: ours, which asks.
+ */
+const replacingClose = (list: readonly Item[], id: string): readonly Item[] => {
   const close = list.findIndex((item) => item[1] === "space.close");
-  return close >= 0 ? close : list.length;
+  return close >= 0
+    ? [...list.slice(0, close), closeOrphan(id), ...list.slice(close + 1)]
+    : [...list, closeOrphan(id)];
 };
 
 /**
  * Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
  * `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
- * that is one of the `open` ones, "Close orphan space" alone.
+ * that is one of the `open` ones, "Close orphan" alone, in place of Herdr's close.
  */
 export const withSpaceItems = (
   list: readonly Item[],
@@ -129,15 +132,9 @@ export const withSpaceItems = (
   open: readonly string[],
 ): readonly Item[] =>
   Option.match(
-    Option.filter(
-      spaceOf(props),
-      (id) => open.includes(id) && Option.isSome(spaceOrphan(orphans, id)),
-    ),
+    Option.filter(spaceOf(props), (id) => Option.isSome(openOrphan(orphans, open, id))),
     {
       onNone: () => withWorktrunkItems(list, props, git),
-      onSome: (id) => {
-        const at = beforeClose(list);
-        return [...list.slice(0, at), closeOrphan(id), ...list.slice(at)];
-      },
+      onSome: (id) => replacingClose(list, id),
     },
   );

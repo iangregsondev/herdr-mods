@@ -1,8 +1,9 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { nameColor, orphanGit, spaceMarks, spacePills } from "../src/look.ts";
+import { OrphanFolder, RepoRoot } from "worktrunk-mailbox";
+import { marksFor, nameColor, orphanGit, plainPills, spaceMarks, spacePills } from "../src/look.ts";
 
-const ORPHAN = Option.some({ folder: "/r/api.old", repo: "/r/api" });
+const ORPHAN = Option.some({ folder: OrphanFolder("/r/api.old"), repo: RepoRoot("/r/api") });
 
 describe("spacePills", () => {
   const ORPHAN_PILL = {
@@ -15,7 +16,7 @@ describe("spacePills", () => {
     expect(spacePills({ group: Option.none(), orphan: Option.none() })).toEqual([]);
   });
 
-  test("a space in a group has its group pill, in the dim text of today's group label", () => {
+  test("a space in a group has its group pill, in the theme's dim text", () => {
     expect(spacePills({ group: Option.some("Work"), orphan: Option.none() })).toEqual([
       { label: "Work", color: "dim", tooltip: Option.none() },
     ]);
@@ -28,7 +29,10 @@ describe("spacePills", () => {
   test("the Orphan pill's tooltip names the orphan's repo folder and its removed folder; a group pill has none", () => {
     const [group, orphan] = spacePills({
       group: Option.some("Work"),
-      orphan: Option.some({ folder: "/home/me/code/web.feat-2-login", repo: "/home/me/code/web" }),
+      orphan: Option.some({
+        folder: OrphanFolder("/home/me/code/web.feat-2-login"),
+        repo: RepoRoot("/home/me/code/web"),
+      }),
     });
     expect(group?.tooltip).toEqual(Option.none());
     expect(orphan?.tooltip).toEqual(
@@ -40,6 +44,20 @@ describe("spacePills", () => {
     expect(spacePills({ group: Option.some("Work"), orphan: ORPHAN })).toEqual([
       { label: "Work", color: "dim", tooltip: Option.none() },
       ORPHAN_PILL,
+    ]);
+  });
+});
+
+describe("plainPills", () => {
+  test("each pill keeps its label and colour, with its tooltip as text, or null for none", () => {
+    expect(
+      plainPills([
+        { label: "Work", color: "dim", tooltip: Option.none() },
+        { label: "Orphan", color: "ansi3", tooltip: Option.some("Worktree removed from api") },
+      ]),
+    ).toEqual([
+      { label: "Work", color: "dim", tooltip: null },
+      { label: "Orphan", color: "ansi3", tooltip: "Worktree removed from api" },
     ]);
   });
 });
@@ -74,6 +92,22 @@ describe("spaceMarks", () => {
   test("a space the panel published as an orphan is none once it is closed, nor one it never published", () => {
     expect(spaceMarks("sp1", groups, orphans, ["sp2"]).orphan).toEqual(Option.none());
     expect(spaceMarks("sp2", groups, orphans, ["sp1", "sp2"])).toEqual({
+      group: Option.none(),
+      orphan: Option.none(),
+    });
+  });
+});
+
+describe("marksFor", () => {
+  const groups = { sp1: "Work" };
+  const orphans = { sp1: { folder: "/r/api.old", repo: "/r/api" } };
+
+  test("a space's marks are the ones published for its id; a space with no id has none", () => {
+    expect(marksFor({ id: "sp1", name: "api.old" }, groups, orphans, ["sp1"])).toEqual({
+      group: Option.some("Work"),
+      orphan: ORPHAN,
+    });
+    expect(marksFor({ name: "api.old" }, groups, orphans, ["sp1"])).toEqual({
       group: Option.none(),
       orphan: Option.none(),
     });

@@ -218,14 +218,22 @@ export interface Owners {
   readonly gone: readonly string[];
 }
 
+/** Where the owners lookup runs, and which spaces' own folders it checks are gone. */
+export interface OwnersAsk {
+  /** The machine the folders are on; this machine when left out. */
+  readonly machine?: Machine;
+  /** The spaces' own folders (where each was made) to check; none when left out. */
+  readonly spaceFolders?: readonly string[];
+}
+
 /**
- * The repos the given folders on `machine` are in (each once), and which of the spaces'
- * own folders `spaceFolders` are gone there, in one run; none for no folders at all.
+ * The owners lookup: the repos the given folders on `machine` are in (each once), and
+ * which of the spaces' own folders `spaceFolders` are gone there, in one run; none for
+ * no folders at all.
  */
-export const reposOf = Effect.fn("reposOf")(function* (
+export const ownersOf = Effect.fn("ownersOf")(function* (
   folders: readonly string[],
-  machine: Machine = THIS_MACHINE,
-  spaceFolders: readonly string[] = [],
+  { machine = THIS_MACHINE, spaceFolders = [] }: OwnersAsk = {},
 ) {
   if (folders.length === 0 && spaceFolders.length === 0) {
     const none: Owners = { repos: [], gone: [] };

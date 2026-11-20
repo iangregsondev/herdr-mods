@@ -1216,7 +1216,10 @@ export default class Worktrunk extends View {
       settings: this.settings,
       home: home(),
       places,
-      folders: spaces().map((space): Located => ({ machine: space.machine, folder: space.folder })),
+      spaceFolders: spaces().map((space): Located => ({
+        machine: space.machine,
+        folder: space.folder,
+      })),
       last: this.searches,
       rescan: due,
       states: machineStates(machines()),

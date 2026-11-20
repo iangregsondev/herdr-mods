@@ -18,6 +18,7 @@ import {
 } from "../src/orphans.ts";
 import type { MachineLists, RepoList } from "../src/reads.ts";
 import { spacePlaces, type SpaceLike } from "../src/spaces.ts";
+import { OrphanFolder, RepoRoot } from "worktrunk-mailbox";
 import type { Worktree } from "../src/worktrees.ts";
 
 const wt = (path: string): Worktree => ({
@@ -471,11 +472,16 @@ describe("goneLanded", () => {
 });
 
 describe("orphansChanged", () => {
-  const one = { s1: { folder: "/r/app.feat", repo: "/r/app" } };
+  const one = { s1: { folder: OrphanFolder("/r/app.feat"), repo: RepoRoot("/r/app") } };
 
   test("the same orphans as published are no change", () => {
     expect(orphansChanged(one, { s1: { folder: "/r/app.feat", repo: "/r/app" } })).toBe(false);
     expect(orphansChanged({}, {})).toBe(false);
+  });
+
+  test("nothing published yet and no orphans found is no change", () => {
+    expect(orphansChanged({}, undefined)).toBe(false);
+    expect(orphansChanged({}, null)).toBe(false);
   });
 
   test("an orphan added, gone, or with another folder or repo, or a published value of another shape, is a change", () => {
@@ -484,7 +490,7 @@ describe("orphansChanged", () => {
     expect(orphansChanged(one, { s1: { folder: "/r/app.x", repo: "/r/app" } })).toBe(true);
     expect(orphansChanged(one, { s1: { folder: "/r/app.feat", repo: "/r/web" } })).toBe(true);
     expect(orphansChanged(one, { s2: one.s1 })).toBe(true);
-    expect(orphansChanged({}, undefined)).toBe(true);
+    expect(orphansChanged(one, undefined)).toBe(true);
     expect(orphansChanged(one, { s1: "/r/app" })).toBe(true);
   });
 });
