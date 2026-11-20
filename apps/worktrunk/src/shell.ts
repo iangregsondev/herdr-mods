@@ -24,6 +24,7 @@ import { THIS_MACHINE, type Homes, type Machine, type RepoId } from "./machines.
 import {
   currentRepo,
   missingFolders,
+  parseGone,
   parseOwners,
   parseScan,
   type FoundRepo,
@@ -209,14 +210,35 @@ export const machineHome = Effect.fn("machineHome")(function* (machine: Machine)
   return home;
 });
 
-/** The repos the given folders on `machine` are in (each once); none for no folders. */
+/** What the owners lookup found on a machine. */
+export interface Owners {
+  /** The repos its folders are in, each once. */
+  readonly repos: readonly FoundRepo[];
+  /** The spaces' own folders it found gone. */
+  readonly gone: readonly string[];
+}
+
+/**
+ * The repos the given folders on `machine` are in (each once), and which of the spaces'
+ * own folders `spaceFolders` are gone there, in one run; none for no folders at all.
+ */
 export const reposOf = Effect.fn("reposOf")(function* (
   folders: readonly string[],
   machine: Machine = THIS_MACHINE,
+  spaceFolders: readonly string[] = [],
 ) {
-  if (folders.length === 0) return [];
-  const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
-  return parseOwners(run.stdout, machine);
+  if (folders.length === 0 && spaceFolders.length === 0) {
+    const none: Owners = { repos: [], gone: [] };
+    return none;
+  }
+  const run = yield* runScript(
+    "the open spaces' repos",
+    OWNERS_SCRIPT,
+    spaceFolders.length === 0 ? folders : [...folders, "--", ...spaceFolders],
+    { on: machine },
+  );
+  const owners: Owners = { repos: parseOwners(run.stdout, machine), gone: parseGone(run.stdout) };
+  return owners;
 });
 
 /**

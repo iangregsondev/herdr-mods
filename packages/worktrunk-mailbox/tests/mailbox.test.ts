@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vite-plus/test";
 import { Option } from "effect";
-import { deliveryFor, groupsKey, requestKey, spaceGroup } from "../src/index.ts";
+import {
+  deliveryFor,
+  groupsKey,
+  orphansKey,
+  requestKey,
+  spaceGroup,
+  spaceOrphan,
+} from "../src/index.ts";
 
 const PANEL = "iangregsondev-worktrunk";
 
@@ -59,5 +66,33 @@ describe("spaceGroup", () => {
     expect(spaceGroup({ sp1: 3 }, "sp1")).toEqual(Option.none());
     expect(spaceGroup(undefined, "sp1")).toEqual(Option.none());
     expect(spaceGroup(["Work"], "0")).toEqual(Option.none());
+  });
+});
+
+describe("orphansKey", () => {
+  test("is the panel's own shared-state key for orphan spaces", () => {
+    expect(orphansKey(PANEL)).toBe("iangregsondev-worktrunk.orphans.v1");
+  });
+});
+
+describe("spaceOrphan", () => {
+  test("is the entry the panel published for the space", () => {
+    const published = {
+      sp1: { folder: "/r/api.old", repo: "/r/api" },
+      sp2: { folder: "/r/web.x", repo: "/r/web" },
+    };
+    expect(spaceOrphan(published, "sp2")).toEqual(
+      Option.some({ folder: "/r/web.x", repo: "/r/web" }),
+    );
+  });
+
+  test("is none for a space with no entry, an entry of another shape, or a published value of another shape", () => {
+    const one = { sp1: { folder: "/r/api.old", repo: "/r/api" } };
+    expect(spaceOrphan(one, "sp9")).toEqual(Option.none());
+    expect(spaceOrphan({ sp1: { folder: "/r/api.old" } }, "sp1")).toEqual(Option.none());
+    expect(spaceOrphan({ sp1: { folder: 3, repo: "/r/api" } }, "sp1")).toEqual(Option.none());
+    expect(spaceOrphan({ sp1: "/r/api" }, "sp1")).toEqual(Option.none());
+    expect(spaceOrphan(undefined, "sp1")).toEqual(Option.none());
+    expect(spaceOrphan([one.sp1], "0")).toEqual(Option.none());
   });
 });

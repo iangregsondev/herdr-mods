@@ -10,13 +10,17 @@ import {
   NO_ORPHANS,
   orphanSpaces,
   orphanSteps,
+  goneLanded,
+  orphansChanged,
+  publishedOrphans,
+  worktreesRead,
   waitingOn,
   type NamedSpace,
   type Orphan,
   type ProgramPane,
 } from "../src/orphans.ts";
 import type { MachineLists, RepoList } from "../src/reads.ts";
-import type { SpaceLike } from "../src/spaces.ts";
+import { spacePlaces, type SpaceLike } from "../src/spaces.ts";
 import type { Worktree } from "../src/worktrees.ts";
 
 const wt = (path: string): Worktree => ({
@@ -452,5 +456,125 @@ describe("orphanSteps", () => {
       ["s1"],
       ["s2"],
     ]);
+  });
+});
+
+describe("publishedOrphans", () => {
+  test("a space on a gone folder whose place is in wt's trash names its repo from the place, the trashed place gone too", () => {
+    const spaces = [space("s1", "/r/app.feat", ["t1"])];
+    const places = spacePlaces(spaces, [
+      terminal("t1", "/r/app/.git/wt/trash/app.feat-1a2b", false),
+    ]);
+    expect(
+      publishedOrphans(spaces, places, new Map([[THIS_MACHINE, ["/r/app.feat"]]]), []),
+    ).toEqual({ s1: { folder: "/r/app.feat", repo: "/r/app" } });
+  });
+
+  test("a space whose gone folder was a worktree in a list the panel read names that list's repo", () => {
+    const spaces = [space("s1", "/r/app.feat", ["t1"])];
+    const places = spacePlaces(spaces, [terminal("t1", "/r/app.feat/src", false)]);
+    expect(
+      publishedOrphans(spaces, places, new Map([[THIS_MACHINE, ["/r/app.feat"]]]), [
+        { machine: THIS_MACHINE, path: "/r/app", repo: "/r/app" },
+        { machine: THIS_MACHINE, path: "/r/app.feat", repo: "/r/app" },
+      ]),
+    ).toEqual({ s1: { folder: "/r/app.feat", repo: "/r/app" } });
+  });
+
+  test("a space on any other gone folder, its repo unknown, is no orphan", () => {
+    const spaces = [space("s1", "/tmp/scratch", ["t1"]), space("s2", "/r/app.x", ["t2"])];
+    const places = spacePlaces(spaces, [
+      terminal("t1", "/tmp/scratch", false),
+      terminal("t2", "/r/app/.git/hooks", false),
+    ]);
+    expect(
+      publishedOrphans(spaces, places, new Map([[THIS_MACHINE, ["/tmp/scratch", "/r/app.x"]]]), [
+        { machine: THIS_MACHINE, path: "/r/app", repo: "/r/app" },
+      ]),
+    ).toEqual({});
+  });
+
+  test("each space counts only its own machine's gone folders and lists", () => {
+    const on = (id: string, machine: string | null, folder: string): SpaceLike => ({
+      ...space(id, folder, [`t-${id}`]),
+      machine,
+    });
+    const spaces = [
+      on("here", THIS_MACHINE, "/r/app.feat"),
+      on("box", "linux", "/r/app.feat"),
+      on("box-listed-here", "linux", "/r/app.other"),
+    ];
+    const places = spacePlaces(
+      spaces,
+      spaces.map((s) => terminal(`t-${s.id}`, `${s.folder}/src`, false)),
+    );
+    const gone = new Map<string | null, readonly string[]>([
+      [THIS_MACHINE, []],
+      ["linux", ["/r/app.feat", "/r/app.other"]],
+    ]);
+    expect(
+      publishedOrphans(spaces, places, gone, [
+        { machine: "linux", path: "/r/app.feat", repo: "/r/app" },
+        { machine: THIS_MACHINE, path: "/r/app.feat", repo: "/r/app" },
+        { machine: THIS_MACHINE, path: "/r/app.other", repo: "/r/app" },
+      ]),
+    ).toEqual({ box: { folder: "/r/app.feat", repo: "/r/app" } });
+  });
+});
+
+describe("worktreesRead", () => {
+  test("adds each listed worktree, on its repo's machine, to those read before, each once", () => {
+    const BOX = repoKey({ machine: "linux", root: "/srv/api" });
+    const before = [{ machine: THIS_MACHINE, path: "/r/app.gone", repo: "/r/app" }];
+    expect(
+      worktreesRead(
+        before,
+        new Map([
+          [APP, listed("/r/app", "/r/app.gone")],
+          [BOX, listed("/srv/api", "/srv/api.feat")],
+        ]),
+      ),
+    ).toEqual([
+      { machine: THIS_MACHINE, path: "/r/app.gone", repo: "/r/app" },
+      { machine: THIS_MACHINE, path: "/r/app", repo: "/r/app" },
+      { machine: "linux", path: "/srv/api", repo: "/srv/api" },
+      { machine: "linux", path: "/srv/api.feat", repo: "/srv/api" },
+    ]);
+  });
+});
+
+describe("goneLanded", () => {
+  test("a search that worked sets its machine's gone folders; one that failed keeps the last", () => {
+    const before = new Map<string | null, readonly string[]>([
+      [THIS_MACHINE, ["/r/a.old"]],
+      ["linux", ["/srv/b.old"]],
+    ]);
+    const worked = goneLanded(before, THIS_MACHINE, Result.succeed({ gone: ["/r/c.old"] }));
+    const failed = goneLanded(worked, "linux", Result.fail({ _tag: "Down", reason: "ssh" }));
+    expect(failed).toEqual(
+      new Map<string | null, readonly string[]>([
+        [THIS_MACHINE, ["/r/c.old"]],
+        ["linux", ["/srv/b.old"]],
+      ]),
+    );
+  });
+});
+
+describe("orphansChanged", () => {
+  const one = { s1: { folder: "/r/app.feat", repo: "/r/app" } };
+
+  test("the same orphans as published are no change", () => {
+    expect(orphansChanged(one, { s1: { folder: "/r/app.feat", repo: "/r/app" } })).toBe(false);
+    expect(orphansChanged({}, {})).toBe(false);
+  });
+
+  test("an orphan added, gone, or with another folder or repo, or a published value of another shape, is a change", () => {
+    expect(orphansChanged(one, {})).toBe(true);
+    expect(orphansChanged({}, one)).toBe(true);
+    expect(orphansChanged(one, { s1: { folder: "/r/app.x", repo: "/r/app" } })).toBe(true);
+    expect(orphansChanged(one, { s1: { folder: "/r/app.feat", repo: "/r/web" } })).toBe(true);
+    expect(orphansChanged(one, { s2: one.s1 })).toBe(true);
+    expect(orphansChanged({}, undefined)).toBe(true);
+    expect(orphansChanged(one, { s1: "/r/app" })).toBe(true);
   });
 });

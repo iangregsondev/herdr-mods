@@ -321,7 +321,7 @@ describe("reads on the repo's machine", () => {
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
-        [machinesOf(calls), repos],
+        [machinesOf(calls), repos.repos],
         [["linux"], [{ machine: "linux", root: "/srv/api", count: 2 }]],
       );
     }),
@@ -464,7 +464,10 @@ describe("reposOf", () => {
       const repos = yield* reposOf(["/r/api/src", "/r/api.feat"]).pipe(
         Effect.provide(Shell.layer(api)),
       );
-      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/r/api", count: 3 }]);
+      assert.deepStrictEqual(repos, {
+        repos: [{ machine: THIS_MACHINE, root: "/r/api", count: 3 }],
+        gone: [],
+      });
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(OWNERS_SCRIPT, ["/r/api/src", "/r/api.feat"]), { timeout: 60_000 }],
       ]);
@@ -475,7 +478,7 @@ describe("reposOf", () => {
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/x\t1\n", stderr: "" });
       const repos = yield* reposOf([]).pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual([repos, calls], [[], []]);
+      assert.deepStrictEqual([repos, calls], [{ repos: [], gone: [] }, []]);
     }),
   );
 });

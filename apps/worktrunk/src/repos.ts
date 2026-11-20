@@ -91,6 +91,13 @@ export const parseOwners = (stdout: string, machine: Machine): readonly FoundRep
   });
 
 /**
+ * The space folders the owners script found gone: each printed alone on its line, a whole
+ * path, so a repo line (it has a tab) or stray text is not one.
+ */
+export const parseGone = (stdout: string): readonly string[] =>
+  stdout.split("\n").filter((line) => line.startsWith("/") && !line.includes("\t"));
+
+/**
  * The Current repo: the repo the owners script, run on `machine`, names for the focused
  * folder, if any.
  */

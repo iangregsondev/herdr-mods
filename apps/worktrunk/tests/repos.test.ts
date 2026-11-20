@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
   expandHome,
+  parseGone,
   groupOf,
   missingFolders,
   OTHER,
@@ -88,6 +89,15 @@ describe("parseOwners", () => {
     expect(parseOwners("/r/a\t2\n/r/c\t\nfatal: not a repo\n", THIS_MACHINE)).toEqual([
       { machine: THIS_MACHINE, root: "/r/a", count: 2 },
       { machine: THIS_MACHINE, root: "/r/c", count: 1 },
+    ]);
+  });
+});
+
+describe("parseGone", () => {
+  test("the space folders the owners script found gone: lines alone, apart from repo lines and stray text", () => {
+    expect(parseGone("/r/a\t2\n/r/a.old\nfatal: not a repo\n/r/b.gone\n\n")).toEqual([
+      "/r/a.old",
+      "/r/b.gone",
     ]);
   });
 });
