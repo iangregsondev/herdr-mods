@@ -570,6 +570,36 @@ function isNotNull(input) {
 	return input !== null;
 }
 /**
+* Checks whether a value is `null` or `undefined`.
+*
+* **When to use**
+*
+* Use when you need a `Predicate` guard for nullish values.
+*
+* **Details**
+*
+* Uses `input === null || input === undefined`.
+*
+* **Example** (Guarding nullish values)
+*
+* ```ts import.meta.vitest
+* import { Predicate } from "effect"
+*
+* const values = [0, null, "", undefined]
+* const nullish = values.filter(Predicate.isNullish) // => [null, undefined]
+* ```
+*
+* @see {@link isNotNullish}
+* @see {@link isUndefined}
+* @see {@link isNull}
+* @stability stable
+* @category guards
+* @since 4.0.0
+*/
+function isNullish(input) {
+	return input === null || input === void 0;
+}
+/**
 * Checks whether a value is a non-null object value that is not an array.
 *
 * **When to use**
@@ -9883,6 +9913,8 @@ const SPACE_ACTS = [
 const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 /** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
 const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
+const OrphanFolder = nominal();
+const RepoRoot = nominal();
 /**
 * The entry the panel published (`orphansKey`) for the space `space`. None for a space
 * it names no orphan for, an entry of another shape, or a published value of any other
@@ -9891,8 +9923,8 @@ const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
 const spaceOrphan = (published, space) => {
 	const entry = at(published, space);
 	return all$2({
-		folder: text(at(entry, "folder")),
-		repo: text(at(entry, "repo"))
+		folder: map$3(text(at(entry, "folder")), OrphanFolder),
+		repo: map$3(text(at(entry, "repo")), RepoRoot)
 	});
 };
 
@@ -11510,10 +11542,11 @@ const machineHome = fn("machineHome")(function* (machine) {
 	return home;
 });
 /**
-* The repos the given folders on `machine` are in (each once), and which of the spaces'
-* own folders `spaceFolders` are gone there, in one run; none for no folders at all.
+* The owners lookup: the repos the given folders on `machine` are in (each once), and
+* which of the spaces' own folders `spaceFolders` are gone there, in one run; none for
+* no folders at all.
 */
-const reposOf = fn("reposOf")(function* (folders, machine = null, spaceFolders = []) {
+const ownersOf = fn("ownersOf")(function* (folders, { machine = null, spaceFolders = [] } = {}) {
 	if (folders.length === 0 && spaceFolders.length === 0) return {
 		repos: [],
 		gone: []
@@ -11705,9 +11738,9 @@ const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 * Searches `machine`: scans its group folders when `scan` says to (after reading its
 * home there; this machine's is `home`), else keeps the scan of its `last` search, and
 * looks up the repos its open spaces (`places`) are in and which of their own folders
-* (`folders`) are gone.
+* (`spaceFolders`) are gone.
 */
-const searchOn = fnUntraced(function* (settings, machine, home, places, folders, scan, last) {
+const searchOn = fnUntraced(function* (settings, machine, home, places, spaceFolders, scan, last) {
 	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
 	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
 	const scanned = scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
@@ -11717,8 +11750,11 @@ const searchOn = fnUntraced(function* (settings, machine, home, places, folders,
 		}),
 		onSome: (before) => before.scan
 	});
-	const on = (located) => located.filter((at) => at.machine === machine && at.folder !== "").map((at) => at.folder);
-	const owners = yield* reposOf(on(places), machine, on(folders));
+	const foldersHere = (located) => located.filter((at) => at.machine === machine && at.folder !== "").map((at) => at.folder);
+	const owners = yield* ownersOf(foldersHere(places), {
+		machine,
+		spaceFolders: foldersHere(spaceFolders)
+	});
 	return {
 		machine,
 		home: found,
@@ -11739,7 +11775,7 @@ const searchMachine = (ask, machine) => {
 	if (isSome(held)) return succeed(fail$2(held.value));
 	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
 	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
-	return searchOn(ask.settings, machine, ask.home, ask.places, ask.folders, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
+	return searchOn(ask.settings, machine, ask.home, ask.places, ask.spaceFolders, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
 	}))), catchDefect((defect) => succeed(fail$2({
@@ -12388,18 +12424,20 @@ const publishedOrphans = (spaces, places, gone, read) => {
 	return Object.fromEntries(spaces.filter((space) => (gone.get(space.machine) ?? []).includes(space.folder)).flatMap((space) => match$5(orElse(flatMap$3(fromNullishOr(placeOf.get(space.id)), trashRepo), () => fromNullishOr(read.find((w) => w.machine === space.machine && w.path === space.folder)?.repo)), {
 		onNone: () => [],
 		onSome: (repo) => [[space.id, {
-			folder: space.folder,
-			repo
+			folder: OrphanFolder(space.folder),
+			repo: RepoRoot(repo)
 		}]]
 	})));
 };
 /**
 * Whether `orphans` differ from those `published` in shared state (anything at all, since
-* any mod can write it): publishing only on a change spares every mod a render.
+* any mod can write it): publishing only on a change spares every mod a render. Nothing
+* stored yet counts as none published, so finding none writes nothing.
 */
 const orphansChanged = (orphans, published) => {
 	const entries = Object.entries(orphans);
-	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, orphan]) => !exists(spaceOrphan(published, space), (was) => was.folder === orphan.folder && was.repo === orphan.repo));
+	const stored = isNullish(published) ? {} : published;
+	return !isObject(stored) || Object.keys(stored).length !== entries.length || entries.some(([space, orphan]) => !exists(spaceOrphan(stored, space), (was) => was.folder === orphan.folder && was.repo === orphan.repo));
 };
 
 // src/view.ts
@@ -13982,7 +14020,7 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			home: home(),
 			places,
-			folders: spaces().map((space) => ({
+			spaceFolders: spaces().map((space) => ({
 				machine: space.machine,
 				folder: space.folder
 			})),

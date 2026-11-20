@@ -8224,6 +8224,31 @@ const runPromiseExit = runPromiseExit$1;
 */
 const fn = fn$1;
 
+// ../../node_modules/.pnpm/effect@4.1.2/node_modules/effect/dist/Brand.js
+/**
+* Returns a `Constructor` that **does not apply any runtime checks** and just
+* returns the provided value.
+*
+* **When to use**
+*
+* Use to create nominal types that allow distinguishing between two values
+* of the same type but with different meanings.
+*
+* @see {@link make} for constructing branded values with validation.
+* @see {@link check} for constructing branded values from schema checks.
+*
+* @stability stable
+* @category constructors
+* @since 2.0.0
+*/
+function nominal() {
+	return Object.assign((input) => input, {
+		option: (input) => some(input),
+		result: (input) => succeed$3(input),
+		is: (_) => true
+	});
+}
+
 // ../../packages/worktrunk-mailbox/src/files.ts
 /** There is no file at `path`. */
 var FileMissing = class extends TaggedError("FileMissing") {};
@@ -8366,6 +8391,8 @@ const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 const spaceGroup = (published, space) => filter(text(at(published, space)), (group) => group !== "");
 /** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
 const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
+const OrphanFolder = nominal();
+const RepoRoot = nominal();
 /**
 * The entry the panel published (`orphansKey`) for the space `space`. None for a space
 * it names no orphan for, an entry of another shape, or a published value of any other
@@ -8374,8 +8401,8 @@ const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
 const spaceOrphan = (published, space) => {
 	const entry = at(published, space);
 	return all({
-		folder: text(at(entry, "folder")),
-		repo: text(at(entry, "repo"))
+		folder: map$2(text(at(entry, "folder")), OrphanFolder),
+		repo: map$2(text(at(entry, "repo")), RepoRoot)
 	});
 };
 
@@ -8590,6 +8617,80 @@ const copyOf = fn("copyOf")(function* (role, home, self) {
 	};
 });
 
+// src/look.ts
+/**
+* What the panel published in `orphans` about the space `id` as an orphan space: none
+* unless the space is one of the `open` ones, since a closed space's entry waits for the
+* panel's next refresh to go.
+*/
+const openOrphan = (orphans, open, id) => open.includes(id) ? spaceOrphan(orphans, id) : none();
+/** What the panel published about the space `id`, from its published groups and orphans. */
+const spaceMarks = (id, groups, orphans, open) => ({
+	group: spaceGroup(groups, id),
+	orphan: openOrphan(orphans, open, id)
+});
+/**
+* The marks of `space` (one of Herdr's space objects), read by its id from the published
+* groups and orphans; none for a space with no id.
+*/
+const marksFor = (space, groups, orphans, open) => match$4(text(at(space, "id")), {
+	onNone: () => ({
+		group: none(),
+		orphan: none()
+	}),
+	onSome: (id) => spaceMarks(id, groups, orphans, open)
+});
+/** The name of the repo whose main checkout is the folder `repo`: its last part. */
+const repoName = (repo) => repo.split("/").at(-1) ?? repo;
+/**
+* The pill on an orphan space: its text in the theme's yellow, a warning, and a tooltip
+* naming where the space came from, its repo and its removed folder.
+*/
+const orphanPill = ({ folder, repo }) => ({
+	label: "Orphan",
+	color: "ansi3",
+	tooltip: some(`Worktree removed from ${repoName(repo)} · ${folder}`)
+});
+/** The pills after a space's name, in order: its group pill, then the Orphan pill. */
+const spacePills = (marks) => [...match$4(marks.group, {
+	onNone: () => [],
+	onSome: (group) => [{
+		label: group,
+		color: "dim",
+		tooltip: none()
+	}]
+}), ...match$4(marks.orphan, {
+	onNone: () => [],
+	onSome: (orphan) => [orphanPill(orphan)]
+})];
+/** `pills` in the shape the sidebar copy reads. */
+const plainPills = (pills) => pills.map((pill) => ({
+	...pill,
+	tooltip: getOrNull(pill.tooltip)
+}));
+/**
+* The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
+* inactive (its text only, never the row's opacity, which would fade its pills too).
+*/
+const nameColor = (marks) => isSome(marks.orphan) ? "dim" : "foreground";
+/**
+* The git entry the sidebar copy falls back to for a space git can't answer for: for an
+* open space the panel published as an orphan, a linked worktree of its repo, so Herdr's
+* own ordering nests it under that repo's main checkout space (or keeps it at the top
+* level when none is open). Its repo is keyed as Herdr keys a repo from git's common
+* folder on the space's machine (none for this machine), its branch is the space's own
+* name so Herdr's git tail shows no branch, and it is never ahead or behind. None for any
+* other space.
+*/
+const orphanGit = (space, orphans, open) => flatMap$2(text(at(space, "id")), (id) => map$2(openOrphan(orphans, open, id), ({ repo }) => ({
+	name: repoName(repo),
+	branch: getOrElse$1(text(at(space, "name")), () => ""),
+	ahead: 0,
+	behind: 0,
+	repo: JSON.stringify([getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
+	linked: true
+})));
+
 // src/items.ts
 /**
 * Herdr's command for its worktree items. Ours use it too, so Herdr draws its branch
@@ -8657,7 +8758,7 @@ const isWorktreeRow = ({ id, name }) => id === WORKTREE || id.startsWith(`${WORK
 const newMenuAnchor = (rows) => map$2(fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 const closeOrphan = (id) => {
 	return [
-		"Close orphan space",
+		"Close orphan",
 		"space.close",
 		{
 			id,
@@ -8665,83 +8766,27 @@ const closeOrphan = (id) => {
 		}
 	];
 };
-/** Where "Close orphan space" goes: just before Herdr's close item, else last. */
-const beforeClose = (list) => {
+/**
+* `list` with "Close orphan" in the place of Herdr's close item, else last. Both
+* run `space.close` for the space, so the menu keeps one close item: ours, which asks.
+*/
+const replacingClose = (list, id) => {
 	const close = list.findIndex((item) => item[1] === "space.close");
-	return close >= 0 ? close : list.length;
+	return close >= 0 ? [
+		...list.slice(0, close),
+		closeOrphan(id),
+		...list.slice(close + 1)
+	] : [...list, closeOrphan(id)];
 };
 /**
 * Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
 * `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
-* that is one of the `open` ones, "Close orphan space" alone.
+* that is one of the `open` ones, "Close orphan" alone, in place of Herdr's close.
 */
-const withSpaceItems = (list, props, git, orphans, open) => match$4(filter(spaceOf(props), (id) => open.includes(id) && isSome(spaceOrphan(orphans, id))), {
+const withSpaceItems = (list, props, git, orphans, open) => match$4(filter(spaceOf(props), (id) => isSome(openOrphan(orphans, open, id))), {
 	onNone: () => withWorktrunkItems(list, props, git),
-	onSome: (id) => {
-		const at = beforeClose(list);
-		return [
-			...list.slice(0, at),
-			closeOrphan(id),
-			...list.slice(at)
-		];
-	}
+	onSome: (id) => replacingClose(list, id)
 });
-
-// src/look.ts
-/**
-* What the panel published about the space `id`, from its published groups and orphans:
-* an orphan only while the space is one of the `open` ones, since a closed space's entry
-* waits for the panel's next refresh to go.
-*/
-const spaceMarks = (id, groups, orphans, open) => ({
-	group: spaceGroup(groups, id),
-	orphan: open.includes(id) ? spaceOrphan(orphans, id) : none()
-});
-/** The name of the repo whose main checkout is the folder `repo`: its last part. */
-const repoName = (repo) => repo.split("/").at(-1) ?? repo;
-/**
-* The pill on an orphan space: its text in the theme's yellow, a warning, and a tooltip
-* naming where the space came from, its repo and its removed folder.
-*/
-const orphanPill = ({ folder, repo }) => ({
-	label: "Orphan",
-	color: "ansi3",
-	tooltip: some(`Worktree removed from ${repoName(repo)} · ${folder}`)
-});
-/** The pills after a space's name, in order: its group pill, then the Orphan pill. */
-const spacePills = (marks) => [...match$4(marks.group, {
-	onNone: () => [],
-	onSome: (group) => [{
-		label: group,
-		color: "dim",
-		tooltip: none()
-	}]
-}), ...match$4(marks.orphan, {
-	onNone: () => [],
-	onSome: (orphan) => [orphanPill(orphan)]
-})];
-/**
-* The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
-* inactive (its text only, never the row's opacity, which would fade its pills too).
-*/
-const nameColor = (marks) => isSome(marks.orphan) ? "dim" : "foreground";
-/**
-* The git entry the sidebar copy falls back to for a space git can't answer for: for an
-* open space the panel published as an orphan, a linked worktree of its repo, so Herdr's
-* own ordering nests it under that repo's main checkout space (or keeps it at the top
-* level when none is open). Its repo is keyed as Herdr keys a repo from git's common
-* folder on the space's machine (none for this machine), its branch is the space's own
-* name so Herdr's git tail shows no branch, and it is never ahead or behind. None for any
-* other space.
-*/
-const orphanGit = (space, orphans, open) => flatMap$2(filter(text(at(space, "id")), (id) => open.includes(id)), (id) => map$2(spaceOrphan(orphans, id), ({ repo }) => ({
-	name: repoName(repo),
-	branch: getOrElse$1(text(at(space, "name")), () => ""),
-	ahead: 0,
-	behind: 0,
-	repo: JSON.stringify([getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
-	linked: true
-})));
 
 // src/main.ts
 /** The worktrunk panel these items ask to do the work. */
@@ -8801,6 +8846,11 @@ const load = (role) => {
 };
 /** The copy's view class: Herdr's mods default-export a class extending View (copies.ts checks). */
 const viewOf = (copy) => copy.exports.default;
+/** The orphans the worktrunk panel published, and the ids of the spaces open now. */
+const published = () => ({
+	orphans: shared(orphansKey(PANEL)),
+	open: spaces().map((space) => space.id)
+});
 /** Hands `request` to the worktrunk panel, showing the panel first when it is hidden. */
 const deliver = (request) => {
 	const post = () => setShared(requestKey(PANEL), {
@@ -8870,7 +8920,10 @@ function menuWithOurItems(copy) {
 	const setExtend = copy.exports.__wtSetExtend;
 	const items = copy.exports.__wtItems;
 	if (!isFunction(setExtend) || !isFunction(items)) return viewOf(copy);
-	setExtend((list, p, git) => withSpaceItems(list, p, git, shared(orphansKey(PANEL)), spaces().map((open) => open.id)));
+	setExtend((list, p, git) => {
+		const { orphans, open } = published();
+		return withSpaceItems(list, p, git, orphans, open);
+	});
 	const listFor = items;
 	const Base = viewOf(copy);
 	class WithOurItems extends Base {
@@ -8950,26 +9003,23 @@ function newMenuWithOurItem(copy) {
 }
 /**
 * Gives the sidebar copy each space's look (name colour, pills, and the git entry an
-* orphan space nests by), from what the worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
-* it draws Herdr's own rows.
+* orphan space nests by), from what the worktrunk panel publishes, read at every render.
+* A copy left unpatched has no hook, so it draws Herdr's own rows.
 */
 const withSpaceLook = (copy) => {
 	const setLook = copy.exports.__wtSetLook;
 	if (!isFunction(setLook)) return;
-	const marksOf = (space) => match$4(text(at(space, "id")), {
-		onNone: () => ({
-			group: none(),
-			orphan: none()
-		}),
-		onSome: (id) => spaceMarks(id, shared(groupsKey(PANEL)), shared(orphansKey(PANEL)), spaces().map((open) => open.id))
-	});
+	const marksOf = (space) => {
+		const { orphans, open } = published();
+		return marksFor(space, shared(groupsKey(PANEL)), orphans, open);
+	};
 	setLook({
 		nameColorOf: (space) => nameColor(marksOf(space)),
-		pillsOf: (space) => spacePills(marksOf(space)).map((pill) => ({
-			...pill,
-			tooltip: getOrNull(pill.tooltip)
-		})),
-		gitOf: (space) => getOrNull(orphanGit(space, shared(orphansKey(PANEL)), spaces().map((open) => open.id)))
+		pillsOf: (space) => plainPills(spacePills(marksOf(space))),
+		gitOf: (space) => {
+			const { orphans, open } = published();
+			return getOrNull(orphanGit(space, orphans, open));
+		}
 	});
 };
 /** Our own members, never overwritten by Herdr's. */
