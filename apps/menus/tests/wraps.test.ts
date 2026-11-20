@@ -98,19 +98,50 @@ const texts = (el: unknown): readonly string[] =>
     ? [el]
     : ((el as { kids?: readonly unknown[] } | undefined)?.kids ?? []).flatMap(texts);
 
-describe("the sidebar's space rows", () => {
-  const T = { foreground: "#ffffff", dim: "#888888", raised: "#222222" };
+/** The elements a stand-in element holds, in order. */
+const kidsOf = (el: unknown): readonly unknown[] =>
+  (el as { kids?: readonly unknown[] } | undefined)?.kids ?? [];
 
-  test("a space's row shows its group label after its name", async () => {
+/** The text colour a stand-in element was given, if any. */
+const colorOf = (el: unknown): unknown => (el as { color?: unknown } | undefined)?.color;
+
+describe("the sidebar's space rows", () => {
+  const T = { foreground: "#ffffff", dim: "#888888", raised: "#222222", ansi3: "#ffff00" };
+  const WORK = { label: "Work", color: "dim" };
+  const OTHER = { label: "Other", color: "ansi3" };
+  const look = {
+    pillsOf: (w: { id: string }) => (w.id === "sp1" ? [WORK, OTHER] : []),
+    nameColorOf: () => "foreground",
+  };
+
+  test("a space's row shows its pills after its name, in order", async () => {
     const spaces = await load(patched("spaces", spacesStandIn));
-    spaces.__wtSetLabelOf((w: { id: string }) => (w.id === "sp1" ? "Work" : null));
-    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app", "Work"]);
+    spaces.__wtSetLook(look);
+    expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app", "Work", "Other"]);
   });
 
-  test("a space with no group, or a copy whose labels aren't set, shows only its name", async () => {
+  test("each pill's text is drawn in its own theme colour", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLook(look);
+    const pills = kidsOf(spaces.row({ id: "sp1", name: "app" }, T)).slice(1, 3);
+    expect(pills.map(colorOf)).toEqual([T.dim, T.ansi3]);
+  });
+
+  test("a space's name is drawn in the theme colour its look gives, foreground until set", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    const name = (id: string) => colorOf(kidsOf(spaces.row({ id, name: "app" }, T))[0]);
+    expect(name("sp1")).toBe(T.foreground);
+    spaces.__wtSetLook({
+      ...look,
+      nameColorOf: (w: { id: string }) => (w.id === "sp1" ? "dim" : "foreground"),
+    });
+    expect([name("sp1"), name("sp2")]).toEqual([T.dim, T.foreground]);
+  });
+
+  test("a space with no pills, or a copy whose look isn't set, shows only its name", async () => {
     const spaces = await load(patched("spaces", spacesStandIn));
     expect(texts(spaces.row({ id: "sp1", name: "app" }, T))).toEqual(["app"]);
-    spaces.__wtSetLabelOf(() => null);
+    spaces.__wtSetLook(look);
     expect(texts(spaces.row({ id: "sp2", name: "lib" }, T))).toEqual(["lib"]);
   });
 });
@@ -168,6 +199,10 @@ describe("patch points that no longer fit", () => {
       onFailure: (misses) => misses,
     });
 
+  test("every sidebar patch point is found exactly once in Herdr's sidebar", () => {
+    expect(missed("spaces", spacesStandIn)).toEqual([]);
+  });
+
   test("a Herdr menu whose height changed shape is a miss, named", () => {
     expect(missed("new-menu", "v_flex().h(400)")).toEqual([
       { name: "new-menu: menu height", found: 0 },
@@ -188,8 +223,8 @@ describe("patch points that no longer fit", () => {
     ]);
   });
 
-  test("a sidebar whose space row changed shape is a miss, named, so it gets no labels", () => {
-    const moved = spacesStandIn.replace("max_w(150)", "max_w(180)");
+  test("a sidebar whose space row changed shape is a miss, named, so it gets no pills", () => {
+    const moved = spacesStandIn.replace("min_w(SIDE_MIN)", "min_w(64)");
     expect(missed("spaces", moved)).toEqual([{ name: "spaces: space row's name", found: 0 }]);
   });
 

@@ -8414,20 +8414,23 @@ export function __wtSetExtend(extend) { __wtExtend = extend; }
 export { items as __wtItems };
 `;
 /**
-* The sidebar copy's group label, drawn after a space's name: a small pill holding the
-* text our wrapper's `labelOf(space)` gives, none when it gives none. It is drawn with
-* the copy's own `div`, which the patch point itself calls, so it is in scope.
+* How the sidebar copy draws a space, from the look our wrapper sets: its name in the
+* theme colour `look.nameColorOf(space)` gives, then one small pill per entry
+* `look.pillsOf(space)` gives, each in its own theme colour. Until the look is set,
+* names are Herdr's foreground and there are no pills. Pills are drawn with the copy's
+* own `div`, which the patch point itself calls, so it is in scope.
 */
 const SPACES_TAIL = `
-;function __wtLabels(w, t) {
-  const label = __wtLabelOf(w);
-  return label ? [div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t.dim).child(label)] : [];
+;function __wtNameColor(w, t) { return t[__wtLook.nameColorOf(w)]; }
+function __wtPills(w, t) {
+  return __wtLook.pillsOf(w).map((pill) =>
+    div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label));
 }
-let __wtLabelOf = () => null;
-export function __wtSetLabelOf(labelOf) { __wtLabelOf = labelOf; }
+let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [] };
+export function __wtSetLook(look) { __wtLook = look; }
 `;
 /** Herdr's space row draws the space's name with exactly this. */
-const SPACE_NAME = ".child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))";
+const SPACE_NAME = ".child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))";
 /** What the copy for `role` is made from, for this mod's id `self`. */
 const wrapFor = (role, self) => {
 	switch (role) {
@@ -8449,7 +8452,7 @@ const wrapFor = (role, self) => {
 			}, {
 				name: "spaces: space row's name",
 				find: SPACE_NAME,
-				replace: `${SPACE_NAME}.children(__wtLabels(w, t))`
+				replace: `${SPACE_NAME.replace("t.foreground", "__wtNameColor(w, t)")}.children(__wtPills(w, t))`
 			}],
 			tail: SPACES_TAIL
 		};
@@ -8615,6 +8618,18 @@ const isWorktreeRow = ({ id, name }) => id === WORKTREE || id.startsWith(`${WORK
 */
 const newMenuAnchor = (rows) => map$2(fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 
+// src/look.ts
+/** The pills after a space's name, in order. */
+const spacePills = (marks) => match$4(marks.group, {
+	onNone: () => [],
+	onSome: (group) => [{
+		label: group,
+		color: "dim"
+	}]
+});
+/** The theme colour a space's name is drawn in. */
+const nameColor = (_marks) => "foreground";
+
 // src/main.ts
 /** The worktrunk panel these items ask to do the work. */
 const PANEL = `iangregsondev-worktrunk`;
@@ -8643,7 +8658,7 @@ const ready = /* @__PURE__ */ new Map();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role, copy) => {
 	if (copy.misses.length === 0) return;
-	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and group labels are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
+	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and group pills are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
 	console.error(`iangregsondev-menus: ${body}`);
 	notify({
 		title: "worktrunk menus: patch point not found",
@@ -8821,13 +8836,18 @@ function newMenuWithOurItem(copy) {
 	return WithOurItem;
 }
 /**
-* Gives the sidebar copy each space's group label, read from what the worktrunk panel
-* publishes, at every render. A copy left unpatched has no hook, so it shows no labels.
+* Gives the sidebar copy each space's look (name colour and pills), from what the
+* worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
+* it draws Herdr's own rows.
 */
-const withGroupLabels = (copy) => {
-	const setLabelOf = copy.exports.__wtSetLabelOf;
-	if (!isFunction(setLabelOf)) return;
-	setLabelOf((space) => getOrNull(flatMap$2(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id))));
+const withSpaceLook = (copy) => {
+	const setLook = copy.exports.__wtSetLook;
+	if (!isFunction(setLook)) return;
+	const marksOf = (space) => ({ group: flatMap$2(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id)) });
+	setLook({
+		nameColorOf: (space) => nameColor(marksOf(space)),
+		pillsOf: (space) => spacePills(marksOf(space))
+	});
 };
 /** Our own members, never overwritten by Herdr's. */
 const OWN = /* @__PURE__ */ new Set([
@@ -8891,7 +8911,7 @@ var Menus = class extends View {
 	start(role, copy, cx) {
 		try {
 			const view = role === "menu" ? menuWithOurItems(copy) : role === "new-menu" ? newMenuWithOurItem(copy) : viewOf(copy);
-			if (role === "spaces") withGroupLabels(copy);
+			if (role === "spaces") withSpaceLook(copy);
 			adopt(this, view);
 			callOn(view, "init", this, props(), cx);
 			this.wtView = view;
