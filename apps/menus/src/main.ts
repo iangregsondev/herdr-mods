@@ -314,7 +314,7 @@ const withSpaceLook = (copy: Copy) => {
   if (!Predicate.isFunction(setLook)) return;
   const marksOf = (space: unknown): SpaceMarks =>
     Option.match(text(at(space, "id")), {
-      onNone: (): SpaceMarks => ({ group: Option.none(), orphan: false }),
+      onNone: (): SpaceMarks => ({ group: Option.none(), orphan: Option.none() }),
       onSome: (id) =>
         spaceMarks(
           id,
@@ -325,7 +325,12 @@ const withSpaceLook = (copy: Copy) => {
     });
   setLook({
     nameColorOf: (space: unknown) => nameColor(marksOf(space)),
-    pillsOf: (space: unknown) => spacePills(marksOf(space)),
+    // The copy is plain JS: it reads a pill's tooltip as text, or null for none.
+    pillsOf: (space: unknown) =>
+      spacePills(marksOf(space)).map((pill) => ({
+        ...pill,
+        tooltip: Option.getOrNull(pill.tooltip),
+      })),
     gitOf: (space: unknown) =>
       Option.getOrNull(
         orphanGit(

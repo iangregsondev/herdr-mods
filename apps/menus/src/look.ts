@@ -2,7 +2,7 @@
 // Pure: no `herdr` or `gpui` imports. Colours are theme keys; the copy reads them from
 // Herdr's theme when it draws.
 import { Option } from "effect";
-import { at, spaceGroup, spaceOrphan, text } from "worktrunk-mailbox";
+import { at, spaceGroup, spaceOrphan, text, type PublishedOrphan } from "worktrunk-mailbox";
 
 /** A key of Herdr's theme (`theme()`), as the sidebar copy reads a colour from it. */
 export type ThemeKey = "foreground" | "dim" | "ansi3";
@@ -11,8 +11,8 @@ export type ThemeKey = "foreground" | "dim" | "ansi3";
 export interface SpaceMarks {
   /** The space's group label, none when it is in no group. */
   readonly group: Option.Option<string>;
-  /** Whether the panel published the space as an orphan space. */
-  readonly orphan: boolean;
+  /** What the panel published about the space as an orphan space, none when it isn't one. */
+  readonly orphan: Option.Option<PublishedOrphan>;
 }
 
 /**
@@ -27,7 +27,7 @@ export const spaceMarks = (
   open: readonly string[],
 ): SpaceMarks => ({
   group: spaceGroup(groups, id),
-  orphan: open.includes(id) && Option.isSome(spaceOrphan(orphans, id)),
+  orphan: open.includes(id) ? spaceOrphan(orphans, id) : Option.none(),
 });
 
 /** A small label drawn after a space's name. */
@@ -35,25 +35,41 @@ export interface Pill {
   readonly label: string;
   /** Its text colour; every pill has the same raised background. */
   readonly color: ThemeKey;
+  /** What hovering it tells, none for a pill with nothing more to say than its label. */
+  readonly tooltip: Option.Option<string>;
 }
 
-/** The pill on an orphan space: its text in the theme's yellow, a warning. */
-const ORPHAN_PILL: Pill = { label: "Orphan", color: "ansi3" };
+/** The name of the repo whose main checkout is the folder `repo`: its last part. */
+const repoName = (repo: string): string => repo.split("/").at(-1) ?? repo;
+
+/**
+ * The pill on an orphan space: its text in the theme's yellow, a warning, and a tooltip
+ * naming where the space came from, its repo and its removed folder.
+ */
+const orphanPill = ({ folder, repo }: PublishedOrphan): Pill => ({
+  label: "Orphan",
+  color: "ansi3",
+  tooltip: Option.some(`Worktree removed from ${repoName(repo)} · ${folder}`),
+});
 
 /** The pills after a space's name, in order: its group pill, then the Orphan pill. */
 export const spacePills = (marks: SpaceMarks): readonly Pill[] => [
   ...Option.match(marks.group, {
     onNone: (): readonly Pill[] => [],
-    onSome: (group): readonly Pill[] => [{ label: group, color: "dim" }],
+    onSome: (group): readonly Pill[] => [{ label: group, color: "dim", tooltip: Option.none() }],
   }),
-  ...(marks.orphan ? [ORPHAN_PILL] : []),
+  ...Option.match(marks.orphan, {
+    onNone: (): readonly Pill[] => [],
+    onSome: (orphan): readonly Pill[] => [orphanPill(orphan)],
+  }),
 ];
 
 /**
  * The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
  * inactive (its text only, never the row's opacity, which would fade its pills too).
  */
-export const nameColor = (marks: SpaceMarks): ThemeKey => (marks.orphan ? "dim" : "foreground");
+export const nameColor = (marks: SpaceMarks): ThemeKey =>
+  Option.isSome(marks.orphan) ? "dim" : "foreground";
 
 /** A space's git entry, in the shape Herdr's sidebar keeps for each place it asked git about. */
 export interface GitEntry {
@@ -83,7 +99,7 @@ export const orphanGit = (
     Option.filter(text(at(space, "id")), (id) => open.includes(id)),
     (id) =>
       Option.map(spaceOrphan(orphans, id), ({ repo }) => ({
-        name: repo.split("/").at(-1) ?? repo,
+        name: repoName(repo),
         branch: Option.getOrElse(text(at(space, "name")), () => ""),
         ahead: 0,
         behind: 0,
