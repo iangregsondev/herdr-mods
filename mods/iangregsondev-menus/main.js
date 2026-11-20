@@ -8430,17 +8430,25 @@ export { items as __wtItems };
 /**
 * How the sidebar copy draws a space, from the look our wrapper sets: its name in the
 * theme colour `look.nameColorOf(space)` gives, then one small pill per entry
-* `look.pillsOf(space)` gives, each in its own theme colour. A space git has no entry
-* for gets `look.gitOf(space)` instead (null for none), which Herdr's ordering then
-* nests by. Until the look is set, names are Herdr's foreground, there are no pills and
-* no fallback entries. Pills are drawn with the copy's own `div`, which the patch point
-* itself calls, so it is in scope.
+* `look.pillsOf(space)` gives (`{ label, color, tooltip }`, `tooltip` null for none),
+* each in its own theme colour. A pill with a tooltip shows it on hover, and our info
+* icon (`info.svg` in this mod's folder, `self`) after its label in the same colour, so
+* it reads as hoverable. A space git has no entry for gets `look.gitOf(space)` instead
+* (null for none), which Herdr's ordering then nests by. Until the look is set, names are
+* Herdr's foreground, there are no pills and no fallback entries. Pills are drawn with
+* the copy's own `div` and `svg`, which Herdr's sidebar imports, so both are in scope.
 */
-const SPACES_TAIL = `
+const spacesTail = (self) => `
 ;function __wtNameColor(w, t) { return t[__wtLook.nameColorOf(w)]; }
 function __wtPills(w, t) {
-  return __wtLook.pillsOf(w).map((pill) =>
-    div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label));
+  return __wtLook.pillsOf(w).map((pill) => {
+    const el = div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label);
+    return pill.tooltip
+      ? el.flex().items_center().gap(3)
+          .child(svg(${JSON.stringify(`mods/${self}/info.svg`)}).size(9).flex_none().text_color(t[pill.color]))
+          .tooltip(pill.tooltip)
+      : el;
+  });
 }
 function __wtGitOf(w) { return __wtLook.gitOf(w); }
 let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [], gitOf: () => null };
@@ -8484,7 +8492,7 @@ const wrapFor = (role, self) => {
 					replace: SPACE_ROWS.replace("?? null", "?? __wtGitOf(w)")
 				}
 			],
-			tail: SPACES_TAIL
+			tail: spacesTail(self)
 		};
 		case "new-menu": return {
 			mod: "new-menu",
@@ -8687,26 +8695,36 @@ const withSpaceItems = (list, props, git, orphans, open) => match$4(filter(space
 */
 const spaceMarks = (id, groups, orphans, open) => ({
 	group: spaceGroup(groups, id),
-	orphan: open.includes(id) && isSome(spaceOrphan(orphans, id))
+	orphan: open.includes(id) ? spaceOrphan(orphans, id) : none()
 });
-/** The pill on an orphan space: its text in the theme's yellow, a warning. */
-const ORPHAN_PILL = {
+/** The name of the repo whose main checkout is the folder `repo`: its last part. */
+const repoName = (repo) => repo.split("/").at(-1) ?? repo;
+/**
+* The pill on an orphan space: its text in the theme's yellow, a warning, and a tooltip
+* naming where the space came from, its repo and its removed folder.
+*/
+const orphanPill = ({ folder, repo }) => ({
 	label: "Orphan",
-	color: "ansi3"
-};
+	color: "ansi3",
+	tooltip: some(`Worktree removed from ${repoName(repo)} · ${folder}`)
+});
 /** The pills after a space's name, in order: its group pill, then the Orphan pill. */
 const spacePills = (marks) => [...match$4(marks.group, {
 	onNone: () => [],
 	onSome: (group) => [{
 		label: group,
-		color: "dim"
+		color: "dim",
+		tooltip: none()
 	}]
-}), ...marks.orphan ? [ORPHAN_PILL] : []];
+}), ...match$4(marks.orphan, {
+	onNone: () => [],
+	onSome: (orphan) => [orphanPill(orphan)]
+})];
 /**
 * The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
 * inactive (its text only, never the row's opacity, which would fade its pills too).
 */
-const nameColor = (marks) => marks.orphan ? "dim" : "foreground";
+const nameColor = (marks) => isSome(marks.orphan) ? "dim" : "foreground";
 /**
 * The git entry the sidebar copy falls back to for a space git can't answer for: for an
 * open space the panel published as an orphan, a linked worktree of its repo, so Herdr's
@@ -8717,7 +8735,7 @@ const nameColor = (marks) => marks.orphan ? "dim" : "foreground";
 * other space.
 */
 const orphanGit = (space, orphans, open) => flatMap$2(filter(text(at(space, "id")), (id) => open.includes(id)), (id) => map$2(spaceOrphan(orphans, id), ({ repo }) => ({
-	name: repo.split("/").at(-1) ?? repo,
+	name: repoName(repo),
 	branch: getOrElse$1(text(at(space, "name")), () => ""),
 	ahead: 0,
 	behind: 0,
@@ -8941,13 +8959,16 @@ const withSpaceLook = (copy) => {
 	const marksOf = (space) => match$4(text(at(space, "id")), {
 		onNone: () => ({
 			group: none(),
-			orphan: false
+			orphan: none()
 		}),
 		onSome: (id) => spaceMarks(id, shared(groupsKey(PANEL)), shared(orphansKey(PANEL)), spaces().map((open) => open.id))
 	});
 	setLook({
 		nameColorOf: (space) => nameColor(marksOf(space)),
-		pillsOf: (space) => spacePills(marksOf(space)),
+		pillsOf: (space) => spacePills(marksOf(space)).map((pill) => ({
+			...pill,
+			tooltip: getOrNull(pill.tooltip)
+		})),
 		gitOf: (space) => getOrNull(orphanGit(space, shared(orphansKey(PANEL)), spaces().map((open) => open.id)))
 	});
 };

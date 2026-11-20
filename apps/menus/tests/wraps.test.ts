@@ -105,6 +105,12 @@ const kidsOf = (el: unknown): readonly unknown[] =>
 /** The text colour a stand-in element was given, if any. */
 const colorOf = (el: unknown): unknown => (el as { color?: unknown } | undefined)?.color;
 
+/** The file a stand-in `svg` element draws, if any. */
+const pathOf = (el: unknown): unknown => (el as { path?: unknown } | undefined)?.path;
+
+/** The tooltip a stand-in element was given, if any. */
+const tipOf = (el: unknown): unknown => (el as { tip?: unknown } | undefined)?.tip;
+
 describe("the sidebar's space rows", () => {
   const T = { foreground: "#ffffff", dim: "#888888", raised: "#222222", ansi3: "#ffff00" };
   const WORK = { label: "Work", color: "dim" };
@@ -125,6 +131,36 @@ describe("the sidebar's space rows", () => {
     spaces.__wtSetLook(look);
     const pills = kidsOf(spaces.row({ id: "sp1", name: "app" }, T)).slice(1, 3);
     expect(pills.map(colorOf)).toEqual([T.dim, T.ansi3]);
+  });
+
+  test("a pill with a tooltip shows it on hover; a pill without one has none", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLook({
+      ...look,
+      pillsOf: () => [
+        { label: "Work", color: "dim", tooltip: null },
+        { label: "Orphan", color: "ansi3", tooltip: "Worktree removed from api · /r/api.old" },
+      ],
+    });
+    const pills = kidsOf(spaces.row({ id: "sp1", name: "app" }, T)).slice(1, 3);
+    expect(pills.map(tipOf)).toEqual([null, "Worktree removed from api · /r/api.old"]);
+  });
+
+  test("a pill with a tooltip shows our info icon after its label, in the pill's text colour; a pill without one has none", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLook({
+      ...look,
+      pillsOf: () => [
+        { label: "Work", color: "dim", tooltip: null },
+        { label: "Orphan", color: "ansi3", tooltip: "Worktree removed from api · /r/api.old" },
+      ],
+    });
+    const [work, orphan] = kidsOf(spaces.row({ id: "sp1", name: "app" }, T)).slice(1, 3);
+    expect(kidsOf(work)).toEqual(["Work"]);
+    const [label, icon] = kidsOf(orphan);
+    expect(label).toBe("Orphan");
+    expect(pathOf(icon)).toBe(`mods/${SELF}/info.svg`);
+    expect(colorOf(icon)).toBe(T.ansi3);
   });
 
   test("a space's name is drawn in the theme colour its look gives, foreground until set", async () => {
