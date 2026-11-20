@@ -2989,6 +2989,50 @@ const getOrUndefined$1 = /*#__PURE__*/ getOrElse$1(constUndefined);
 */
 const map$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(self.value)));
 /**
+* Applies a function that returns an `Option` to the value of a `Some`,
+* flattening the result. Returns `None` if the input is `None`.
+*
+* **When to use**
+*
+* Use when you need to chain dependent `Option` computations where each step
+* may return `None`.
+*
+* **Details**
+*
+* - `Some` → applies `f` to the value and returns its `Option` result
+* - `None` → returns `None` without calling `f`
+* - Equivalent to `map` followed by {@link flatten}
+*
+* **Example** (Chaining optional lookups)
+*
+* ```ts import.meta.vitest
+* import { Option } from "effect"
+*
+* interface User {
+*   readonly name: string
+*   readonly address: Option.Option<{ readonly street: Option.Option<string> }>
+* }
+*
+* const user: User = {
+*   name: "John",
+*   address: Option.some({ street: Option.some("123 Main St") })
+* }
+*
+* user.address.pipe(
+*   Option.flatMap((addr) => addr.street)
+* ) // => Option.some("123 Main St")
+* ```
+*
+* @see {@link map} when `f` returns a plain value
+* @see {@link andThen} for a more flexible variant
+* @see {@link flatten} to unwrap a nested `Option<Option<A>>`
+*
+* @stability stable
+* @category sequencing
+* @since 2.0.0
+*/
+const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
+/**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
 *
@@ -8386,9 +8430,11 @@ export { items as __wtItems };
 /**
 * How the sidebar copy draws a space, from the look our wrapper sets: its name in the
 * theme colour `look.nameColorOf(space)` gives, then one small pill per entry
-* `look.pillsOf(space)` gives, each in its own theme colour. Until the look is set,
-* names are Herdr's foreground and there are no pills. Pills are drawn with the copy's
-* own `div`, which the patch point itself calls, so it is in scope.
+* `look.pillsOf(space)` gives, each in its own theme colour. A space git has no entry
+* for gets `look.gitOf(space)` instead (null for none), which Herdr's ordering then
+* nests by. Until the look is set, names are Herdr's foreground, there are no pills and
+* no fallback entries. Pills are drawn with the copy's own `div`, which the patch point
+* itself calls, so it is in scope.
 */
 const SPACES_TAIL = `
 ;function __wtNameColor(w, t) { return t[__wtLook.nameColorOf(w)]; }
@@ -8396,11 +8442,17 @@ function __wtPills(w, t) {
   return __wtLook.pillsOf(w).map((pill) =>
     div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label));
 }
-let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [] };
+function __wtGitOf(w) { return __wtLook.gitOf(w); }
+let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [], gitOf: () => null };
 export function __wtSetLook(look) { __wtLook = look; }
 `;
 /** Herdr's space row draws the space's name with exactly this. */
 const SPACE_NAME = ".child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))";
+/**
+* Herdr's sidebar orders its spaces from exactly this row list: each space with its git
+* entry, null where git had no answer (as for a space whose folder is gone).
+*/
+const SPACE_ROWS = "const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));";
 /** What the copy for `role` is made from, for this mod's id `self`. */
 const wrapFor = (role, self) => {
 	switch (role) {
@@ -8415,15 +8467,23 @@ const wrapFor = (role, self) => {
 		};
 		case "spaces": return {
 			mod: "spaces",
-			patches: [{
-				name: "spaces: space right-click opens menu",
-				find: "openOverlay({ mod: \"menu\", kind: \"popup\", width: 200, height: 260, props: { tab: \"space\",",
-				replace: `openOverlay({ mod: ${JSON.stringify(self)}, kind: "popup", width: 200, height: ${384}, props: { role: "menu", tab: "space",`
-			}, {
-				name: "spaces: space row's name",
-				find: SPACE_NAME,
-				replace: `${SPACE_NAME.replace("t.foreground", "__wtNameColor(w, t)")}.children(__wtPills(w, t))`
-			}],
+			patches: [
+				{
+					name: "spaces: space right-click opens menu",
+					find: "openOverlay({ mod: \"menu\", kind: \"popup\", width: 200, height: 260, props: { tab: \"space\",",
+					replace: `openOverlay({ mod: ${JSON.stringify(self)}, kind: "popup", width: 200, height: ${384}, props: { role: "menu", tab: "space",`
+				},
+				{
+					name: "spaces: space row's name",
+					find: SPACE_NAME,
+					replace: `${SPACE_NAME.replace("t.foreground", "__wtNameColor(w, t)")}.children(__wtPills(w, t))`
+				},
+				{
+					name: "spaces: ordering's git entries",
+					find: SPACE_ROWS,
+					replace: SPACE_ROWS.replace("?? null", "?? __wtGitOf(w)")
+				}
+			],
 			tail: SPACES_TAIL
 		};
 		case "new-menu": return {
@@ -8611,8 +8671,28 @@ const spacePills = (marks) => [...match$4(marks.group, {
 		color: "dim"
 	}]
 }), ...marks.orphan ? [ORPHAN_PILL] : []];
-/** The theme colour a space's name is drawn in. */
-const nameColor = (_marks) => "foreground";
+/**
+* The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
+* inactive (its text only, never the row's opacity, which would fade its pills too).
+*/
+const nameColor = (marks) => marks.orphan ? "dim" : "foreground";
+/**
+* The git entry the sidebar copy falls back to for a space git can't answer for: for an
+* open space the panel published as an orphan, a linked worktree of its repo, so Herdr's
+* own ordering nests it under that repo's main checkout space (or keeps it at the top
+* level when none is open). Its repo is keyed as Herdr keys a repo from git's common
+* folder on the space's machine (none for this machine), its branch is the space's own
+* name so Herdr's git tail shows no branch, and it is never ahead or behind. None for any
+* other space.
+*/
+const orphanGit = (space, orphans, open) => flatMap$2(filter(text(at(space, "id")), (id) => open.includes(id)), (id) => map$2(spaceOrphan(orphans, id), ({ repo }) => ({
+	name: repo.split("/").at(-1) ?? repo,
+	branch: getOrElse$1(text(at(space, "name")), () => ""),
+	ahead: 0,
+	behind: 0,
+	repo: JSON.stringify([getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
+	linked: true
+})));
 
 // src/main.ts
 /** The worktrunk panel these items ask to do the work. */
@@ -8642,7 +8722,7 @@ const ready = /* @__PURE__ */ new Map();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role, copy) => {
 	if (copy.misses.length === 0) return;
-	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and pills are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
+	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items, pills and orphan nesting are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
 	console.error(`iangregsondev-menus: ${body}`);
 	notify({
 		title: "worktrunk menus: patch point not found",
@@ -8820,8 +8900,8 @@ function newMenuWithOurItem(copy) {
 	return WithOurItem;
 }
 /**
-* Gives the sidebar copy each space's look (name colour and pills), from what the
-* worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
+* Gives the sidebar copy each space's look (name colour, pills, and the git entry an
+* orphan space nests by), from what the worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
 * it draws Herdr's own rows.
 */
 const withSpaceLook = (copy) => {
@@ -8836,7 +8916,8 @@ const withSpaceLook = (copy) => {
 	});
 	setLook({
 		nameColorOf: (space) => nameColor(marksOf(space)),
-		pillsOf: (space) => spacePills(marksOf(space))
+		pillsOf: (space) => spacePills(marksOf(space)),
+		gitOf: (space) => getOrNull(orphanGit(space, shared(orphansKey(PANEL)), spaces().map((open) => open.id)))
 	});
 };
 /** Our own members, never overwritten by Herdr's. */
