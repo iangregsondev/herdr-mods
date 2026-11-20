@@ -8587,6 +8587,37 @@ const isWorktreeRow = ({ id, name }) => id === WORKTREE || id.startsWith(`${WORK
 * Herdr's menu has no worktree row.
 */
 const newMenuAnchor = (rows) => map$2(fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
+const closeOrphan = (id) => {
+	return [
+		"Close orphan space",
+		"space.close",
+		{
+			id,
+			confirmed: false
+		}
+	];
+};
+/** Where "Close orphan space" goes: just before Herdr's close item, else last. */
+const beforeClose = (list) => {
+	const close = list.findIndex((item) => item[1] === "space.close");
+	return close >= 0 ? close : list.length;
+};
+/**
+* Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
+* `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
+* that is one of the `open` ones, "Close orphan space" alone.
+*/
+const withSpaceItems = (list, props, git, orphans, open) => match$4(filter(spaceOf(props), (id) => open.includes(id) && isSome(spaceOrphan(orphans, id))), {
+	onNone: () => withWorktrunkItems(list, props, git),
+	onSome: (id) => {
+		const at = beforeClose(list);
+		return [
+			...list.slice(0, at),
+			closeOrphan(id),
+			...list.slice(at)
+		];
+	}
+});
 
 // src/look.ts
 /**
@@ -8741,7 +8772,7 @@ function menuWithOurItems(copy) {
 	const setExtend = copy.exports.__wtSetExtend;
 	const items = copy.exports.__wtItems;
 	if (!isFunction(setExtend) || !isFunction(items)) return viewOf(copy);
-	setExtend(withWorktrunkItems);
+	setExtend((list, p, git) => withSpaceItems(list, p, git, shared(orphansKey(PANEL)), spaces().map((open) => open.id)));
 	const listFor = items;
 	const Base = viewOf(copy);
 	class WithOurItems extends Base {
