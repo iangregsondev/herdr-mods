@@ -11,6 +11,10 @@ The human guide is `docs/develop.md`; its "Remote Herdr host" section covers set
 
 The loop acts on the **dev target**: `local` (the Herdr app on this machine) or `remote` (a **Herdr host** reached over SSH), set by `herdr-dev.json` at the repo root. Every command below works the same for both. Run `herdr-app` through `vp run herdr <args…>`, which runs it on the dev target's Herdr host.
 
+## Dev builds win while you develop
+
+The person must see in Herdr everything being developed. Every mod a change touches (and every mod its proof needs, such as `worktrunk` and `menus` together) runs as a dev build in the configured layout, `Workbench` unless `herdr-dev.json` names another. An installed copy never blocks that: move it aside (step 1) and carry on without asking. Say in one line what moved and where, so the person can put it back.
+
 ## Steps
 
 1. Start the watch **in the background**: `vp run <name>#dev`.
@@ -19,7 +23,7 @@ The loop acts on the **dev target**: `local` (the Herdr app on this machine) or 
    - `added iangregsondev-<name> to "<layout>"` or `already has a slot`: the panel is in the configured layout (`Workbench` unless `herdr-dev.json` names another). The loop edits only that layout, whichever one Herdr shows; if another is showing, switch with `vp run herdr do layout.switch --name <layout>`.
    - `there is no layout "<layout>" yet`: run `vp run herdr:sync`, then save again.
    - `... add iangregsondev-<name> by hand`: tell the person and stop; layout edits are theirs.
-   - `... is an installed mod, not a dev build`: a real copy is installed. Tell the person and leave it as it is.
+   - `... is an installed mod, not a dev build`: a real copy is installed. Move it aside, never delete it: stop the watch, move `<Herdr home>/mods/iangregsondev-<name>/` into `<Herdr home>/mods-backup-<YYYY-MM-DD>/` on the dev target's Herdr host (over SSH for `remote`, with `herdr-dev.json`'s host, user and port), then start the watch again. To put it back after `dev:remove`, move it back into `mods/`.
    - `mod-pack: Herdr host unreachable: …; the next build tries again`: the host is asleep or offline. Tell the person; the watch keeps running and the next save retries.
 2. Edit `apps/<name>/src/`. Each save rebuilds the **dev build** and Herdr reloads it. You always type the short name; `mod-pack.ts` adds the namespace to every folder. Local: the build lands in `<Herdr home>/mods/iangregsondev-<name>/`. Remote: it lands in the staging folder `node_modules/.herdr-dev/iangregsondev-<name>/`, then rsync copies it to the Herdr host's `mods/iangregsondev-<name>/`.
 3. Prove it, every time:
@@ -34,7 +38,7 @@ The loop acts on the **dev target**: `local` (the Herdr app on this machine) or 
 - Never symlink a mod into Herdr: it doesn't reload, and can stop Herdr watching the folder until it restarts.
 - Never edit `seen.json`: Herdr keeps it in memory.
 - Never edit the Herdr home's `layouts/` by hand to add or remove a dev panel; `#dev` and `dev:remove` do it (`scripts/herdr-slots.ts`). If the person asks for a manual layout change, back the file up first and show the diff.
-- Never touch a mod folder without the `.herdr-mods-dev` marker: it's an **installed mod**.
+- Never edit or delete a mod folder without the `.herdr-mods-dev` marker: it's an **installed mod**. Moving it into `mods-backup-<YYYY-MM-DD>/` (step 1) is the one change allowed.
 - Never put window screenshots in the repo uncropped: it's public, and the window shows other repos, branches and paths.
 - Never write the Herdr host's name or user into a commit, issue or PR. `herdr-dev.json` holds them and is git-ignored.
 - Never `vp run` a task that acts on the Herdr folder with caching on: cached tasks replay old output without running (`run.tasks` in `vite.config.ts` sets `cache: false`).
