@@ -2,7 +2,7 @@
 
 Version 0.0.0 · [Changelog](https://github.com/iangregsondev/herdr-mods/blob/main/apps/menus/CHANGELOG.md)
 
-Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exactly as Herdr draws them, with worktrunk items added: "Worktree (wt)…" just after the "+" menu's worktree rows, and "New worktree (wt)…", "Open worktree (wt)…", "Merge into main (wt)…" and "Remove worktree (wt)…" in a space's menu (spaces on any machine), just after Herdr's own worktree items, plus a small group label (Work / Personal) on each space row in the sidebar and an "Orphan" label on a space left on a removed worktree, which stays nested under its repo with its name dimmed. The items hand their work to the worktrunk panel (`iangregsondev-worktrunk`). Installed as `iangregsondev-menus`.
+Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exactly as Herdr draws them, with worktrunk items added: "Worktree (wt)…" just after the "+" menu's worktree rows, and "New worktree (wt)…", "Open worktree (wt)…", "Merge into main (wt)…" and "Remove worktree (wt)…" in a space's menu (spaces on any machine), just after Herdr's own worktree items, plus a small group label (Work / Personal) on each space row in the sidebar and an "Orphan" label on a space left on a removed worktree, which stays nested under its repo with its name dimmed and gets "Close orphan space" in its menu. The items hand their work to the worktrunk panel (`iangregsondev-worktrunk`). Installed as `iangregsondev-menus`.
 
 ![menus (wt)](preview.png)
 
@@ -16,8 +16,9 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - **Space right-click menu**, Herdr's items in Herdr's order, with ours inserted after Herdr's last worktree item (else before Close, else last):
   - a space on a linked worktree: Rename, New worktree, Open worktree, Remove worktree, **New worktree (wt)…**, **Open worktree (wt)…**, **Merge into main (wt)…**, **Remove worktree (wt)…**, Close;
   - a space on a repo's main checkout: Rename, New worktree, Open worktree, **New worktree (wt)…**, **Open worktree (wt)…**, Close;
-  - a space outside git, or before Herdr's git check answers: Herdr's items only.
-  - Our rows use Herdr's branch icon and look like Herdr's. The popup is 200×384px (Herdr's 260px plus four rows).
+  - a space outside git, or before Herdr's git check answers: Herdr's items only;
+  - an orphan space (one the worktrunk panel publishes, still open): Herdr's items with **Close orphan space** just before Close (else last), and no (wt) items, whatever git says about it.
+  - Our (wt) rows use Herdr's branch icon and look like Herdr's. The popup is 200×384px (Herdr's 260px plus four rows).
 - Tab right-click menus and the terminal menu are Herdr's, untouched.
 
 ## How it behaves
@@ -26,6 +27,7 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - **Space menu → New worktree (wt)…:** the same dialog for that space's repo on the space's machine, offering the branch the space is on as a base; the worktree is made on that machine.
 - **Space menu → Open worktree (wt)…:** worktrunk's Open a worktree dialog for that space's repo on its machine: pick one of its worktrees to select the space on it, or open a new space on it on that machine.
 - **Space menu → Merge into main (wt)… / Remove worktree (wt)…:** worktrunk's confirm dialog, then its usual merge (squash) or remove job in a terminal window, one job at a time; spaces left on the removed folder close. The main checkout, a detached worktree's merge, a space with no folder, or a failed lookup get a warning toast from worktrunk instead, saying why.
+- **Space menu → Close orphan space:** runs Herdr's own `space.close {id, confirmed: false}` (it goes to Herdr's `choose`, not to worktrunk), so Herdr asks before closing, whatever runs in the space. It is offered only while the panel still publishes the space as an orphan; there is no bulk close.
 - Our space-menu items work with the mouse and with Herdr's keys (↑/↓, Enter).
 - When the worktrunk panel is hidden, an item shows it first; with no worktrunk panel in the layout, a warning toast says so and nothing runs.
 - Herdr's new menu items, and fixes to these four mods, appear by themselves: the mod reads Herdr's installed code each time it loads.
@@ -39,10 +41,10 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - **Copying Herdr's code at run time:** a mod can't import another mod's files (refused as outside its folder) and `eval` is disabled, but it can import its own files. So each role reads `<app home>/mods/<herdr mod>/main.js` (`readTextFile`), writes it, patched, to `.herdr-<herdr mod>.js` in this mod's folder (`writeTextFile`, only when the text changed, over the text it held; hidden files don't trigger a reload), and `import()`s that with a variable specifier. Its default export is Herdr's View class. Every one of these calls goes through an Effect service with a tagged error for each way it fails (`Files` from `worktrunk-mailbox`, `Modules` in `copies.ts`).
 - **Patches** (exact text, each must occur exactly once, else the copy is Herdr's file unchanged and a warning toast names the patch point and how often it was found):
   - `tabs`: `openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })` → this mod, `height: 548`, `props: { role: "new-menu" }`.
-  - `spaces`: `openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space",` → this mod, `height: 353`, `role: "menu"` added to the props.
+  - `spaces`: `openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space",` → this mod, `height: 384`, `role: "menu"` added to the props.
   - `spaces`: the space row's name, `.child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))` → its colour from our look (`dim` for an orphan space), followed by its pills (a pill with a tooltip also gets the info icon and `.tooltip(text)`).
   - `spaces`: the row list of the sidebar's ordering, `const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));` → `?? null` becomes our fallback: for an open space the panel published as an orphan, a git entry `{ linked: true, repo: JSON.stringify([<space's machine or null>, "<repo>/.git"]), name: <repo folder's name>, branch: <space's name>, ahead: 0, behind: 0 }`, keyed exactly as Herdr keys a repo from git, so Herdr nests the space under that repo's main checkout space.
-  - `menu`: `function items(p, git) {` renamed, and a new `items(p, git)` appended that runs Herdr's list through our extension and is exported, with a setter for the extension.
+  - `menu`: `function items(p, git) {` renamed, and a new `items(p, git)` appended that runs Herdr's list through our extension (the (wt) items, or Close orphan space for an orphan space) and is exported, with a setter for the extension.
   - `new-menu`: `.w_full().h(Math.min(491, ` → `.w_full().h(31 + Math.min(491, `, so the menu has room for our row inside it. When it misses, the "+" menu is Herdr's own, without our row.
 - **Playing Herdr's view:** the copy's class (or a subclass: `menu` overrides `choose` so our items post a request and Herdr's go to Herdr's `choose`; `new-menu` overrides `row` and `render`: `render` runs Herdr's once to list its rows, picks the last worktree row, then runs it again with `row` drawing ours, through Herdr's own `row()`, just after that one) has its methods bound onto this mod's instance, then its `init` and `render` are called with that instance.
 - **Talking to worktrunk:** a request `{ id, action }` in shared state under `iangregsondev-worktrunk.request.v1` (`setShared`), with `action` `{ _tag: "NewOrOpen", folder: null }` or `{ _tag: "SpaceWorktree", space, act: "NewOrOpen" | "Open" | "Merge" | "Remove" }` (only the space id: the panel looks up the space's machine). A hidden panel is shown first with `layout.show`. The group labels come the other way: the panel publishes `{ <space id>: <group> }` under `iangregsondev-worktrunk.groups.v1`, and the sidebar reads it as it draws each row. The Orphan labels too: `{ <space id>: { folder, repo } }` under `iangregsondev-worktrunk.orphans.v1` (`folder` the space's gone folder, `repo` its repo's main checkout); the sidebar keeps only the entries of spaces still open. The request types and the panel lookup live in this repo's `packages/worktrunk-mailbox`, which both mods bundle.
@@ -67,6 +69,7 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - A linked-worktree space's menu, on this or another machine, shows Herdr's worktree items, then the four (wt) items, then Close; a main-checkout space shows only "New worktree (wt)…" and "Open worktree (wt)…"; a non-git space shows none.
 - "New worktree (wt)…" and "Open worktree (wt)…" on a space on another machine open their dialog for its repo there, the title naming the machine.
 - Merge and Remove open worktrunk's confirm dialog for that worktree.
+- An orphan space's menu shows Herdr's items with "Close orphan space" just before Close and no (wt) items; choosing it shows Herdr's confirm, and the space closes once you confirm. No other space's menu has it.
 - An orphan space sits under its repo's main checkout space, its name dimmed, its Orphan pill after it and no branch shown; with no main checkout space open it is at the top level, dimmed and pilled; once it closes, nothing of it is left.
 - Hovering the Orphan pill (the info icon after "Orphan"), nested or at the top level, shows `Worktree removed from <repo> · <gone folder>`.
 - Changing a patch point's text in a copy of Herdr's file shows a toast naming it, and the menus fall back to Herdr's.
