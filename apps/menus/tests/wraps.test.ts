@@ -146,6 +146,33 @@ describe("the sidebar's space rows", () => {
   });
 });
 
+describe("the sidebar's ordering", () => {
+  const ORPHAN_GIT = { name: "api", branch: "feat/9-x", repo: "orphan", linked: true };
+  const HERDR_GIT = { name: "api", branch: "main", repo: "herdr", linked: false };
+  // The stand-in's class: Herdr's sidebar, made with its git entries, and its row list.
+  type Sidebar = new (git: Record<string, unknown>) => {
+    rows(sp: readonly unknown[], ps: readonly unknown[]): readonly { g: unknown }[];
+  };
+
+  test("a space git has no entry for gets the entry its look gives; a space git answered for keeps Herdr's", async () => {
+    const spaces = await load(patched("spaces", spacesStandIn));
+    spaces.__wtSetLook({
+      nameColorOf: () => "foreground",
+      pillsOf: () => [],
+      gitOf: (w: { id: string }) => (w.id === "sp3" ? null : ORPHAN_GIT),
+    });
+    // The stand-in exports its sidebar class beside its functions.
+    const Herdr = spaces.Sidebar as unknown as Sidebar;
+    const sidebar = new Herdr({ [JSON.stringify([null, "/r/api"])]: HERDR_GIT });
+    const sp = [
+      { id: "sp1", folder: "/r/api.feat" },
+      { id: "sp2", folder: "/r/api" },
+      { id: "sp3", folder: "/tmp" },
+    ];
+    expect(sidebar.rows(sp, []).map((row) => row.g)).toEqual([ORPHAN_GIT, HERDR_GIT, null]);
+  });
+});
+
 describe('the "+" menu\'s copy', () => {
   test("its menu is one row taller than Herdr's, so our row takes no room from the agents", async () => {
     const menu = await load(patched("new-menu", newMenuStandIn));
@@ -226,6 +253,11 @@ describe("patch points that no longer fit", () => {
   test("a sidebar whose space row changed shape is a miss, named, so it gets no pills", () => {
     const moved = spacesStandIn.replace("min_w(SIDE_MIN)", "min_w(64)");
     expect(missed("spaces", moved)).toEqual([{ name: "spaces: space row's name", found: 0 }]);
+  });
+
+  test("a sidebar whose ordering's row list changed shape is a miss, named, so it nests nothing", () => {
+    const moved = spacesStandIn.replace("?? null }));", "|| null }));");
+    expect(missed("spaces", moved)).toEqual([{ name: "spaces: ordering's git entries", found: 0 }]);
   });
 
   test("a menu whose item list was renamed is a miss, named", () => {

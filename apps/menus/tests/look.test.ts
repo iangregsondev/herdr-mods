@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { nameColor, spaceMarks, spacePills } from "../src/look.ts";
+import { nameColor, orphanGit, spaceMarks, spacePills } from "../src/look.ts";
 
 describe("spacePills", () => {
   test("a space in no group has no pills", () => {
@@ -28,10 +28,16 @@ describe("spacePills", () => {
 });
 
 describe("nameColor", () => {
-  test("a space's name is drawn in the theme's foreground, in a group or not", () => {
+  test("a space that isn't an orphan has its name in the theme's foreground, in a group or not", () => {
     expect(
       [Option.none(), Option.some("Work")].map((group) => nameColor({ group, orphan: false })),
     ).toEqual(["foreground", "foreground"]);
+  });
+
+  test("an orphan space's name is drawn in the theme's dim, in a group or not", () => {
+    expect(
+      [Option.none(), Option.some("Work")].map((group) => nameColor({ group, orphan: true })),
+    ).toEqual(["dim", "dim"]);
   });
 });
 
@@ -52,5 +58,34 @@ describe("spaceMarks", () => {
       group: Option.none(),
       orphan: false,
     });
+  });
+});
+
+describe("orphanGit", () => {
+  const orphans = { sp1: { folder: "/r/api.feat", repo: "/r/api" } };
+
+  test("an open orphan space on this machine gets a linked worktree entry of its repo, keyed as Herdr keys this machine's repos", () => {
+    expect(orphanGit({ id: "sp1", name: "feat/9-x" }, orphans, ["sp1"])).toEqual(
+      Option.some({
+        name: "api",
+        branch: "feat/9-x",
+        ahead: 0,
+        behind: 0,
+        repo: JSON.stringify([null, "/r/api/.git"]),
+        linked: true,
+      }),
+    );
+  });
+
+  test("an orphan space on another machine is keyed on that machine, as Herdr keys that machine's repos", () => {
+    const entry = orphanGit({ id: "sp1", name: "feat/9-x", machine: "box" }, orphans, ["sp1"]);
+    expect(Option.map(entry, (git) => git.repo)).toEqual(
+      Option.some(JSON.stringify(["box", "/r/api/.git"])),
+    );
+  });
+
+  test("a space the panel published no orphan for has no entry, nor a published orphan once it is closed", () => {
+    expect(orphanGit({ id: "sp2", name: "main" }, orphans, ["sp1", "sp2"])).toEqual(Option.none());
+    expect(orphanGit({ id: "sp1", name: "feat/9-x" }, orphans, ["sp2"])).toEqual(Option.none());
   });
 });

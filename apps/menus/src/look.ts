@@ -2,7 +2,7 @@
 // Pure: no `herdr` or `gpui` imports. Colours are theme keys; the copy reads them from
 // Herdr's theme when it draws.
 import { Option } from "effect";
-import { spaceGroup, spaceOrphan } from "worktrunk-mailbox";
+import { at, spaceGroup, spaceOrphan, text } from "worktrunk-mailbox";
 
 /** A key of Herdr's theme (`theme()`), as the sidebar copy reads a colour from it. */
 export type ThemeKey = "foreground" | "dim" | "ansi3";
@@ -49,5 +49,45 @@ export const spacePills = (marks: SpaceMarks): readonly Pill[] => [
   ...(marks.orphan ? [ORPHAN_PILL] : []),
 ];
 
-/** The theme colour a space's name is drawn in. */
-export const nameColor = (_marks: SpaceMarks): ThemeKey => "foreground";
+/**
+ * The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
+ * inactive (its text only, never the row's opacity, which would fade its pills too).
+ */
+export const nameColor = (marks: SpaceMarks): ThemeKey => (marks.orphan ? "dim" : "foreground");
+
+/** A space's git entry, in the shape Herdr's sidebar keeps for each place it asked git about. */
+export interface GitEntry {
+  readonly name: string;
+  readonly branch: string;
+  readonly ahead: number;
+  readonly behind: number;
+  readonly repo: string;
+  readonly linked: boolean;
+}
+
+/**
+ * The git entry the sidebar copy falls back to for a space git can't answer for: for an
+ * open space the panel published as an orphan, a linked worktree of its repo, so Herdr's
+ * own ordering nests it under that repo's main checkout space (or keeps it at the top
+ * level when none is open). Its repo is keyed as Herdr keys a repo from git's common
+ * folder on the space's machine (none for this machine), its branch is the space's own
+ * name so Herdr's git tail shows no branch, and it is never ahead or behind. None for any
+ * other space.
+ */
+export const orphanGit = (
+  space: unknown,
+  orphans: unknown,
+  open: readonly string[],
+): Option.Option<GitEntry> =>
+  Option.flatMap(
+    Option.filter(text(at(space, "id")), (id) => open.includes(id)),
+    (id) =>
+      Option.map(spaceOrphan(orphans, id), ({ repo }) => ({
+        name: repo.split("/").at(-1) ?? repo,
+        branch: Option.getOrElse(text(at(space, "name")), () => ""),
+        ahead: 0,
+        behind: 0,
+        repo: JSON.stringify([Option.getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
+        linked: true,
+      })),
+  );

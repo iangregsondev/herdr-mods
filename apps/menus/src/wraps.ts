@@ -47,9 +47,11 @@ export { items as __wtItems };
 /**
  * How the sidebar copy draws a space, from the look our wrapper sets: its name in the
  * theme colour `look.nameColorOf(space)` gives, then one small pill per entry
- * `look.pillsOf(space)` gives, each in its own theme colour. Until the look is set,
- * names are Herdr's foreground and there are no pills. Pills are drawn with the copy's
- * own `div`, which the patch point itself calls, so it is in scope.
+ * `look.pillsOf(space)` gives, each in its own theme colour. A space git has no entry
+ * for gets `look.gitOf(space)` instead (null for none), which Herdr's ordering then
+ * nests by. Until the look is set, names are Herdr's foreground, there are no pills and
+ * no fallback entries. Pills are drawn with the copy's own `div`, which the patch point
+ * itself calls, so it is in scope.
  */
 const SPACES_TAIL = `
 ;function __wtNameColor(w, t) { return t[__wtLook.nameColorOf(w)]; }
@@ -57,13 +59,20 @@ function __wtPills(w, t) {
   return __wtLook.pillsOf(w).map((pill) =>
     div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label));
 }
-let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [] };
+function __wtGitOf(w) { return __wtLook.gitOf(w); }
+let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [], gitOf: () => null };
 export function __wtSetLook(look) { __wtLook = look; }
 `;
 
 /** Herdr's space row draws the space's name with exactly this. */
 const SPACE_NAME =
   ".child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))";
+
+/**
+ * Herdr's sidebar orders its spaces from exactly this row list: each space with its git
+ * entry, null where git had no answer (as for a space whose folder is gone).
+ */
+const SPACE_ROWS = "const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));";
 
 /** What the copy for `role` is made from, for this mod's id `self`. */
 export const wrapFor = (role: Role, self: string): Wrap => {
@@ -93,6 +102,11 @@ export const wrapFor = (role: Role, self: string): Wrap => {
             name: "spaces: space row's name",
             find: SPACE_NAME,
             replace: `${SPACE_NAME.replace("t.foreground", "__wtNameColor(w, t)")}.children(__wtPills(w, t))`,
+          },
+          {
+            name: "spaces: ordering's git entries",
+            find: SPACE_ROWS,
+            replace: SPACE_ROWS.replace("?? null", "?? __wtGitOf(w)"),
           },
         ],
         tail: SPACES_TAIL,
