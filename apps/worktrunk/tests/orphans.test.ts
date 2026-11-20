@@ -478,13 +478,18 @@ describe("orphansChanged", () => {
     expect(orphansChanged({}, {})).toBe(false);
   });
 
+  test("nothing published yet and no orphans found is no change", () => {
+    expect(orphansChanged({}, undefined)).toBe(false);
+    expect(orphansChanged({}, null)).toBe(false);
+  });
+
   test("an orphan added, gone, or with another folder or repo, or a published value of another shape, is a change", () => {
     expect(orphansChanged(one, {})).toBe(true);
     expect(orphansChanged({}, one)).toBe(true);
     expect(orphansChanged(one, { s1: { folder: "/r/app.x", repo: "/r/app" } })).toBe(true);
     expect(orphansChanged(one, { s1: { folder: "/r/app.feat", repo: "/r/web" } })).toBe(true);
     expect(orphansChanged(one, { s2: one.s1 })).toBe(true);
-    expect(orphansChanged({}, undefined)).toBe(true);
+    expect(orphansChanged(one, undefined)).toBe(true);
     expect(orphansChanged(one, { s1: "/r/app" })).toBe(true);
   });
 });

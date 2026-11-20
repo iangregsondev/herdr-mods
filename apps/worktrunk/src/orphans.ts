@@ -260,7 +260,7 @@ const trashRepo = (place: string): Option.Option<string> => {
 export const publishedOrphans = (
   spaces: readonly SpaceLike[],
   places: readonly Place[],
-  gone: ReadonlyMap<Machine, readonly string[]>,
+  gone: GoneFolders,
   read: readonly ReadWorktree[],
 ): PublishedOrphans => {
   const placeOf = new Map(places.map((p) => [p.space.id, p.place]));
@@ -287,17 +287,19 @@ export const publishedOrphans = (
 
 /**
  * Whether `orphans` differ from those `published` in shared state (anything at all, since
- * any mod can write it): publishing only on a change spares every mod a render.
+ * any mod can write it): publishing only on a change spares every mod a render. Nothing
+ * stored yet counts as none published, so finding none writes nothing.
  */
 export const orphansChanged = (orphans: PublishedOrphans, published: unknown): boolean => {
   const entries = Object.entries(orphans);
+  const stored = Predicate.isNullish(published) ? {} : published;
   return (
-    !Predicate.isObject(published) ||
-    Object.keys(published).length !== entries.length ||
+    !Predicate.isObject(stored) ||
+    Object.keys(stored).length !== entries.length ||
     entries.some(
       ([space, orphan]) =>
         !Option.exists(
-          spaceOrphan(published, space),
+          spaceOrphan(stored, space),
           (was) => was.folder === orphan.folder && was.repo === orphan.repo,
         ),
     )
