@@ -570,6 +570,36 @@ function isNotNull(input) {
 	return input !== null;
 }
 /**
+* Checks whether a value is `null` or `undefined`.
+*
+* **When to use**
+*
+* Use when you need a `Predicate` guard for nullish values.
+*
+* **Details**
+*
+* Uses `input === null || input === undefined`.
+*
+* **Example** (Guarding nullish values)
+*
+* ```ts import.meta.vitest
+* import { Predicate } from "effect"
+*
+* const values = [0, null, "", undefined]
+* const nullish = values.filter(Predicate.isNullish) // => [null, undefined]
+* ```
+*
+* @see {@link isNotNullish}
+* @see {@link isUndefined}
+* @see {@link isNull}
+* @stability stable
+* @category guards
+* @since 4.0.0
+*/
+function isNullish(input) {
+	return input === null || input === void 0;
+}
+/**
 * Checks whether a value is a non-null object value that is not an array.
 *
 * **When to use**
@@ -9881,6 +9911,22 @@ const SPACE_ACTS = [
 ];
 /** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
 const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
+const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
+const OrphanFolder = nominal();
+const RepoRoot = nominal();
+/**
+* The entry the panel published (`orphansKey`) for the space `space`. None for a space
+* it names no orphan for, an entry of another shape, or a published value of any other
+* shape.
+*/
+const spaceOrphan = (published, space) => {
+	const entry = at(published, space);
+	return all$2({
+		folder: map$3(text(at(entry, "folder")), OrphanFolder),
+		repo: map$3(text(at(entry, "repo")), RepoRoot)
+	});
+};
 
 // src/machines.ts
 /** This machine: the one the Herdr app runs on. */
@@ -10210,6 +10256,11 @@ const parseOwners = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	}] : [];
 });
 /**
+* The space folders the owners script found gone: each printed alone on its line, a whole
+* path, so a repo line (it has a tab) or stray text is not one.
+*/
+const parseGone = (stdout) => stdout.split("\n").filter((line) => line.startsWith("/") && !line.includes("	"));
+/**
 * The Current repo: the repo the owners script, run on `machine`, names for the focused
 * folder, if any.
 */
@@ -10291,8 +10342,11 @@ exit 0`;
 /**
 * The repos the given folders are in, through each folder's shared git folder, so a
 * folder inside a linked worktree names its repo too. Prints `repo<TAB>worktree count`.
+* Folders after a `--` argument are spaces' own folders, checked only for being there:
+* each one gone prints alone on a line, after the repos.
 */
 const OWNERS_SCRIPT = `for dir in "$@"; do
+  [ "$dir" = -- ] && break
   [ -d "$dir" ] || continue
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
   case "$common" in
@@ -10301,7 +10355,13 @@ const OWNERS_SCRIPT = `for dir in "$@"; do
       printf '%s\\t%s\\n' "$repo" "$(git -C "$repo" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')"
       ;;
   esac
-done | sort -u`;
+done | sort -u
+spaces=
+for dir in "$@"; do
+  if [ -n "$spaces" ]; then [ -d "$dir" ] || printf '%s\\n' "$dir"; fi
+  [ "$dir" = -- ] && spaces=1
+done
+exit 0`;
 /** Lists the worktrees of the repo at $1. */
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
 /** How many repos the batched list reads at once. */
@@ -11481,11 +11541,25 @@ const machineHome = fn("machineHome")(function* (machine) {
 	});
 	return home;
 });
-/** The repos the given folders on `machine` are in (each once); none for no folders. */
-const reposOf = fn("reposOf")(function* (folders, machine = null) {
-	if (folders.length === 0) return [];
-	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
-	return parseOwners(run.stdout, machine);
+/**
+* The owners lookup: the repos the given folders on `machine` are in (each once), and
+* which of the spaces' own folders `spaceFolders` are gone there, in one run; none for
+* no folders at all.
+*/
+const ownersOf = fn("ownersOf")(function* (folders, { machine = null, spaceFolders = [] } = {}) {
+	if (folders.length === 0 && spaceFolders.length === 0) return {
+		repos: [],
+		gone: []
+	};
+	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, spaceFolders.length === 0 ? folders : [
+		...folders,
+		"--",
+		...spaceFolders
+	], { on: machine });
+	return {
+		repos: parseOwners(run.stdout, machine),
+		gone: parseGone(run.stdout)
+	};
 });
 /**
 * The repo the folder `folder` on `machine` is in (the Current repo of the focused
@@ -11663,22 +11737,30 @@ const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * Searches `machine`: scans its group folders when `scan` says to (after reading its
 * home there; this machine's is `home`), else keeps the scan of its `last` search, and
-* looks up the repos its open spaces (`places`) are in.
+* looks up the repos its open spaces (`places`) are in and which of their own folders
+* (`spaceFolders`) are gone.
 */
-const searchOn = fnUntraced(function* (settings, machine, home, places, scan, last) {
+const searchOn = fnUntraced(function* (settings, machine, home, places, spaceFolders, scan, last) {
 	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
 	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
+	const scanned = scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
+		onNone: () => ({
+			repos: [],
+			missing: []
+		}),
+		onSome: (before) => before.scan
+	});
+	const foldersHere = (located) => located.filter((at) => at.machine === machine && at.folder !== "").map((at) => at.folder);
+	const owners = yield* ownersOf(foldersHere(places), {
+		machine,
+		spaceFolders: foldersHere(spaceFolders)
+	});
 	return {
 		machine,
 		home: found,
-		scan: scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
-			onNone: () => ({
-				repos: [],
-				missing: []
-			}),
-			onSome: (before) => before.scan
-		}),
-		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
+		scan: scanned,
+		owners: owners.repos,
+		gone: owners.gone
 	};
 });
 /** The machines a search covers: those with group folders, and those with open spaces. */
@@ -11693,7 +11775,7 @@ const searchMachine = (ask, machine) => {
 	if (isSome(held)) return succeed(fail$2(held.value));
 	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
 	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
-	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
+	return searchOn(ask.settings, machine, ask.home, ask.places, ask.spaceFolders, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
 	}))), catchDefect((defect) => succeed(fail$2({
@@ -12204,8 +12286,7 @@ const groupsChanged = (groups, published) => {
 // src/orphans.ts
 const NO_ORPHANS = {
 	waiting: /* @__PURE__ */ new Map(),
-	removed: /* @__PURE__ */ new Map(),
-	asked: /* @__PURE__ */ new Set()
+	removed: /* @__PURE__ */ new Map()
 };
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
@@ -12254,7 +12335,7 @@ const listsRead = (orphans, old, machine, answer) => {
 };
 /**
 * The folder check of the paths `asked` on `machine` answered: the folders it found gone,
-* or why it failed. Gone paths come back for their spaces to close or be asked about; a
+* or why it failed. Gone paths come back for their spaces to close or be kept; a
 * path whose folder exists is forgotten; a failed check leaves every path waiting for the
 * machine's next refresh. Paths dropped while the check ran wait on.
 */
@@ -12271,14 +12352,14 @@ const checked = (orphans, machine, asked, answer) => match$4(answer, {
 		gone: gone.filter((path) => asked.includes(path) && waitingOn(orphans, machine).includes(path))
 	})
 });
-const closeOrAsk = (space, panes) => {
+const closeOrKeep = (space, panes) => {
 	const tabs = new Set(space.tabs.map((tab) => tab.id));
-	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Ask";
+	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Keep";
 };
 /**
 * The orphan spaces on `machine`: every space there on one of the `gone` folders (by
-* folder or place, as `goneSpaces` matches them), each closed or asked about, with the
-* gone folder it was matched by.
+* folder or place, as `goneSpaces` matches them), each closed or kept, with the gone
+* folder it was matched by.
 */
 const orphanSpaces = (spaces, panes, machine, gone) => {
 	const byId = new Map(spaces.map((space) => [space.id, space]));
@@ -12286,60 +12367,77 @@ const orphanSpaces = (spaces, panes, machine, gone) => {
 		onNone: () => [],
 		onSome: (space) => [{
 			space: id,
-			step: closeOrAsk(space, panes),
+			step: closeOrKeep(space, panes),
 			folder
 		}]
 	}));
 };
 /**
-* How long the toast offering to close an orphan space stays up: a day. Herdr fades a
-* toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
-* day stands in for it.
+* The spaces to close at once on the `gone` folders a folder check of dropped paths found
+* on `machine` (as `orphanSpaces` finds them): those where only shells run. Only those
+* folders count, so a space the wider orphan check finds (published for the sidebar) is
+* never closed here.
 */
-const ASK_TIMEOUT = 864e5;
+const orphanCloses = (spaces, panes, machine, gone) => orphanSpaces(spaces, panes, machine, gone).filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space);
 /**
-* The toasts for the `found` orphan spaces where something other than a shell runs and
-* no toast has asked before: each names the space and the gone folder it was matched by,
-* and clicking it closes the space after Herdr's own confirm. The spaces asked about are
-* remembered, so a later check never asks again.
+* The gone folders after `machine`'s search landed: its own when the search worked, else
+* those its last search found, so a failed lookup never clears its orphan spaces.
 */
-const askToasts = (orphans, spaces, found) => {
-	const names = new Map(spaces.map((space) => [space.id, space.name]));
-	const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
-	const toasts = asks.flatMap((orphan) => match$5(fromNullishOr(names.get(orphan.space)), {
-		onNone: () => [],
-		onSome: (name) => [{
-			title: "Space on a removed worktree",
-			body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
-			level: "warning",
-			timeout: ASK_TIMEOUT,
-			action: {
-				name: "space.close",
-				args: {
-					id: orphan.space,
-					confirmed: false
-				}
-			}
-		}]
-	}));
-	return {
-		orphans: {
-			...orphans,
-			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)])
-		},
-		toasts
-	};
+const goneLanded = (gone, machine, search) => match$4(search, {
+	onFailure: () => gone,
+	onSuccess: (found) => new Map([...gone, [machine, found.gone]])
+});
+/**
+* Every worktree path the panel's lists have named, `before` and in `lists` now: a path a
+* list drops stays known, so a space left on it still finds its repo.
+*/
+const worktreesRead = (before, lists) => {
+	const known = (w) => before.some((old) => old.machine === w.machine && old.path === w.path);
+	const now = Array.from(lists).flatMap(([key, list]) => {
+		const { machine, root } = repoOfKey(key);
+		return list.worktrees.map((w) => ({
+			machine,
+			path: w.path,
+			repo: root
+		}));
+	});
+	return [...before, ...now.filter((w) => !known(w))];
+};
+/** wt's trash folder inside a repo's main checkout: removed worktrees move in there. */
+const TRASH = "/.git/wt/trash/";
+/**
+* The repo root a place in wt's trash names (`<root>/.git/wt/trash/...`), read from the
+* path alone, so it holds after wt deletes the trashed folder too.
+*/
+const trashRepo = (place) => {
+	const at = place.indexOf(TRASH);
+	return at > 0 ? some(place.slice(0, at)) : none();
 };
 /**
-* The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
-* those where only shells run close at once, the others get an ask toast (`askToasts`).
+* The orphan spaces to publish, by space id: each space whose own folder is in `gone` on
+* its machine and whose repo is known: from its place in wt's trash, else from a list
+* the panel read that named its folder as a worktree there (`read`). Any other gone
+* folder is not an orphan's.
 */
-const orphanSteps = (orphans, spaces, panes, machine, gone) => {
-	const found = orphanSpaces(spaces, panes, machine, gone);
-	return {
-		...askToasts(orphans, spaces, found),
-		closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space)
-	};
+const publishedOrphans = (spaces, places, gone, read) => {
+	const placeOf = new Map(places.map((p) => [p.space.id, p.place]));
+	return Object.fromEntries(spaces.filter((space) => (gone.get(space.machine) ?? []).includes(space.folder)).flatMap((space) => match$5(orElse(flatMap$3(fromNullishOr(placeOf.get(space.id)), trashRepo), () => fromNullishOr(read.find((w) => w.machine === space.machine && w.path === space.folder)?.repo)), {
+		onNone: () => [],
+		onSome: (repo) => [[space.id, {
+			folder: OrphanFolder(space.folder),
+			repo: RepoRoot(repo)
+		}]]
+	})));
+};
+/**
+* Whether `orphans` differ from those `published` in shared state (anything at all, since
+* any mod can write it): publishing only on a change spares every mod a render. Nothing
+* stored yet counts as none published, so finding none writes nothing.
+*/
+const orphansChanged = (orphans, published) => {
+	const entries = Object.entries(orphans);
+	const stored = isNullish(published) ? {} : published;
+	return !isObject(stored) || Object.keys(stored).length !== entries.length || entries.some(([space, orphan]) => !exists(spaceOrphan(stored, space), (was) => was.folder === orphan.folder && was.repo === orphan.repo));
 };
 
 // src/view.ts
@@ -13079,6 +13177,8 @@ const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 const REQUEST_KEY = requestKey("iangregsondev-worktrunk");
 /** Each space's group, by space id, for the menus mod's sidebar labels. */
 const GROUPS_KEY = groupsKey("iangregsondev-worktrunk");
+/** Each orphan space's gone folder and repo, by space id, for the menus mod's sidebar. */
+const ORPHANS_KEY = orphansKey("iangregsondev-worktrunk");
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
@@ -13295,6 +13395,10 @@ var Worktrunk = class extends View {
 	orphans = NO_ORPHANS;
 	/** The machines whose dropped paths' folder check is running. */
 	orphanChecks = /* @__PURE__ */ new Set();
+	/** Each machine's open spaces' own folders found gone, by its last search that worked. */
+	goneFolders = /* @__PURE__ */ new Map();
+	/** Every worktree path a list read named, so a space left on a dropped one finds its repo. */
+	readWorktrees = [];
 	/** The machines that can't be read now, and why; their repos aren't listed or read. */
 	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
@@ -13723,8 +13827,8 @@ var Worktrunk = class extends View {
 	/**
 	* Checks the worktree paths dropped on `machine` in one run there, unless none wait or
 	* a check there is still running, then closes the orphan spaces on the gone ones where
-	* only shells run. Spaces where something else runs get one toast each, never repeated,
-	* that closes the space after Herdr's own confirm when clicked.
+	* only shells run. Spaces where something else runs stay open: the sidebar marks them
+	* from the published orphans, and their menu offers to close them.
 	*/
 	checkOrphans(cx, machine) {
 		const asked = waitingOn(this.orphans, machine);
@@ -13734,13 +13838,11 @@ var Worktrunk = class extends View {
 			const answer = await runEdge(checkGone(asked, machine), fail$2);
 			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
 			const after = checked(this.orphans, machine, asked, answer);
-			const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
-			this.orphans = steps.orphans;
-			steps.closes.forEach((id) => run("space.close", {
+			this.orphans = after.orphans;
+			orphanCloses(spaces(), panes(), machine, after.gone).forEach((id) => run("space.close", {
 				id,
 				confirmed: true
 			}));
-			steps.toasts.forEach((toast) => notify(toast));
 		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */
@@ -13918,6 +14020,10 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			home: home(),
 			places,
+			spaceFolders: spaces().map((space) => ({
+				machine: space.machine,
+				folder: space.folder
+			})),
 			last: this.searches,
 			rescan: due,
 			states: machineStates(machines()),
@@ -13937,6 +14043,7 @@ var Worktrunk = class extends View {
 					this.searches = landed.searches;
 					this.discoverError = landed.error;
 					this.machineStatus = landed.statuses;
+					this.goneFolders = goneLanded(this.goneFolders, machine, search);
 					if (due && machine === null && isSuccess(search)) this.lastScan = some({
 						key,
 						at: now
@@ -13956,6 +14063,7 @@ var Worktrunk = class extends View {
 					}, machine, answer);
 					this.lists = kept.lists;
 					this.machineStatus = kept.machines;
+					this.readWorktrees = worktreesRead(this.readWorktrees, this.lists);
 					cx.notify();
 				}, (machine) => {
 					this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
@@ -13981,6 +14089,17 @@ var Worktrunk = class extends View {
 		if (!this.discovered) return;
 		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
 		if (groupsChanged(groups, shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
+	}
+	/**
+	* Publishes the orphan spaces, on every machine, for the sidebar's Orphan pills: `{}`
+	* once none are left, so the pills go. Only once repos are found, and only when they
+	* changed.
+	*/
+	publishOrphans() {
+		if (!this.discovered) return;
+		const open = spaces();
+		const orphans = publishedOrphans(open, spacePlaces(open, panes()), this.goneFolders, this.readWorktrees);
+		if (orphansChanged(orphans, shared(ORPHANS_KEY))) setShared(ORPHANS_KEY, orphans);
 	}
 	render(cx) {
 		const style = {
@@ -14008,6 +14127,7 @@ var Worktrunk = class extends View {
 		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
 		this.followFocus(cx, shown() && state.show === "current");
 		this.publishGroups();
+		this.publishOrphans();
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,

@@ -1,8 +1,8 @@
 // The worktrunk panel's mailbox, as other copies and other mods use it: a request posted
 // to one shared-state key, which the shown panel reads and runs once. And the other way,
-// the space groups the panel publishes for the sidebar's labels.
+// the space groups and orphan spaces the panel publishes for the sidebar.
 // Pure: no `herdr` or `gpui` imports.
-import { Option } from "effect";
+import { Brand, Option } from "effect";
 import { at, text } from "./json.ts";
 import { findModBlock } from "./layout.ts";
 
@@ -62,3 +62,38 @@ export const groupsKey = (panelMod: string): string => `${panelMod}.groups.v1`;
  */
 export const spaceGroup = (published: unknown, space: string): Option.Option<string> =>
   Option.filter(text(at(published, space)), (group) => group !== "");
+
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
+export const orphansKey = (panelMod: string): string => `${panelMod}.orphans.v1`;
+
+/** An orphan space's own folder, which is gone: no other string passes for one. */
+export type OrphanFolder = string & Brand.Brand<"OrphanFolder">;
+export const OrphanFolder = Brand.nominal<OrphanFolder>();
+
+/** A repo's main checkout root: no other string passes for one. */
+export type RepoRoot = string & Brand.Brand<"RepoRoot">;
+export const RepoRoot = Brand.nominal<RepoRoot>();
+
+/** What the panel publishes about one orphan space. */
+export interface PublishedOrphan {
+  /** The space's own folder, which is gone. */
+  readonly folder: OrphanFolder;
+  /** Its repo's main checkout root, on the space's machine. */
+  readonly repo: RepoRoot;
+}
+
+/** The orphan spaces the panel publishes (`orphansKey`), by space id. */
+export type PublishedOrphans = Readonly<Record<string, PublishedOrphan>>;
+
+/**
+ * The entry the panel published (`orphansKey`) for the space `space`. None for a space
+ * it names no orphan for, an entry of another shape, or a published value of any other
+ * shape.
+ */
+export const spaceOrphan = (published: unknown, space: string): Option.Option<PublishedOrphan> => {
+  const entry = at(published, space);
+  return Option.all({
+    folder: Option.map(text(at(entry, "folder")), OrphanFolder),
+    repo: Option.map(text(at(entry, "repo")), RepoRoot),
+  });
+};

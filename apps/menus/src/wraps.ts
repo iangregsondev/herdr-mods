@@ -45,22 +45,42 @@ export { items as __wtItems };
 `;
 
 /**
- * The sidebar copy's group label, drawn after a space's name: a small pill holding the
- * text our wrapper's `labelOf(space)` gives, none when it gives none. It is drawn with
- * the copy's own `div`, which the patch point itself calls, so it is in scope.
+ * How the sidebar copy draws a space, from the look our wrapper sets: its name in the
+ * theme colour `look.nameColorOf(space)` gives, then one small pill per entry
+ * `look.pillsOf(space)` gives (`{ label, color, tooltip }`, `tooltip` null for none),
+ * each in its own theme colour. A pill with a tooltip shows it on hover, and our info
+ * icon (`info.svg` in this mod's folder, `self`) after its label in the same colour, so
+ * it reads as hoverable. A space git has no entry for gets `look.gitOf(space)` instead
+ * (null for none), which Herdr's ordering then nests by. Until the look is set, names are
+ * Herdr's foreground, there are no pills and no fallback entries. Pills are drawn with
+ * the copy's own `div` and `svg`, which Herdr's sidebar imports, so both are in scope.
  */
-const SPACES_TAIL = `
-;function __wtLabels(w, t) {
-  const label = __wtLabelOf(w);
-  return label ? [div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t.dim).child(label)] : [];
+const spacesTail = (self: string): string => `
+;function __wtNameColor(w, t) { return t[__wtLook.nameColorOf(w)]; }
+function __wtPills(w, t) {
+  return __wtLook.pillsOf(w).map((pill) => {
+    const el = div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t[pill.color]).child(pill.label);
+    return pill.tooltip
+      ? el.flex().items_center().gap(3)
+          .child(svg(${JSON.stringify(`mods/${self}/info.svg`)}).size(9).flex_none().text_color(t[pill.color]))
+          .tooltip(pill.tooltip)
+      : el;
+  });
 }
-let __wtLabelOf = () => null;
-export function __wtSetLabelOf(labelOf) { __wtLabelOf = labelOf; }
+function __wtGitOf(w) { return __wtLook.gitOf(w); }
+let __wtLook = { nameColorOf: () => "foreground", pillsOf: () => [], gitOf: () => null };
+export function __wtSetLook(look) { __wtLook = look; }
 `;
 
 /** Herdr's space row draws the space's name with exactly this. */
 const SPACE_NAME =
-  ".child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))";
+  ".child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))";
+
+/**
+ * Herdr's sidebar orders its spaces from exactly this row list: each space with its git
+ * entry, null where git had no answer (as for a space whose folder is gone).
+ */
+const SPACE_ROWS = "const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));";
 
 /** What the copy for `role` is made from, for this mod's id `self`. */
 export const wrapFor = (role: Role, self: string): Wrap => {
@@ -89,10 +109,15 @@ export const wrapFor = (role: Role, self: string): Wrap => {
           {
             name: "spaces: space row's name",
             find: SPACE_NAME,
-            replace: `${SPACE_NAME}.children(__wtLabels(w, t))`,
+            replace: `${SPACE_NAME.replace("t.foreground", "__wtNameColor(w, t)")}.children(__wtPills(w, t))`,
+          },
+          {
+            name: "spaces: ordering's git entries",
+            find: SPACE_ROWS,
+            replace: SPACE_ROWS.replace("?? null", "?? __wtGitOf(w)"),
           },
         ],
-        tail: SPACES_TAIL,
+        tail: spacesTail(self),
       };
     case "new-menu":
       return {

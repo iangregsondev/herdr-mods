@@ -75,8 +75,11 @@ exit 0`;
 /**
  * The repos the given folders are in, through each folder's shared git folder, so a
  * folder inside a linked worktree names its repo too. Prints `repo<TAB>worktree count`.
+ * Folders after a `--` argument are spaces' own folders, checked only for being there:
+ * each one gone prints alone on a line, after the repos.
  */
 export const OWNERS_SCRIPT = `for dir in "$@"; do
+  [ "$dir" = -- ] && break
   [ -d "$dir" ] || continue
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
   case "$common" in
@@ -85,7 +88,13 @@ export const OWNERS_SCRIPT = `for dir in "$@"; do
       printf '%s\\t%s\\n' "$repo" "$(git -C "$repo" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')"
       ;;
   esac
-done | sort -u`;
+done | sort -u
+spaces=
+for dir in "$@"; do
+  if [ -n "$spaces" ]; then [ -d "$dir" ] || printf '%s\\n' "$dir"; fi
+  [ "$dir" = -- ] && spaces=1
+done
+exit 0`;
 
 /** Lists the worktrees of the repo at $1. */
 export const LIST_SCRIPT = 'cd "$1" && wt list --format=json';

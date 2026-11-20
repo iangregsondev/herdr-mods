@@ -1,6 +1,12 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { newMenuAnchor, requestOf, withWorktrunkItems, type Item } from "../src/items.ts";
+import {
+  newMenuAnchor,
+  requestOf,
+  withSpaceItems,
+  withWorktrunkItems,
+  type Item,
+} from "../src/items.ts";
 
 const SPACE = { tab: "space", target: { id: "sp1" } };
 
@@ -160,5 +166,56 @@ describe("newMenuAnchor", () => {
   test("with no worktree row, there is nothing to follow", () => {
     expect(newMenuAnchor([{ id: "terminal", name: "Terminal" }])).toEqual(Option.none());
     expect(newMenuAnchor([])).toEqual(Option.none());
+  });
+});
+
+describe("withSpaceItems", () => {
+  const ORPHANS = { sp1: { folder: "/r/.git/wt/trash/x", repo: "/r" } };
+
+  test("an open orphan space: Close orphan takes the place of Herdr's close, which asks first", () => {
+    expect(withSpaceItems(herdrSpaceItems(null), SPACE, null, ORPHANS, ["sp1"])).toEqual([
+      ["Rename", "space.rename", { id: "sp1" }],
+      ["Close orphan", "space.close", { id: "sp1", confirmed: false }],
+    ]);
+  });
+
+  test("a published orphan whose space is no longer open gets no Close orphan", () => {
+    expect(withSpaceItems(herdrSpaceItems(null), SPACE, null, ORPHANS, ["sp2"])).toEqual(
+      herdrSpaceItems(null),
+    );
+  });
+
+  test("an orphan space gets no worktrunk items, even where Herdr's git check found a worktree", () => {
+    expect(
+      labels(withSpaceItems(herdrSpaceItems("linked"), SPACE, "linked", ORPHANS, ["sp1"])),
+    ).toEqual(["Rename", "New worktree", "Open worktree", "Remove worktree", "Close orphan"]);
+  });
+
+  test("a space not published as an orphan keeps its worktrunk items and no Close orphan", () => {
+    expect(withSpaceItems(herdrSpaceItems("linked"), SPACE, "linked", {}, ["sp1"])).toEqual(
+      withWorktrunkItems(herdrSpaceItems("linked"), SPACE, "linked"),
+    );
+  });
+
+  test("menus for tabs and panes are left alone, whatever the orphans", () => {
+    const tab: Item[] = [["Close", "tab.close", { id: "sp1" }]];
+    expect(
+      withSpaceItems(tab, { tab: "tab", target: { id: "sp1" } }, null, ORPHANS, ["sp1"]),
+    ).toEqual(tab);
+  });
+
+  test("with no Herdr close item, Close orphan goes last", () => {
+    const bare: Item[] = [["Rename", "space.rename", { id: "sp1" }]];
+    expect(labels(withSpaceItems(bare, SPACE, null, ORPHANS, ["sp1"]))).toEqual([
+      "Rename",
+      "Close orphan",
+    ]);
+  });
+
+  test("Close orphan is Herdr's own command, not a request to the worktrunk panel", () => {
+    const close = withSpaceItems(herdrSpaceItems(null), SPACE, null, ORPHANS, ["sp1"]).find(
+      (item) => item[0] === "Close orphan",
+    );
+    expect(requestOf(close)).toEqual(Option.none());
   });
 });

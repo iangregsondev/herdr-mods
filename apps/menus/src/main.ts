@@ -1,4 +1,4 @@
-// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items and the sidebar's group labels added.
+// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items, the sidebar's group and Orphan pills, and orphan spaces nested and dimmed.
 // Herdr gives mods no way to add menu items (docs/adr/0003), so each copy of this mod
 // plays one of Herdr's own mods: it copies Herdr's installed `main.js` into this mod's
 // folder (patched where `wraps.ts` says), imports the copy and shows Herdr's view from it.
@@ -37,13 +37,14 @@ import {
   deliveryFor,
   Files,
   groupsKey,
+  orphansKey,
   requestKey,
-  spaceGroup,
   text,
   type MenuRequest,
 } from "worktrunk-mailbox";
 import { loadCopy, Modules, type Copy } from "./copies.ts";
-import { newMenuAnchor, requestOf, withWorktrunkItems, type NewMenuRow } from "./items.ts";
+import { newMenuAnchor, requestOf, withSpaceItems, type Item, type NewMenuRow } from "./items.ts";
+import { marksFor, nameColor, orphanGit, plainPills, spacePills, type SpaceMarks } from "./look.ts";
 import { describeMisses } from "./patch.ts";
 import { NEW_MENU_HEIGHT, SPACE_MENU_HEIGHT, roleIn, type Role } from "./wraps.ts";
 
@@ -82,7 +83,8 @@ const ready = new Map<Role, Copy>();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role: Role, copy: Copy) => {
   if (copy.misses.length === 0) return;
-  const left = role === "spaces" ? "worktrunk items and group labels are" : "worktrunk items are";
+  const left =
+    role === "spaces" ? "worktrunk items, pills and orphan nesting are" : "worktrunk items are";
   const body = `Herdr's ${role} changed, so ${left} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
   console.error(`${__MOD_ID__}: ${body}`);
   notify({ title: "worktrunk menus: patch point not found", body, level: "warning" });
@@ -113,6 +115,12 @@ const load = (role: Role): Promise<Result.Result<Copy, string>> => {
 const viewOf = (copy: Copy): ViewClass =>
   // copies.ts made sure the default export is a function; Herdr's mods export a View class.
   copy.exports.default as ViewClass;
+
+/** The orphans the worktrunk panel published, and the ids of the spaces open now. */
+const published = (): { orphans: unknown; open: readonly string[] } => ({
+  orphans: shared(orphansKey(PANEL)),
+  open: spaces().map((space) => space.id),
+});
 
 /** Hands `request` to the worktrunk panel, showing the panel first when it is hidden. */
 const deliver = (request: MenuRequest) => {
@@ -175,7 +183,13 @@ function menuWithOurItems(copy: Copy): ViewClass {
   const setExtend = copy.exports.__wtSetExtend;
   const items = copy.exports.__wtItems;
   if (!Predicate.isFunction(setExtend) || !Predicate.isFunction(items)) return viewOf(copy);
-  setExtend(withWorktrunkItems);
+  // The panel's published orphans are read each time the list is built, so a space menu
+  // offers "Close orphan" only while the panel still says it is one. That item is
+  // Herdr's own `space.close` command, so Herdr's `choose` runs it.
+  setExtend((list: readonly Item[], p: unknown, git: unknown) => {
+    const { orphans, open } = published();
+    return withSpaceItems(list, p, git, orphans, open);
+  });
   // The patched copy's tail defines `__wtItems(p, git)`, returning the menu's item list.
   const listFor = items as (p: unknown, git: unknown) => unknown;
   // The patched copy's class: Herdr's Menu, whose `choose(i, cx)` and `git` field we use.
@@ -292,17 +306,25 @@ function newMenuWithOurItem(copy: Copy): ViewClass {
 }
 
 /**
- * Gives the sidebar copy each space's group label, read from what the worktrunk panel
- * publishes, at every render. A copy left unpatched has no hook, so it shows no labels.
+ * Gives the sidebar copy each space's look (name colour, pills, and the git entry an
+ * orphan space nests by), from what the worktrunk panel publishes, read at every render.
+ * A copy left unpatched has no hook, so it draws Herdr's own rows.
  */
-const withGroupLabels = (copy: Copy) => {
-  const setLabelOf = copy.exports.__wtSetLabelOf;
-  if (!Predicate.isFunction(setLabelOf)) return;
-  setLabelOf((space: unknown) =>
-    Option.getOrNull(
-      Option.flatMap(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id)),
-    ),
-  );
+const withSpaceLook = (copy: Copy) => {
+  const setLook = copy.exports.__wtSetLook;
+  if (!Predicate.isFunction(setLook)) return;
+  const marksOf = (space: unknown): SpaceMarks => {
+    const { orphans, open } = published();
+    return marksFor(space, shared(groupsKey(PANEL)), orphans, open);
+  };
+  setLook({
+    nameColorOf: (space: unknown) => nameColor(marksOf(space)),
+    pillsOf: (space: unknown) => plainPills(spacePills(marksOf(space))),
+    gitOf: (space: unknown) => {
+      const { orphans, open } = published();
+      return Option.getOrNull(orphanGit(space, orphans, open));
+    },
+  });
 };
 
 /** Our own members, never overwritten by Herdr's. */
@@ -382,7 +404,7 @@ export default class Menus extends View {
           : role === "new-menu"
             ? newMenuWithOurItem(copy)
             : viewOf(copy);
-      if (role === "spaces") withGroupLabels(copy);
+      if (role === "spaces") withSpaceLook(copy);
       adopt(this, view);
       callOn(view, "init", this, props(), cx);
       this.wtView = view;

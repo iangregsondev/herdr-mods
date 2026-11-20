@@ -1,11 +1,12 @@
 // Orphan spaces: spaces left on worktrees removed outside the panel. Which worktree paths
-// a fresh list read dropped, which wait for a folder check on their machine, and whether a
-// space on a gone folder closes at once or is asked about. Pure: no `herdr` or `gpui`
-// imports.
-import { Option, Result } from "effect";
-import type { Machine, RepoKey } from "./machines.ts";
+// a fresh list read dropped, which wait for a folder check on their machine, whether a
+// space on a gone folder closes at once or is kept, and which spaces the sidebar marks as
+// orphans. Pure: no `herdr` or `gpui` imports.
+import { Option, Predicate, Result } from "effect";
+import { OrphanFolder, RepoRoot, spaceOrphan, type PublishedOrphans } from "worktrunk-mailbox";
+import { repoOfKey, type Machine, type RepoKey } from "./machines.ts";
 import type { MachineLists, RepoList } from "./reads.ts";
-import { goneSpaces, type PaneLike, type SpaceLike } from "./spaces.ts";
+import { goneSpaces, type PaneLike, type Place, type SpaceLike } from "./spaces.ts";
 
 /** What the panel remembers about worktree paths dropped from their repo's list. */
 export interface Orphans {
@@ -13,11 +14,9 @@ export interface Orphans {
   readonly waiting: ReadonlyMap<Machine, readonly string[]>;
   /** The folders the panel's own jobs removed on each machine, left out of dropped paths. */
   readonly removed: ReadonlyMap<Machine, readonly string[]>;
-  /** The spaces already offered for closing by a toast: never offered again. */
-  readonly asked: ReadonlySet<string>;
 }
 
-export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map(), asked: new Set() };
+export const NO_ORPHANS: Orphans = { waiting: new Map(), removed: new Map() };
 
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 export const waitingOn = (orphans: Orphans, machine: Machine): readonly string[] =>
@@ -104,7 +103,7 @@ export const listsRead = (
 
 /**
  * The folder check of the paths `asked` on `machine` answered: the folders it found gone,
- * or why it failed. Gone paths come back for their spaces to close or be asked about; a
+ * or why it failed. Gone paths come back for their spaces to close or be kept; a
  * path whose folder exists is forgotten; a failed check leaves every path waiting for the
  * machine's next refresh. Paths dropped while the check ran wait on.
  */
@@ -130,7 +129,7 @@ export const checked = (
     }),
   });
 
-/** The parts of a `PaneInfo` close-or-ask reads. */
+/** The parts of a `PaneInfo` close-or-keep reads. */
 export interface ProgramPane extends PaneLike {
   /** Null for a mod pane, which has no program. */
   readonly terminal: string | null;
@@ -139,33 +138,34 @@ export interface ProgramPane extends PaneLike {
 }
 
 /**
- * What happens to a space on a gone folder: `Close` at once when every terminal in it
- * runs a plain shell (mod panes don't count), else `Ask` first, since closing would end
- * whatever else runs there.
+ * What happens to a space on a folder gone from a dropped path: `Close` at once when every
+ * terminal in it runs a plain shell (mod panes don't count), else `Keep`, since closing
+ * would end whatever else runs there. A kept space is left to the sidebar's Orphan pill
+ * and its menu's close item, which asks first.
  */
-export type CloseOrAsk = "Close" | "Ask";
+export type CloseOrKeep = "Close" | "Keep";
 
-export const closeOrAsk = (space: SpaceLike, panes: readonly ProgramPane[]): CloseOrAsk => {
+export const closeOrKeep = (space: SpaceLike, panes: readonly ProgramPane[]): CloseOrKeep => {
   const tabs = new Set(space.tabs.map((tab) => tab.id));
   return panes
     .filter((pane) => tabs.has(pane.tab) && pane.terminal !== null)
     .every((pane) => pane.program?.shell === true)
     ? "Close"
-    : "Ask";
+    : "Keep";
 };
 
 /** A space on a gone folder, and what happens to it. */
 export interface Orphan {
   readonly space: string;
-  readonly step: CloseOrAsk;
+  readonly step: CloseOrKeep;
   /** The gone folder the space was matched by. */
   readonly folder: string;
 }
 
 /**
  * The orphan spaces on `machine`: every space there on one of the `gone` folders (by
- * folder or place, as `goneSpaces` matches them), each closed or asked about, with the
- * gone folder it was matched by.
+ * folder or place, as `goneSpaces` matches them), each closed or kept, with the gone
+ * folder it was matched by.
  */
 export const orphanSpaces = (
   spaces: readonly SpaceLike[],
@@ -177,94 +177,133 @@ export const orphanSpaces = (
   return goneSpaces(spaces, panes, machine, gone).flatMap(({ id, folder }) =>
     Option.match(Option.fromNullishOr(byId.get(id)), {
       onNone: () => [],
-      onSome: (space) => [{ space: id, step: closeOrAsk(space, panes), folder }],
+      onSome: (space) => [{ space: id, step: closeOrKeep(space, panes), folder }],
     }),
   );
 };
 
-/** The parts of a `SpaceInfo` the ask toast reads. */
-export interface NamedSpace extends SpaceLike {
-  readonly name: string;
-}
-
 /**
- * How long the toast offering to close an orphan space stays up: a day. Herdr fades a
- * toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
- * day stands in for it.
+ * The spaces to close at once on the `gone` folders a folder check of dropped paths found
+ * on `machine` (as `orphanSpaces` finds them): those where only shells run. Only those
+ * folders count, so a space the wider orphan check finds (published for the sidebar) is
+ * never closed here.
  */
-const ASK_TIMEOUT = 24 * 60 * 60 * 1000;
-
-/** A toast offering to close an orphan space, shaped for `notify`. */
-export interface AskToast {
-  readonly title: string;
-  readonly body: string;
-  readonly level: "warning";
-  readonly timeout: number;
-  readonly action: {
-    readonly name: "space.close";
-    readonly args: { readonly id: string; readonly confirmed: false };
-  };
-}
-
-/**
- * The toasts for the `found` orphan spaces where something other than a shell runs and
- * no toast has asked before: each names the space and the gone folder it was matched by,
- * and clicking it closes the space after Herdr's own confirm. The spaces asked about are
- * remembered, so a later check never asks again.
- */
-export const askToasts = (
-  orphans: Orphans,
-  spaces: readonly NamedSpace[],
-  found: readonly Orphan[],
-): { readonly orphans: Orphans; readonly toasts: readonly AskToast[] } => {
-  const names = new Map(spaces.map((space) => [space.id, space.name]));
-  const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
-  const toasts = asks.flatMap((orphan) =>
-    Option.match(Option.fromNullishOr(names.get(orphan.space)), {
-      onNone: (): readonly AskToast[] => [],
-      onSome: (name): readonly AskToast[] => [
-        {
-          title: "Space on a removed worktree",
-          body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
-          level: "warning",
-          timeout: ASK_TIMEOUT,
-          action: { name: "space.close", args: { id: orphan.space, confirmed: false } },
-        },
-      ],
-    }),
-  );
-  return {
-    orphans: {
-      ...orphans,
-      asked: new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)]),
-    },
-    toasts,
-  };
-};
-
-/** What a folder check's gone folders lead to on its machine. */
-export interface OrphanSteps {
-  readonly orphans: Orphans;
-  /** The spaces to close at once. */
-  readonly closes: readonly string[];
-  /** The toasts asking about the others. */
-  readonly toasts: readonly AskToast[];
-}
-
-/**
- * The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
- * those where only shells run close at once, the others get an ask toast (`askToasts`).
- */
-export const orphanSteps = (
-  orphans: Orphans,
-  spaces: readonly NamedSpace[],
+export const orphanCloses = (
+  spaces: readonly SpaceLike[],
   panes: readonly ProgramPane[],
   machine: Machine,
   gone: readonly string[],
-): OrphanSteps => {
-  const found = orphanSpaces(spaces, panes, machine, gone);
-  return {
-    ...askToasts(orphans, spaces, found),
-    closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space),
-  };
+): readonly string[] =>
+  orphanSpaces(spaces, panes, machine, gone)
+    .filter((orphan) => orphan.step === "Close")
+    .map((orphan) => orphan.space);
+
+/** A worktree path a list the panel read named, on its machine, and its repo's root there. */
+export interface ReadWorktree {
+  readonly machine: Machine;
+  readonly path: string;
+  readonly repo: string;
+}
+
+/** Each machine's open spaces' own folders found gone, by the last owners lookup that worked. */
+export type GoneFolders = ReadonlyMap<Machine, readonly string[]>;
+
+/**
+ * The gone folders after `machine`'s search landed: its own when the search worked, else
+ * those its last search found, so a failed lookup never clears its orphan spaces.
+ */
+export const goneLanded = (
+  gone: GoneFolders,
+  machine: Machine,
+  search: Result.Result<{ readonly gone: readonly string[] }, unknown>,
+): GoneFolders =>
+  Result.match(search, {
+    onFailure: () => gone,
+    onSuccess: (found) => new Map([...gone, [machine, found.gone]]),
+  });
+
+/**
+ * Every worktree path the panel's lists have named, `before` and in `lists` now: a path a
+ * list drops stays known, so a space left on it still finds its repo.
+ */
+export const worktreesRead = (
+  before: readonly ReadWorktree[],
+  lists: ReadonlyMap<RepoKey, RepoList>,
+): readonly ReadWorktree[] => {
+  const known = (w: ReadWorktree) =>
+    before.some((old) => old.machine === w.machine && old.path === w.path);
+  const now = Array.from(lists).flatMap(([key, list]) => {
+    const { machine, root } = repoOfKey(key);
+    return list.worktrees.map((w): ReadWorktree => ({ machine, path: w.path, repo: root }));
+  });
+  return [...before, ...now.filter((w) => !known(w))];
+};
+
+/** wt's trash folder inside a repo's main checkout: removed worktrees move in there. */
+const TRASH = "/.git/wt/trash/";
+
+/**
+ * The repo root a place in wt's trash names (`<root>/.git/wt/trash/...`), read from the
+ * path alone, so it holds after wt deletes the trashed folder too.
+ */
+const trashRepo = (place: string): Option.Option<string> => {
+  const at = place.indexOf(TRASH);
+  return at > 0 ? Option.some(place.slice(0, at)) : Option.none();
+};
+
+/**
+ * The orphan spaces to publish, by space id: each space whose own folder is in `gone` on
+ * its machine and whose repo is known: from its place in wt's trash, else from a list
+ * the panel read that named its folder as a worktree there (`read`). Any other gone
+ * folder is not an orphan's.
+ */
+export const publishedOrphans = (
+  spaces: readonly SpaceLike[],
+  places: readonly Place[],
+  gone: GoneFolders,
+  read: readonly ReadWorktree[],
+): PublishedOrphans => {
+  const placeOf = new Map(places.map((p) => [p.space.id, p.place]));
+  return Object.fromEntries(
+    spaces
+      .filter((space) => (gone.get(space.machine) ?? []).includes(space.folder))
+      .flatMap((space) =>
+        Option.match(
+          Option.orElse(
+            Option.flatMap(Option.fromNullishOr(placeOf.get(space.id)), trashRepo),
+            () =>
+              Option.fromNullishOr(
+                read.find((w) => w.machine === space.machine && w.path === space.folder)?.repo,
+              ),
+          ),
+          {
+            onNone: () => [],
+            onSome: (repo) => [
+              [space.id, { folder: OrphanFolder(space.folder), repo: RepoRoot(repo) }] as const,
+            ],
+          },
+        ),
+      ),
+  );
+};
+
+/**
+ * Whether `orphans` differ from those `published` in shared state (anything at all, since
+ * any mod can write it): publishing only on a change spares every mod a render. Nothing
+ * stored yet counts as none published, so finding none writes nothing.
+ */
+export const orphansChanged = (orphans: PublishedOrphans, published: unknown): boolean => {
+  const entries = Object.entries(orphans);
+  const stored = Predicate.isNullish(published) ? {} : published;
+  return (
+    !Predicate.isObject(stored) ||
+    Object.keys(stored).length !== entries.length ||
+    entries.some(
+      ([space, orphan]) =>
+        !Option.exists(
+          spaceOrphan(stored, space),
+          (was) => was.folder === orphan.folder && was.repo === orphan.repo,
+        ),
+    )
+  );
 };

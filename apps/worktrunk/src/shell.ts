@@ -24,6 +24,7 @@ import { THIS_MACHINE, type Homes, type Machine, type RepoId } from "./machines.
 import {
   currentRepo,
   missingFolders,
+  parseGone,
   parseOwners,
   parseScan,
   type FoundRepo,
@@ -209,14 +210,43 @@ export const machineHome = Effect.fn("machineHome")(function* (machine: Machine)
   return home;
 });
 
-/** The repos the given folders on `machine` are in (each once); none for no folders. */
-export const reposOf = Effect.fn("reposOf")(function* (
+/** What the owners lookup found on a machine. */
+export interface Owners {
+  /** The repos its folders are in, each once. */
+  readonly repos: readonly FoundRepo[];
+  /** The spaces' own folders it found gone. */
+  readonly gone: readonly string[];
+}
+
+/** Where the owners lookup runs, and which spaces' own folders it checks are gone. */
+export interface OwnersAsk {
+  /** The machine the folders are on; this machine when left out. */
+  readonly machine?: Machine;
+  /** The spaces' own folders (where each was made) to check; none when left out. */
+  readonly spaceFolders?: readonly string[];
+}
+
+/**
+ * The owners lookup: the repos the given folders on `machine` are in (each once), and
+ * which of the spaces' own folders `spaceFolders` are gone there, in one run; none for
+ * no folders at all.
+ */
+export const ownersOf = Effect.fn("ownersOf")(function* (
   folders: readonly string[],
-  machine: Machine = THIS_MACHINE,
+  { machine = THIS_MACHINE, spaceFolders = [] }: OwnersAsk = {},
 ) {
-  if (folders.length === 0) return [];
-  const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
-  return parseOwners(run.stdout, machine);
+  if (folders.length === 0 && spaceFolders.length === 0) {
+    const none: Owners = { repos: [], gone: [] };
+    return none;
+  }
+  const run = yield* runScript(
+    "the open spaces' repos",
+    OWNERS_SCRIPT,
+    spaceFolders.length === 0 ? folders : [...folders, "--", ...spaceFolders],
+    { on: machine },
+  );
+  const owners: Owners = { repos: parseOwners(run.stdout, machine), gone: parseGone(run.stdout) };
+  return owners;
 });
 
 /**

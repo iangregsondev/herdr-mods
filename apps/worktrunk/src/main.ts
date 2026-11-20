@@ -60,6 +60,7 @@ import {
   Files,
   findModBlock,
   groupsKey,
+  orphansKey,
   requestKey,
   roleOf,
   type Role,
@@ -97,12 +98,18 @@ import {
 } from "./load.ts";
 import {
   checked,
+  goneLanded,
   jobRemoved,
   listsRead,
   NO_ORPHANS,
-  orphanSteps,
+  orphanCloses,
+  orphansChanged,
+  publishedOrphans,
   waitingOn,
+  worktreesRead,
+  type GoneFolders,
   type Orphans,
+  type ReadWorktree,
 } from "./orphans.ts";
 import {
   ITEM_HEIGHT,
@@ -241,6 +248,8 @@ const SYNC_TOLD_KEY = `${__MOD_ID__}.sync-told.v1`;
 const REQUEST_KEY = requestKey(__MOD_ID__);
 /** Each space's group, by space id, for the menus mod's sidebar labels. */
 const GROUPS_KEY = groupsKey(__MOD_ID__);
+/** Each orphan space's gone folder and repo, by space id, for the menus mod's sidebar. */
+const ORPHANS_KEY = orphansKey(__MOD_ID__);
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `${__MOD_ID__}-job`;
 
@@ -552,6 +561,10 @@ export default class Worktrunk extends View {
   orphans: Orphans = NO_ORPHANS;
   /** The machines whose dropped paths' folder check is running. */
   orphanChecks: ReadonlySet<Machine> = new Set();
+  /** Each machine's open spaces' own folders found gone, by its last search that worked. */
+  goneFolders: GoneFolders = new Map();
+  /** Every worktree path a list read named, so a space left on a dropped one finds its repo. */
+  readWorktrees: readonly ReadWorktree[] = [];
   /** The machines that can't be read now, and why; their repos aren't listed or read. */
   machineStatus: ReadonlyMap<Machine, MachineStatus> = new Map();
   loader: Loader = IDLE;
@@ -998,8 +1011,8 @@ export default class Worktrunk extends View {
   /**
    * Checks the worktree paths dropped on `machine` in one run there, unless none wait or
    * a check there is still running, then closes the orphan spaces on the gone ones where
-   * only shells run. Spaces where something else runs get one toast each, never repeated,
-   * that closes the space after Herdr's own confirm when clicked.
+   * only shells run. Spaces where something else runs stay open: the sidebar marks them
+   * from the published orphans, and their menu offers to close them.
    */
   checkOrphans(cx: AsyncContext, machine: Machine) {
     const asked = waitingOn(this.orphans, machine);
@@ -1009,10 +1022,10 @@ export default class Worktrunk extends View {
       const answer = await runEdge(checkGone(asked, machine), Result.fail);
       this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
       const after = checked(this.orphans, machine, asked, answer);
-      const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
-      this.orphans = steps.orphans;
-      steps.closes.forEach((id) => run("space.close", { id, confirmed: true }));
-      steps.toasts.forEach((toast) => notify(toast));
+      this.orphans = after.orphans;
+      orphanCloses(spaces(), panes(), machine, after.gone).forEach((id) =>
+        run("space.close", { id, confirmed: true }),
+      );
     });
   }
 
@@ -1203,6 +1216,10 @@ export default class Worktrunk extends View {
       settings: this.settings,
       home: home(),
       places,
+      spaceFolders: spaces().map((space): Located => ({
+        machine: space.machine,
+        folder: space.folder,
+      })),
       last: this.searches,
       rescan: due,
       states: machineStates(machines()),
@@ -1233,6 +1250,7 @@ export default class Worktrunk extends View {
               this.searches = landed.searches;
               this.discoverError = landed.error;
               this.machineStatus = landed.statuses;
+              this.goneFolders = goneLanded(this.goneFolders, machine, search);
               if (due && machine === THIS_MACHINE && Result.isSuccess(search)) {
                 this.lastScan = Option.some({ key, at: now });
               }
@@ -1254,6 +1272,7 @@ export default class Worktrunk extends View {
               );
               this.lists = kept.lists;
               this.machineStatus = kept.machines;
+              this.readWorktrees = worktreesRead(this.readWorktrees, this.lists);
               cx.notify();
             },
             (machine) => {
@@ -1289,6 +1308,25 @@ export default class Worktrunk extends View {
     }
   }
 
+  /**
+   * Publishes the orphan spaces, on every machine, for the sidebar's Orphan pills: `{}`
+   * once none are left, so the pills go. Only once repos are found, and only when they
+   * changed.
+   */
+  publishOrphans() {
+    if (!this.discovered) return;
+    const open = spaces();
+    const orphans = publishedOrphans(
+      open,
+      spacePlaces(open, panes()),
+      this.goneFolders,
+      this.readWorktrees,
+    );
+    if (orphansChanged(orphans, shared(ORPHANS_KEY))) {
+      setShared(ORPHANS_KEY, orphans);
+    }
+  }
+
   render(cx: Context) {
     // theme() is typed as plain strings, but the style methods want hex colours.
     const style: Style = { t: theme() as Colors, sizes: fontSizes() };
@@ -1316,6 +1354,7 @@ export default class Worktrunk extends View {
     }
     this.followFocus(cx, shown() && state.show === "current");
     this.publishGroups();
+    this.publishOrphans();
 
     const view = buildView({
       repos: this.repos,

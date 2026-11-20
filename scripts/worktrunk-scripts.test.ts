@@ -187,6 +187,14 @@ describe("OWNERS_SCRIPT", () => {
     const { root, repo } = repoWithWorktree();
     expect(owners([join(repo, "src"), join(root, "api.feature"), repo])).toBe(`${repo}\t2\n`);
   });
+
+  test("space folders after -- that are gone each print alone on a line; those there print nothing", () => {
+    const { root, repo } = repoWithWorktree();
+    const gone = join(root, "api.old");
+    expect(owners([join(repo, "src"), "--", gone, join(root, "api.feature")])).toBe(
+      `${repo}\t2\n${gone}\n`,
+    );
+  });
 });
 
 describe("the Current repo's lookup: currentRepo over OWNERS_SCRIPT", () => {

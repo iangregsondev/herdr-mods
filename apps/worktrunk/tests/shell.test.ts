@@ -28,7 +28,7 @@ import {
   removeDir,
   repoAt,
   removeTerminal,
-  reposOf,
+  ownersOf,
   reveal,
   runScript,
   scanRepos,
@@ -317,11 +317,11 @@ describe("reads on the repo's machine", () => {
   it.effect("the owners script runs on the folders' machine, and finds repos there", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/srv/api\t2\n", stderr: "" });
-      const repos = yield* reposOf(["/srv/api/src"], "linux").pipe(
+      const repos = yield* ownersOf(["/srv/api/src"], { machine: "linux" }).pipe(
         Effect.provide(Shell.layer(api)),
       );
       assert.deepStrictEqual(
-        [machinesOf(calls), repos],
+        [machinesOf(calls), repos.repos],
         [["linux"], [{ machine: "linux", root: "/srv/api", count: 2 }]],
       );
     }),
@@ -457,14 +457,17 @@ describe("scanRepos", () => {
   );
 });
 
-describe("reposOf", () => {
+describe("ownersOf", () => {
   it.effect("the repos the folders are in, from the owners script", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/r/api\t3\n", stderr: "" });
-      const repos = yield* reposOf(["/r/api/src", "/r/api.feat"]).pipe(
+      const repos = yield* ownersOf(["/r/api/src", "/r/api.feat"]).pipe(
         Effect.provide(Shell.layer(api)),
       );
-      assert.deepStrictEqual(repos, [{ machine: THIS_MACHINE, root: "/r/api", count: 3 }]);
+      assert.deepStrictEqual(repos, {
+        repos: [{ machine: THIS_MACHINE, root: "/r/api", count: 3 }],
+        gone: [],
+      });
       assert.deepStrictEqual(calls, [
         ["sh", shArgs(OWNERS_SCRIPT, ["/r/api/src", "/r/api.feat"]), { timeout: 60_000 }],
       ]);
@@ -474,8 +477,8 @@ describe("reposOf", () => {
   it.effect("no folders: no repos, and nothing is run", () =>
     Effect.gen(function* () {
       const { api, calls } = recording({ code: 0, stdout: "/x\t1\n", stderr: "" });
-      const repos = yield* reposOf([]).pipe(Effect.provide(Shell.layer(api)));
-      assert.deepStrictEqual([repos, calls], [[], []]);
+      const repos = yield* ownersOf([]).pipe(Effect.provide(Shell.layer(api)));
+      assert.deepStrictEqual([repos, calls], [{ repos: [], gone: [] }, []]);
     }),
   );
 });
