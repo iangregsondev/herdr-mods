@@ -94,7 +94,7 @@ export const newMenuAnchor = (rows: readonly NewMenuRow[]): Option.Option<string
   Option.map(Option.fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 
 /**
- * The args our "Close orphan space" item gives Herdr's `space.close`. Herdr's generated
+ * The args our "Close orphan" item gives Herdr's `space.close`. Herdr's generated
  * types (`.herdr-types/herdr.d.ts`) list only `space.close {id?}` and aren't ours to
  * edit, so the type lives here: `confirmed: false` makes Herdr ask before closing.
  */
@@ -105,11 +105,11 @@ type SpaceCloseArgs = {
 
 const closeOrphan = (id: string): Item => {
   const args: SpaceCloseArgs = { id, confirmed: false };
-  return ["Close orphan space", "space.close", args];
+  return ["Close orphan", "space.close", args];
 };
 
 /**
- * `list` with "Close orphan space" in the place of Herdr's close item, else last. Both
+ * `list` with "Close orphan" in the place of Herdr's close item, else last. Both
  * run `space.close` for the space, so the menu keeps one close item: ours, which asks.
  */
 const replacingClose = (list: readonly Item[], id: string): readonly Item[] => {
@@ -122,7 +122,7 @@ const replacingClose = (list: readonly Item[], id: string): readonly Item[] => {
 /**
  * Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
  * `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
- * that is one of the `open` ones, "Close orphan space" alone, in place of Herdr's close.
+ * that is one of the `open` ones, "Close orphan" alone, in place of Herdr's close.
  */
 export const withSpaceItems = (
   list: readonly Item[],

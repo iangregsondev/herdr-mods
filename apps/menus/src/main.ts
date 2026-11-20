@@ -184,7 +184,7 @@ function menuWithOurItems(copy: Copy): ViewClass {
   const items = copy.exports.__wtItems;
   if (!Predicate.isFunction(setExtend) || !Predicate.isFunction(items)) return viewOf(copy);
   // The panel's published orphans are read each time the list is built, so a space menu
-  // offers "Close orphan space" only while the panel still says it is one. That item is
+  // offers "Close orphan" only while the panel still says it is one. That item is
   // Herdr's own `space.close` command, so Herdr's `choose` runs it.
   setExtend((list: readonly Item[], p: unknown, git: unknown) => {
     const { orphans, open } = published();
