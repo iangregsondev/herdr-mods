@@ -43,7 +43,7 @@ import {
   type MenuRequest,
 } from "worktrunk-mailbox";
 import { loadCopy, Modules, type Copy } from "./copies.ts";
-import { newMenuAnchor, requestOf, withWorktrunkItems, type NewMenuRow } from "./items.ts";
+import { newMenuAnchor, requestOf, withSpaceItems, type Item, type NewMenuRow } from "./items.ts";
 import { nameColor, spaceMarks, spacePills, type SpaceMarks } from "./look.ts";
 import { describeMisses } from "./patch.ts";
 import { NEW_MENU_HEIGHT, SPACE_MENU_HEIGHT, roleIn, type Role } from "./wraps.ts";
@@ -176,7 +176,18 @@ function menuWithOurItems(copy: Copy): ViewClass {
   const setExtend = copy.exports.__wtSetExtend;
   const items = copy.exports.__wtItems;
   if (!Predicate.isFunction(setExtend) || !Predicate.isFunction(items)) return viewOf(copy);
-  setExtend(withWorktrunkItems);
+  // The panel's published orphans are read each time the list is built, so a space menu
+  // offers "Close orphan space" only while the panel still says it is one. That item is
+  // Herdr's own `space.close` command, so Herdr's `choose` runs it.
+  setExtend((list: readonly Item[], p: unknown, git: unknown) =>
+    withSpaceItems(
+      list,
+      p,
+      git,
+      shared(orphansKey(PANEL)),
+      spaces().map((open) => open.id),
+    ),
+  );
   // The patched copy's tail defines `__wtItems(p, git)`, returning the menu's item list.
   const listFor = items as (p: unknown, git: unknown) => unknown;
   // The patched copy's class: Herdr's Menu, whose `choose(i, cx)` and `git` field we use.

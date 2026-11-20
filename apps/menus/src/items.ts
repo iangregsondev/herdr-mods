@@ -1,7 +1,14 @@
 // Our items in Herdr's space and "+" menus: where they go among Herdr's, and what each
 // asks of the worktrunk panel. Pure: no `herdr` or `gpui` imports.
 import { Option } from "effect";
-import { at, SPACE_ACTS, text, type MenuRequest, type SpaceAct } from "worktrunk-mailbox";
+import {
+  at,
+  SPACE_ACTS,
+  spaceOrphan,
+  text,
+  type MenuRequest,
+  type SpaceAct,
+} from "worktrunk-mailbox";
 
 /** One item of Herdr's context menu: `[label, command, args]`. */
 export type Item = readonly [string, string, Readonly<Record<string, unknown>>];
@@ -91,3 +98,46 @@ const isWorktreeRow = ({ id, name }: NewMenuRow): boolean =>
  */
 export const newMenuAnchor = (rows: readonly NewMenuRow[]): Option.Option<string> =>
   Option.map(Option.fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
+
+/** The args Herdr's `space.close` takes; `confirmed: false` makes Herdr ask first. */
+type SpaceCloseArgs = {
+  readonly id: string;
+  readonly confirmed: boolean;
+};
+
+const closeOrphan = (id: string): Item => {
+  const args: SpaceCloseArgs = { id, confirmed: false };
+  return ["Close orphan space", "space.close", args];
+};
+
+/** Where "Close orphan space" goes: just before Herdr's close item, else last. */
+const beforeClose = (list: readonly Item[]): number => {
+  const close = list.findIndex((item) => item[1] === "space.close");
+  return close >= 0 ? close : list.length;
+};
+
+/**
+ * Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
+ * `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
+ * that is one of the `open` ones, "Close orphan space" alone.
+ */
+export const withSpaceItems = (
+  list: readonly Item[],
+  props: unknown,
+  git: unknown,
+  orphans: unknown,
+  open: readonly string[],
+): readonly Item[] =>
+  Option.match(
+    Option.filter(
+      spaceOf(props),
+      (id) => open.includes(id) && Option.isSome(spaceOrphan(orphans, id)),
+    ),
+    {
+      onNone: () => withWorktrunkItems(list, props, git),
+      onSome: (id) => {
+        const at = beforeClose(list);
+        return [...list.slice(0, at), closeOrphan(id), ...list.slice(at)];
+      },
+    },
+  );
