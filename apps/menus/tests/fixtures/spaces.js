@@ -1,5 +1,5 @@
-// Stand-in for Herdr's sidebar: only the space menu call and the space row's name, which
-// the wrapper patches. Each patched line is copied as-is from Herdr's installed
+// Stand-in for Herdr's sidebar: only the space menu call, the space row's name and the
+// row list of its ordering, which the wrapper patches. Each patched line is copied as-is from Herdr's installed
 // `mods/spaces/main.js` (Herdr app 0.1.16), so a patch point that fits here fits Herdr.
 const SIDE_MIN = 48;
 
@@ -41,3 +41,20 @@ export const row = (w, t) =>
           .items_center()
           .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))
           .child(div().flex_1());
+
+// Herdr's key for a space's place: its machine and its folder (Herdr's place is the first
+// terminal's live folder; the stand-in's is the space's folder).
+const where = (s, _ps) => JSON.stringify([s.machine ?? null, s.folder]);
+
+// Herdr's sidebar keeps each place's git entry in `this.git`; its `ordered()` starts from
+// this row list, then nests and reorders the rows by their entries.
+export class Sidebar {
+  constructor(git) {
+    this.git = git;
+  }
+
+  rows(sp, ps) {
+    const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
+    return list;
+  }
+}

@@ -1,4 +1,4 @@
-// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items and the sidebar's group and Orphan pills added.
+// Herdr's tab bar, sidebar, "+" menu and context menu, with worktrunk items, the sidebar's group and Orphan pills, and orphan spaces nested and dimmed.
 // Herdr gives mods no way to add menu items (docs/adr/0003), so each copy of this mod
 // plays one of Herdr's own mods: it copies Herdr's installed `main.js` into this mod's
 // folder (patched where `wraps.ts` says), imports the copy and shows Herdr's view from it.
@@ -44,7 +44,7 @@ import {
 } from "worktrunk-mailbox";
 import { loadCopy, Modules, type Copy } from "./copies.ts";
 import { newMenuAnchor, requestOf, withSpaceItems, type Item, type NewMenuRow } from "./items.ts";
-import { nameColor, spaceMarks, spacePills, type SpaceMarks } from "./look.ts";
+import { nameColor, orphanGit, spaceMarks, spacePills, type SpaceMarks } from "./look.ts";
 import { describeMisses } from "./patch.ts";
 import { NEW_MENU_HEIGHT, SPACE_MENU_HEIGHT, roleIn, type Role } from "./wraps.ts";
 
@@ -83,7 +83,8 @@ const ready = new Map<Role, Copy>();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role: Role, copy: Copy) => {
   if (copy.misses.length === 0) return;
-  const left = role === "spaces" ? "worktrunk items and pills are" : "worktrunk items are";
+  const left =
+    role === "spaces" ? "worktrunk items, pills and orphan nesting are" : "worktrunk items are";
   const body = `Herdr's ${role} changed, so ${left} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
   console.error(`${__MOD_ID__}: ${body}`);
   notify({ title: "worktrunk menus: patch point not found", body, level: "warning" });
@@ -304,8 +305,8 @@ function newMenuWithOurItem(copy: Copy): ViewClass {
 }
 
 /**
- * Gives the sidebar copy each space's look (name colour and pills), from what the
- * worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
+ * Gives the sidebar copy each space's look (name colour, pills, and the git entry an
+ * orphan space nests by), from what the worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
  * it draws Herdr's own rows.
  */
 const withSpaceLook = (copy: Copy) => {
@@ -325,6 +326,14 @@ const withSpaceLook = (copy: Copy) => {
   setLook({
     nameColorOf: (space: unknown) => nameColor(marksOf(space)),
     pillsOf: (space: unknown) => spacePills(marksOf(space)),
+    gitOf: (space: unknown) =>
+      Option.getOrNull(
+        orphanGit(
+          space,
+          shared(orphansKey(PANEL)),
+          spaces().map((open) => open.id),
+        ),
+      ),
   });
 };
 
