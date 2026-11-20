@@ -2989,50 +2989,6 @@ const getOrUndefined$1 = /*#__PURE__*/ getOrElse$1(constUndefined);
 */
 const map$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : some(f(self.value)));
 /**
-* Applies a function that returns an `Option` to the value of a `Some`,
-* flattening the result. Returns `None` if the input is `None`.
-*
-* **When to use**
-*
-* Use when you need to chain dependent `Option` computations where each step
-* may return `None`.
-*
-* **Details**
-*
-* - `Some` → applies `f` to the value and returns its `Option` result
-* - `None` → returns `None` without calling `f`
-* - Equivalent to `map` followed by {@link flatten}
-*
-* **Example** (Chaining optional lookups)
-*
-* ```ts import.meta.vitest
-* import { Option } from "effect"
-*
-* interface User {
-*   readonly name: string
-*   readonly address: Option.Option<{ readonly street: Option.Option<string> }>
-* }
-*
-* const user: User = {
-*   name: "John",
-*   address: Option.some({ street: Option.some("123 Main St") })
-* }
-*
-* user.address.pipe(
-*   Option.flatMap((addr) => addr.street)
-* ) // => Option.some("123 Main St")
-* ```
-*
-* @see {@link map} when `f` returns a plain value
-* @see {@link andThen} for a more flexible variant
-* @see {@link flatten} to unwrap a nested `Option<Option<A>>`
-*
-* @stability stable
-* @category sequencing
-* @since 2.0.0
-*/
-const flatMap$2 = /*#__PURE__*/ dual(2, (self, f) => isNone(self) ? none() : f(self.value));
-/**
 * Combines a structure of `Option`s (tuple, struct, or iterable) into a single
 * `Option` containing the unwrapped structure.
 *
@@ -8364,6 +8320,20 @@ const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
 * for (or an empty name), or a value of any other shape.
 */
 const spaceGroup = (published, space) => filter(text(at(published, space)), (group) => group !== "");
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
+const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
+/**
+* The entry the panel published (`orphansKey`) for the space `space`. None for a space
+* it names no orphan for, an entry of another shape, or a published value of any other
+* shape.
+*/
+const spaceOrphan = (published, space) => {
+	const entry = at(published, space);
+	return all({
+		folder: text(at(entry, "folder")),
+		repo: text(at(entry, "repo"))
+	});
+};
 
 // src/patch.ts
 const occurrences = (text, find) => find === "" ? 0 : text.split(find).length - 1;
@@ -8619,14 +8589,28 @@ const isWorktreeRow = ({ id, name }) => id === WORKTREE || id.startsWith(`${WORK
 const newMenuAnchor = (rows) => map$2(fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 
 // src/look.ts
-/** The pills after a space's name, in order. */
-const spacePills = (marks) => match$4(marks.group, {
+/**
+* What the panel published about the space `id`, from its published groups and orphans:
+* an orphan only while the space is one of the `open` ones, since a closed space's entry
+* waits for the panel's next refresh to go.
+*/
+const spaceMarks = (id, groups, orphans, open) => ({
+	group: spaceGroup(groups, id),
+	orphan: open.includes(id) && isSome(spaceOrphan(orphans, id))
+});
+/** The pill on an orphan space: its text in the theme's yellow, a warning. */
+const ORPHAN_PILL = {
+	label: "Orphan",
+	color: "ansi3"
+};
+/** The pills after a space's name, in order: its group pill, then the Orphan pill. */
+const spacePills = (marks) => [...match$4(marks.group, {
 	onNone: () => [],
 	onSome: (group) => [{
 		label: group,
 		color: "dim"
 	}]
-});
+}), ...marks.orphan ? [ORPHAN_PILL] : []];
 /** The theme colour a space's name is drawn in. */
 const nameColor = (_marks) => "foreground";
 
@@ -8658,7 +8642,7 @@ const ready = /* @__PURE__ */ new Map();
 /** Says once per load that a patch point no longer fits, so the copy is Herdr's own. */
 const reportMisses = (role, copy) => {
 	if (copy.misses.length === 0) return;
-	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and group pills are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
+	const body = `Herdr's ${role} changed, so ${role === "spaces" ? "worktrunk items and pills are" : "worktrunk items are"} left out: ${describeMisses(copy.misses)}. Using Herdr's own ${role} until apps/menus is updated.`;
 	console.error(`iangregsondev-menus: ${body}`);
 	notify({
 		title: "worktrunk menus: patch point not found",
@@ -8843,7 +8827,13 @@ function newMenuWithOurItem(copy) {
 const withSpaceLook = (copy) => {
 	const setLook = copy.exports.__wtSetLook;
 	if (!isFunction(setLook)) return;
-	const marksOf = (space) => ({ group: flatMap$2(text(at(space, "id")), (id) => spaceGroup(shared(groupsKey(PANEL)), id)) });
+	const marksOf = (space) => match$4(text(at(space, "id")), {
+		onNone: () => ({
+			group: none(),
+			orphan: false
+		}),
+		onSome: (id) => spaceMarks(id, shared(groupsKey(PANEL)), shared(orphansKey(PANEL)), spaces().map((open) => open.id))
+	});
 	setLook({
 		nameColorOf: (space) => nameColor(marksOf(space)),
 		pillsOf: (space) => spacePills(marksOf(space))
