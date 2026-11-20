@@ -16,10 +16,17 @@ export interface SpaceMarks {
 }
 
 /**
- * What the panel published about the space `id`, from its published groups and orphans:
- * an orphan only while the space is one of the `open` ones, since a closed space's entry
- * waits for the panel's next refresh to go.
+ * What the panel published in `orphans` about the space `id` as an orphan space: none
+ * unless the space is one of the `open` ones, since a closed space's entry waits for the
+ * panel's next refresh to go.
  */
+export const openOrphan = (
+  orphans: unknown,
+  open: readonly string[],
+  id: string,
+): Option.Option<PublishedOrphan> => (open.includes(id) ? spaceOrphan(orphans, id) : Option.none());
+
+/** What the panel published about the space `id`, from its published groups and orphans. */
 export const spaceMarks = (
   id: string,
   groups: unknown,
@@ -27,8 +34,23 @@ export const spaceMarks = (
   open: readonly string[],
 ): SpaceMarks => ({
   group: spaceGroup(groups, id),
-  orphan: open.includes(id) ? spaceOrphan(orphans, id) : Option.none(),
+  orphan: openOrphan(orphans, open, id),
 });
+
+/**
+ * The marks of `space` (one of Herdr's space objects), read by its id from the published
+ * groups and orphans; none for a space with no id.
+ */
+export const marksFor = (
+  space: unknown,
+  groups: unknown,
+  orphans: unknown,
+  open: readonly string[],
+): SpaceMarks =>
+  Option.match(text(at(space, "id")), {
+    onNone: (): SpaceMarks => ({ group: Option.none(), orphan: Option.none() }),
+    onSome: (id) => spaceMarks(id, groups, orphans, open),
+  });
 
 /** A small label drawn after a space's name. */
 export interface Pill {
@@ -64,6 +86,17 @@ export const spacePills = (marks: SpaceMarks): readonly Pill[] => [
   }),
 ];
 
+/** A pill as the sidebar copy reads it: plain JS, its tooltip text or null for none. */
+export interface PlainPill {
+  readonly label: string;
+  readonly color: ThemeKey;
+  readonly tooltip: string | null;
+}
+
+/** `pills` in the shape the sidebar copy reads. */
+export const plainPills = (pills: readonly Pill[]): readonly PlainPill[] =>
+  pills.map((pill) => ({ ...pill, tooltip: Option.getOrNull(pill.tooltip) }));
+
 /**
  * The theme colour a space's name is drawn in: dim for an orphan space, so it reads as
  * inactive (its text only, never the row's opacity, which would fade its pills too).
@@ -95,15 +128,13 @@ export const orphanGit = (
   orphans: unknown,
   open: readonly string[],
 ): Option.Option<GitEntry> =>
-  Option.flatMap(
-    Option.filter(text(at(space, "id")), (id) => open.includes(id)),
-    (id) =>
-      Option.map(spaceOrphan(orphans, id), ({ repo }) => ({
-        name: repoName(repo),
-        branch: Option.getOrElse(text(at(space, "name")), () => ""),
-        ahead: 0,
-        behind: 0,
-        repo: JSON.stringify([Option.getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
-        linked: true,
-      })),
+  Option.flatMap(text(at(space, "id")), (id) =>
+    Option.map(openOrphan(orphans, open, id), ({ repo }) => ({
+      name: repoName(repo),
+      branch: Option.getOrElse(text(at(space, "name")), () => ""),
+      ahead: 0,
+      behind: 0,
+      repo: JSON.stringify([Option.getOrNull(text(at(space, "machine"))), `${repo}/.git`]),
+      linked: true,
+    })),
   );

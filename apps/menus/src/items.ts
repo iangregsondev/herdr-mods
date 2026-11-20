@@ -1,14 +1,8 @@
 // Our items in Herdr's space and "+" menus: where they go among Herdr's, and what each
 // asks of the worktrunk panel. Pure: no `herdr` or `gpui` imports.
 import { Option } from "effect";
-import {
-  at,
-  SPACE_ACTS,
-  spaceOrphan,
-  text,
-  type MenuRequest,
-  type SpaceAct,
-} from "worktrunk-mailbox";
+import { at, SPACE_ACTS, text, type MenuRequest, type SpaceAct } from "worktrunk-mailbox";
+import { openOrphan } from "./look.ts";
 
 /** One item of Herdr's context menu: `[label, command, args]`. */
 export type Item = readonly [string, string, Readonly<Record<string, unknown>>];
@@ -99,7 +93,11 @@ const isWorktreeRow = ({ id, name }: NewMenuRow): boolean =>
 export const newMenuAnchor = (rows: readonly NewMenuRow[]): Option.Option<string> =>
   Option.map(Option.fromNullishOr(rows.filter(isWorktreeRow).at(-1)), (row) => row.id);
 
-/** The args Herdr's `space.close` takes; `confirmed: false` makes Herdr ask first. */
+/**
+ * The args our "Close orphan space" item gives Herdr's `space.close`. Herdr's generated
+ * types (`.herdr-types/herdr.d.ts`) list only `space.close {id?}` and aren't ours to
+ * edit, so the type lives here: `confirmed: false` makes Herdr ask before closing.
+ */
 type SpaceCloseArgs = {
   readonly id: string;
   readonly confirmed: boolean;
@@ -129,10 +127,7 @@ export const withSpaceItems = (
   open: readonly string[],
 ): readonly Item[] =>
   Option.match(
-    Option.filter(
-      spaceOf(props),
-      (id) => open.includes(id) && Option.isSome(spaceOrphan(orphans, id)),
-    ),
+    Option.filter(spaceOf(props), (id) => Option.isSome(openOrphan(orphans, open, id))),
     {
       onNone: () => withWorktrunkItems(list, props, git),
       onSome: (id) => {

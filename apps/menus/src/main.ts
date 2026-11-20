@@ -44,7 +44,7 @@ import {
 } from "worktrunk-mailbox";
 import { loadCopy, Modules, type Copy } from "./copies.ts";
 import { newMenuAnchor, requestOf, withSpaceItems, type Item, type NewMenuRow } from "./items.ts";
-import { nameColor, orphanGit, spaceMarks, spacePills, type SpaceMarks } from "./look.ts";
+import { marksFor, nameColor, orphanGit, plainPills, spacePills, type SpaceMarks } from "./look.ts";
 import { describeMisses } from "./patch.ts";
 import { NEW_MENU_HEIGHT, SPACE_MENU_HEIGHT, roleIn, type Role } from "./wraps.ts";
 
@@ -116,6 +116,12 @@ const viewOf = (copy: Copy): ViewClass =>
   // copies.ts made sure the default export is a function; Herdr's mods export a View class.
   copy.exports.default as ViewClass;
 
+/** The orphans the worktrunk panel published, and the ids of the spaces open now. */
+const published = (): { orphans: unknown; open: readonly string[] } => ({
+  orphans: shared(orphansKey(PANEL)),
+  open: spaces().map((space) => space.id),
+});
+
 /** Hands `request` to the worktrunk panel, showing the panel first when it is hidden. */
 const deliver = (request: MenuRequest) => {
   const post = () =>
@@ -180,15 +186,10 @@ function menuWithOurItems(copy: Copy): ViewClass {
   // The panel's published orphans are read each time the list is built, so a space menu
   // offers "Close orphan space" only while the panel still says it is one. That item is
   // Herdr's own `space.close` command, so Herdr's `choose` runs it.
-  setExtend((list: readonly Item[], p: unknown, git: unknown) =>
-    withSpaceItems(
-      list,
-      p,
-      git,
-      shared(orphansKey(PANEL)),
-      spaces().map((open) => open.id),
-    ),
-  );
+  setExtend((list: readonly Item[], p: unknown, git: unknown) => {
+    const { orphans, open } = published();
+    return withSpaceItems(list, p, git, orphans, open);
+  });
   // The patched copy's tail defines `__wtItems(p, git)`, returning the menu's item list.
   const listFor = items as (p: unknown, git: unknown) => unknown;
   // The patched copy's class: Herdr's Menu, whose `choose(i, cx)` and `git` field we use.
@@ -306,39 +307,23 @@ function newMenuWithOurItem(copy: Copy): ViewClass {
 
 /**
  * Gives the sidebar copy each space's look (name colour, pills, and the git entry an
- * orphan space nests by), from what the worktrunk panel publishes, read at every render. A copy left unpatched has no hook, so
- * it draws Herdr's own rows.
+ * orphan space nests by), from what the worktrunk panel publishes, read at every render.
+ * A copy left unpatched has no hook, so it draws Herdr's own rows.
  */
 const withSpaceLook = (copy: Copy) => {
   const setLook = copy.exports.__wtSetLook;
   if (!Predicate.isFunction(setLook)) return;
-  const marksOf = (space: unknown): SpaceMarks =>
-    Option.match(text(at(space, "id")), {
-      onNone: (): SpaceMarks => ({ group: Option.none(), orphan: Option.none() }),
-      onSome: (id) =>
-        spaceMarks(
-          id,
-          shared(groupsKey(PANEL)),
-          shared(orphansKey(PANEL)),
-          spaces().map((open) => open.id),
-        ),
-    });
+  const marksOf = (space: unknown): SpaceMarks => {
+    const { orphans, open } = published();
+    return marksFor(space, shared(groupsKey(PANEL)), orphans, open);
+  };
   setLook({
     nameColorOf: (space: unknown) => nameColor(marksOf(space)),
-    // The copy is plain JS: it reads a pill's tooltip as text, or null for none.
-    pillsOf: (space: unknown) =>
-      spacePills(marksOf(space)).map((pill) => ({
-        ...pill,
-        tooltip: Option.getOrNull(pill.tooltip),
-      })),
-    gitOf: (space: unknown) =>
-      Option.getOrNull(
-        orphanGit(
-          space,
-          shared(orphansKey(PANEL)),
-          spaces().map((open) => open.id),
-        ),
-      ),
+    pillsOf: (space: unknown) => plainPills(spacePills(marksOf(space))),
+    gitOf: (space: unknown) => {
+      const { orphans, open } = published();
+      return Option.getOrNull(orphanGit(space, orphans, open));
+    },
   });
 };
 
