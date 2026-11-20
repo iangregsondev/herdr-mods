@@ -2,21 +2,18 @@ import { Option, Result } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import { repoKey, THIS_MACHINE, type RepoKey } from "../src/machines.ts";
 import {
-  askToasts,
   checked,
-  closeOrAsk,
+  closeOrKeep,
   jobRemoved,
   listsRead,
   NO_ORPHANS,
   orphanSpaces,
-  orphanSteps,
+  orphanCloses,
   goneLanded,
   orphansChanged,
   publishedOrphans,
   worktreesRead,
   waitingOn,
-  type NamedSpace,
-  type Orphan,
   type ProgramPane,
 } from "../src/orphans.ts";
 import type { MachineLists, RepoList } from "../src/reads.ts";
@@ -226,25 +223,25 @@ const terminal = (tab: string, cwd: string, shell: boolean): ProgramPane => ({
   program: { shell },
 });
 
-describe("closeOrAsk", () => {
+describe("closeOrKeep", () => {
   test("a space whose terminals all run a plain shell closes at once", () => {
     const panes = [terminal("t1", "/r/app.feat", true), terminal("t2", "/r/app.feat", true)];
-    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Close");
+    expect(closeOrKeep(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Close");
   });
 
-  test("a space with anything else running in it is asked about", () => {
+  test("a space with anything else running in it is kept", () => {
     const panes = [
       terminal("t0", "/r/other", true),
       terminal("t1", "/r/app.feat", true),
       terminal("t2", "/r/app.feat", false),
     ];
-    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Ask");
+    expect(closeOrKeep(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Keep");
   });
 
   test("mod panes in the space don't count", () => {
     const mod: ProgramPane = { tab: "t1", cwd: null, terminal: null };
     const panes = [terminal("t1", "/r/app.feat", true), mod];
-    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
+    expect(closeOrKeep(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
   });
 
   test("a space with only mod panes in it closes at once, since nothing but shells runs there", () => {
@@ -252,12 +249,12 @@ describe("closeOrAsk", () => {
       { tab: "t1", cwd: null, terminal: null },
       { tab: "t2", cwd: null, terminal: null },
     ];
-    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Close");
+    expect(closeOrKeep(space("s1", "/r/app.feat", ["t1", "t2"]), panes)).toBe("Close");
   });
 
   test("what runs in another space doesn't count", () => {
     const panes = [terminal("t0", "/r/other", false), terminal("t1", "/r/app.feat", true)];
-    expect(closeOrAsk(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
+    expect(closeOrKeep(space("s1", "/r/app.feat", ["t1"]), panes)).toBe("Close");
   });
 });
 
@@ -275,7 +272,7 @@ describe("orphanSpaces", () => {
     ];
     expect(orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"])).toEqual([
       { space: "s1", step: "Close", folder: "/r/app.feat" },
-      { space: "s2", step: "Ask", folder: "/r/app.feat" },
+      { space: "s2", step: "Keep", folder: "/r/app.feat" },
     ]);
   });
 
@@ -321,140 +318,53 @@ describe("orphanSpaces", () => {
   });
 });
 
-/** A space as `spaces()` gives it, with its name. */
-const named = (id: string, name: string, folder: string, tabs: readonly string[]): NamedSpace => ({
-  ...space(id, folder, tabs),
-  name,
-});
-
-describe("askToasts", () => {
-  test("a space on a gone folder where an agent runs gets a warning toast that closes it with Herdr's confirm", () => {
-    const spaces = [named("s1", "app feat", "/r/app.feat", ["t1"])];
-    const panes = [terminal("t1", "/r/app.feat", false)];
-    expect(
-      askToasts(NO_ORPHANS, spaces, orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]))
-        .toasts,
-    ).toEqual([
-      {
-        title: "Space on a removed worktree",
-        body: "app feat is on /r/app.feat, which is gone. Something is still running in it. Click to close it.",
-        level: "warning",
-        timeout: 24 * 60 * 60 * 1000,
-        action: { name: "space.close", args: { id: "s1", confirmed: false } },
-      },
-    ]);
-  });
-
-  test("the toast stays up for a day, since Herdr fades a toast without a timeout in seconds", () => {
-    const spaces = [named("s1", "app feat", "/r/app.feat", ["t1"])];
-    const panes = [terminal("t1", "/r/app.feat", false)];
-    const { toasts } = askToasts(
-      NO_ORPHANS,
-      spaces,
-      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
-    );
-    expect(toasts.map((toast) => toast.timeout)).toEqual([24 * 60 * 60 * 1000]);
-  });
-
-  test("no toast for a space closed at once, where only shells run", () => {
-    const spaces = [
-      named("s1", "app feat", "/r/app.feat", ["t1"]),
-      named("s2", "app feat 2", "/r/app.feat", ["t2"]),
-    ];
-    const panes = [terminal("t1", "/r/app.feat", true), terminal("t2", "/r/app.feat", false)];
-    const { toasts } = askToasts(
-      NO_ORPHANS,
-      spaces,
-      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
-    );
-    expect(toasts.map((toast) => toast.action.args.id)).toEqual(["s2"]);
-  });
-
-  test("a space is asked about once, never again on later checks", () => {
-    const spaces = [named("s1", "app feat", "/r/app.feat", ["t1"])];
-    const panes = [terminal("t1", "/r/app.feat", false)];
-    const first = askToasts(
-      NO_ORPHANS,
-      spaces,
-      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
-    );
-    const again = askToasts(
-      first.orphans,
-      spaces,
-      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
-    );
-    expect([first.toasts.length, again.toasts.length]).toEqual([1, 0]);
-  });
-
-  test("asking about one space still asks about another", () => {
-    const panes = [terminal("t1", "/r/app.feat", false), terminal("t2", "/r/app.fix", false)];
-    const feat = [named("s1", "app feat", "/r/app.feat", ["t1"])];
-    const fix = [named("s2", "app fix", "/r/app.fix", ["t2"])];
-    const first = askToasts(
-      NO_ORPHANS,
-      feat,
-      orphanSpaces(feat, panes, THIS_MACHINE, ["/r/app.feat"]),
-    );
-    const next = askToasts(
-      first.orphans,
-      fix,
-      orphanSpaces(fix, panes, THIS_MACHINE, ["/r/app.fix"]),
-    );
-    expect(next.toasts.map((toast) => toast.action.args.id)).toEqual(["s2"]);
-  });
-
-  test("no toast for a space on a folder the panel's own job removed, though the space list lags", () => {
+describe("orphanCloses", () => {
+  test("a busy orphan space seen dropped isn't closed", () => {
     const old = new Map([[APP, listed("/r/app", "/r/app.feat")]]);
-    const byJob = jobRemoved(NO_ORPHANS, THIS_MACHINE, ["/r/app.feat"]);
-    const orphans = listsRead(byJob, old, THIS_MACHINE, read([APP, fresh("/r/app")]));
+    const orphans = listsRead(NO_ORPHANS, old, THIS_MACHINE, read([APP, fresh("/r/app")]));
     const asked = waitingOn(orphans, THIS_MACHINE);
     const after = checked(orphans, THIS_MACHINE, asked, Result.succeed(asked));
-    const spaces = [named("s1", "app feat", "/r/app.feat", ["t1"])];
+    const spaces = [space("s1", "/r/app.feat", ["t1"])];
     const panes = [terminal("t1", "/r/app.feat", false)];
-    expect(
-      askToasts(after.orphans, spaces, orphanSpaces(spaces, panes, THIS_MACHINE, after.gone))
-        .toasts,
-    ).toEqual([]);
+    expect(orphanCloses(spaces, panes, THIS_MACHINE, after.gone)).toEqual([]);
   });
 
-  test("the toast names the gone folder a space is on by its place when it was made elsewhere", () => {
-    const spaces = [named("s1", "app", "/r", ["t1"])];
-    const panes = [terminal("t1", "/r/app.feat/src", false)];
-    const { toasts } = askToasts(
+  test("a shell-only orphan space seen dropped closes at once", () => {
+    const old = new Map([[APP, listed("/r/app", "/r/app.feat")]]);
+    const orphans = listsRead(NO_ORPHANS, old, THIS_MACHINE, read([APP, fresh("/r/app")]));
+    const asked = waitingOn(orphans, THIS_MACHINE);
+    const after = checked(orphans, THIS_MACHINE, asked, Result.succeed(asked));
+    const spaces = [space("s1", "/r/app.feat", ["t1"]), space("s2", "/r/app.feat", ["t2"])];
+    const panes = [terminal("t1", "/r/app.feat", true), terminal("t2", "/r/app.feat", false)];
+    expect(orphanCloses(spaces, panes, THIS_MACHINE, after.gone)).toEqual(["s1"]);
+  });
+
+  test("a shell-only orphan space found only by the wider check is not closed", () => {
+    const old = new Map([[APP, listed("/r/app", "/r/app.feat", "/r/app.old")]]);
+    const orphans = listsRead(
       NO_ORPHANS,
-      spaces,
-      orphanSpaces(spaces, panes, THIS_MACHINE, ["/r/app.feat"]),
+      old,
+      THIS_MACHINE,
+      read([APP, fresh("/r/app", "/r/app.old")]),
     );
-    expect(toasts.map((toast) => toast.body)).toEqual([
-      "app is on /r/app.feat, which is gone. Something is still running in it. Click to close it.",
-    ]);
-  });
-
-  test("the toast names the gone folder its orphan was matched by", () => {
-    const spaces = [named("s1", "app", "/r", ["t1"])];
-    const found: readonly Orphan[] = [{ space: "s1", step: "Ask", folder: "/r/app.fix" }];
-    expect(askToasts(NO_ORPHANS, spaces, found).toasts.map((toast) => toast.body)).toEqual([
-      "app is on /r/app.fix, which is gone. Something is still running in it. Click to close it.",
-    ]);
-  });
-});
-
-describe("orphanSteps", () => {
-  test("the spaces where only shells run close at once and the others are asked about", () => {
-    const spaces = [
-      named("s1", "app feat", "/r/app.feat", ["t1"]),
-      named("s2", "app feat 2", "/r/app.feat", ["t2"]),
-      named("s3", "app", "/r/app", ["t3"]),
-    ];
-    const panes = [
-      terminal("t1", "/r/app.feat", true),
-      terminal("t2", "/r/app.feat", false),
-      terminal("t3", "/r/app", false),
-    ];
-    const steps = orphanSteps(NO_ORPHANS, spaces, panes, THIS_MACHINE, ["/r/app.feat"]);
-    expect([steps.closes, steps.toasts.map((toast) => toast.action.args.id)]).toEqual([
+    const asked = waitingOn(orphans, THIS_MACHINE);
+    const after = checked(
+      orphans,
+      THIS_MACHINE,
+      asked,
+      Result.succeed(["/r/app.feat", "/r/app.old"]),
+    );
+    const spaces = [space("s1", "/r/app.feat", ["t1"]), space("s2", "/r/app.old", ["t2"])];
+    const panes = [terminal("t1", "/r/app.feat", true), terminal("t2", "/r/app.old", true)];
+    const wider = publishedOrphans(
+      spaces,
+      spacePlaces(spaces, panes),
+      new Map([[THIS_MACHINE, ["/r/app.feat", "/r/app.old"]]]),
+      worktreesRead([], old),
+    );
+    expect([Object.keys(wider), orphanCloses(spaces, panes, THIS_MACHINE, after.gone)]).toEqual([
+      ["s1", "s2"],
       ["s1"],
-      ["s2"],
     ]);
   });
 });

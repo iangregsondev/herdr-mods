@@ -12250,8 +12250,7 @@ const groupsChanged = (groups, published) => {
 // src/orphans.ts
 const NO_ORPHANS = {
 	waiting: /* @__PURE__ */ new Map(),
-	removed: /* @__PURE__ */ new Map(),
-	asked: /* @__PURE__ */ new Set()
+	removed: /* @__PURE__ */ new Map()
 };
 /** The dropped paths on `machine` waiting for a folder check: what the next check asks about. */
 const waitingOn = (orphans, machine) => orphans.waiting.get(machine) ?? [];
@@ -12300,7 +12299,7 @@ const listsRead = (orphans, old, machine, answer) => {
 };
 /**
 * The folder check of the paths `asked` on `machine` answered: the folders it found gone,
-* or why it failed. Gone paths come back for their spaces to close or be asked about; a
+* or why it failed. Gone paths come back for their spaces to close or be kept; a
 * path whose folder exists is forgotten; a failed check leaves every path waiting for the
 * machine's next refresh. Paths dropped while the check ran wait on.
 */
@@ -12317,14 +12316,14 @@ const checked = (orphans, machine, asked, answer) => match$4(answer, {
 		gone: gone.filter((path) => asked.includes(path) && waitingOn(orphans, machine).includes(path))
 	})
 });
-const closeOrAsk = (space, panes) => {
+const closeOrKeep = (space, panes) => {
 	const tabs = new Set(space.tabs.map((tab) => tab.id));
-	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Ask";
+	return panes.filter((pane) => tabs.has(pane.tab) && pane.terminal !== null).every((pane) => pane.program?.shell === true) ? "Close" : "Keep";
 };
 /**
 * The orphan spaces on `machine`: every space there on one of the `gone` folders (by
-* folder or place, as `goneSpaces` matches them), each closed or asked about, with the
-* gone folder it was matched by.
+* folder or place, as `goneSpaces` matches them), each closed or kept, with the gone
+* folder it was matched by.
 */
 const orphanSpaces = (spaces, panes, machine, gone) => {
 	const byId = new Map(spaces.map((space) => [space.id, space]));
@@ -12332,61 +12331,18 @@ const orphanSpaces = (spaces, panes, machine, gone) => {
 		onNone: () => [],
 		onSome: (space) => [{
 			space: id,
-			step: closeOrAsk(space, panes),
+			step: closeOrKeep(space, panes),
 			folder
 		}]
 	}));
 };
 /**
-* How long the toast offering to close an orphan space stays up: a day. Herdr fades a
-* toast with no timeout (or a zero one) within seconds and has no "until dismissed", so a
-* day stands in for it.
+* The spaces to close at once on the `gone` folders a folder check of dropped paths found
+* on `machine` (as `orphanSpaces` finds them): those where only shells run. Only those
+* folders count, so a space the wider orphan check finds (published for the sidebar) is
+* never closed here.
 */
-const ASK_TIMEOUT = 864e5;
-/**
-* The toasts for the `found` orphan spaces where something other than a shell runs and
-* no toast has asked before: each names the space and the gone folder it was matched by,
-* and clicking it closes the space after Herdr's own confirm. The spaces asked about are
-* remembered, so a later check never asks again.
-*/
-const askToasts = (orphans, spaces, found) => {
-	const names = new Map(spaces.map((space) => [space.id, space.name]));
-	const asks = found.filter((orphan) => orphan.step === "Ask" && !orphans.asked.has(orphan.space));
-	const toasts = asks.flatMap((orphan) => match$5(fromNullishOr(names.get(orphan.space)), {
-		onNone: () => [],
-		onSome: (name) => [{
-			title: "Space on a removed worktree",
-			body: `${name} is on ${orphan.folder}, which is gone. Something is still running in it. Click to close it.`,
-			level: "warning",
-			timeout: ASK_TIMEOUT,
-			action: {
-				name: "space.close",
-				args: {
-					id: orphan.space,
-					confirmed: false
-				}
-			}
-		}]
-	}));
-	return {
-		orphans: {
-			...orphans,
-			asked: /* @__PURE__ */ new Set([...orphans.asked, ...asks.map((orphan) => orphan.space)])
-		},
-		toasts
-	};
-};
-/**
-* The orphan spaces on the `gone` folders on `machine` (as `orphanSpaces` finds them):
-* those where only shells run close at once, the others get an ask toast (`askToasts`).
-*/
-const orphanSteps = (orphans, spaces, panes, machine, gone) => {
-	const found = orphanSpaces(spaces, panes, machine, gone);
-	return {
-		...askToasts(orphans, spaces, found),
-		closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space)
-	};
-};
+const orphanCloses = (spaces, panes, machine, gone) => orphanSpaces(spaces, panes, machine, gone).filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space);
 /**
 * The gone folders after `machine`'s search landed: its own when the search worked, else
 * those its last search found, so a failed lookup never clears its orphan spaces.
@@ -13833,8 +13789,8 @@ var Worktrunk = class extends View {
 	/**
 	* Checks the worktree paths dropped on `machine` in one run there, unless none wait or
 	* a check there is still running, then closes the orphan spaces on the gone ones where
-	* only shells run. Spaces where something else runs get one toast each, never repeated,
-	* that closes the space after Herdr's own confirm when clicked.
+	* only shells run. Spaces where something else runs stay open: the sidebar marks them
+	* from the published orphans, and their menu offers to close them.
 	*/
 	checkOrphans(cx, machine) {
 		const asked = waitingOn(this.orphans, machine);
@@ -13844,13 +13800,11 @@ var Worktrunk = class extends View {
 			const answer = await runEdge(checkGone(asked, machine), fail$2);
 			this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
 			const after = checked(this.orphans, machine, asked, answer);
-			const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
-			this.orphans = steps.orphans;
-			steps.closes.forEach((id) => run("space.close", {
+			this.orphans = after.orphans;
+			orphanCloses(spaces(), panes(), machine, after.gone).forEach((id) => run("space.close", {
 				id,
 				confirmed: true
 			}));
-			steps.toasts.forEach((toast) => notify(toast));
 		});
 	}
 	/** No job runs any more: the panel says so and reads the list again. */

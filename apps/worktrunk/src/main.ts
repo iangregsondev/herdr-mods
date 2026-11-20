@@ -102,8 +102,8 @@ import {
   jobRemoved,
   listsRead,
   NO_ORPHANS,
+  orphanCloses,
   orphansChanged,
-  orphanSteps,
   publishedOrphans,
   waitingOn,
   worktreesRead,
@@ -1011,8 +1011,8 @@ export default class Worktrunk extends View {
   /**
    * Checks the worktree paths dropped on `machine` in one run there, unless none wait or
    * a check there is still running, then closes the orphan spaces on the gone ones where
-   * only shells run. Spaces where something else runs get one toast each, never repeated,
-   * that closes the space after Herdr's own confirm when clicked.
+   * only shells run. Spaces where something else runs stay open: the sidebar marks them
+   * from the published orphans, and their menu offers to close them.
    */
   checkOrphans(cx: AsyncContext, machine: Machine) {
     const asked = waitingOn(this.orphans, machine);
@@ -1022,10 +1022,10 @@ export default class Worktrunk extends View {
       const answer = await runEdge(checkGone(asked, machine), Result.fail);
       this.orphanChecks = new Set([...this.orphanChecks].filter((at) => at !== machine));
       const after = checked(this.orphans, machine, asked, answer);
-      const steps = orphanSteps(after.orphans, spaces(), panes(), machine, after.gone);
-      this.orphans = steps.orphans;
-      steps.closes.forEach((id) => run("space.close", { id, confirmed: true }));
-      steps.toasts.forEach((toast) => notify(toast));
+      this.orphans = after.orphans;
+      orphanCloses(spaces(), panes(), machine, after.gone).forEach((id) =>
+        run("space.close", { id, confirmed: true }),
+      );
     });
   }
 
