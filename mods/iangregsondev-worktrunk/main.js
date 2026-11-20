@@ -9881,6 +9881,20 @@ const SPACE_ACTS = [
 ];
 /** The shared-state key the panel of the worktrunk mod `panelMod` publishes space groups at. */
 const groupsKey = (panelMod) => `${panelMod}.groups.v1`;
+/** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
+const orphansKey = (panelMod) => `${panelMod}.orphans.v1`;
+/**
+* The entry the panel published (`orphansKey`) for the space `space`. None for a space
+* it names no orphan for, an entry of another shape, or a published value of any other
+* shape.
+*/
+const spaceOrphan = (published, space) => {
+	const entry = at(published, space);
+	return all$2({
+		folder: text(at(entry, "folder")),
+		repo: text(at(entry, "repo"))
+	});
+};
 
 // src/machines.ts
 /** This machine: the one the Herdr app runs on. */
@@ -10210,6 +10224,11 @@ const parseOwners = (stdout, machine) => stdout.split("\n").flatMap((line) => {
 	}] : [];
 });
 /**
+* The space folders the owners script found gone: each printed alone on its line, a whole
+* path, so a repo line (it has a tab) or stray text is not one.
+*/
+const parseGone = (stdout) => stdout.split("\n").filter((line) => line.startsWith("/") && !line.includes("	"));
+/**
 * The Current repo: the repo the owners script, run on `machine`, names for the focused
 * folder, if any.
 */
@@ -10291,8 +10310,11 @@ exit 0`;
 /**
 * The repos the given folders are in, through each folder's shared git folder, so a
 * folder inside a linked worktree names its repo too. Prints `repo<TAB>worktree count`.
+* Folders after a `--` argument are spaces' own folders, checked only for being there:
+* each one gone prints alone on a line, after the repos.
 */
 const OWNERS_SCRIPT = `for dir in "$@"; do
+  [ "$dir" = -- ] && break
   [ -d "$dir" ] || continue
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
   case "$common" in
@@ -10301,7 +10323,13 @@ const OWNERS_SCRIPT = `for dir in "$@"; do
       printf '%s\\t%s\\n' "$repo" "$(git -C "$repo" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')"
       ;;
   esac
-done | sort -u`;
+done | sort -u
+spaces=
+for dir in "$@"; do
+  if [ -n "$spaces" ]; then [ -d "$dir" ] || printf '%s\\n' "$dir"; fi
+  [ "$dir" = -- ] && spaces=1
+done
+exit 0`;
 /** Lists the worktrees of the repo at $1. */
 const LIST_SCRIPT = "cd \"$1\" && wt list --format=json";
 /** How many repos the batched list reads at once. */
@@ -11481,11 +11509,24 @@ const machineHome = fn("machineHome")(function* (machine) {
 	});
 	return home;
 });
-/** The repos the given folders on `machine` are in (each once); none for no folders. */
-const reposOf = fn("reposOf")(function* (folders, machine = null) {
-	if (folders.length === 0) return [];
-	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, folders, { on: machine });
-	return parseOwners(run.stdout, machine);
+/**
+* The repos the given folders on `machine` are in (each once), and which of the spaces'
+* own folders `spaceFolders` are gone there, in one run; none for no folders at all.
+*/
+const reposOf = fn("reposOf")(function* (folders, machine = null, spaceFolders = []) {
+	if (folders.length === 0 && spaceFolders.length === 0) return {
+		repos: [],
+		gone: []
+	};
+	const run = yield* runScript("the open spaces' repos", OWNERS_SCRIPT, spaceFolders.length === 0 ? folders : [
+		...folders,
+		"--",
+		...spaceFolders
+	], { on: machine });
+	return {
+		repos: parseOwners(run.stdout, machine),
+		gone: parseGone(run.stdout)
+	};
 });
 /**
 * The repo the folder `folder` on `machine` is in (the Current repo of the focused
@@ -11663,22 +11704,27 @@ const asReason = (effect) => effect.pipe(result, map(mapError$2(failureText)));
 /**
 * Searches `machine`: scans its group folders when `scan` says to (after reading its
 * home there; this machine's is `home`), else keeps the scan of its `last` search, and
-* looks up the repos its open spaces (`places`) are in.
+* looks up the repos its open spaces (`places`) are in and which of their own folders
+* (`folders`) are gone.
 */
-const searchOn = fnUntraced(function* (settings, machine, home, places, scan, last) {
+const searchOn = fnUntraced(function* (settings, machine, home, places, folders, scan, last) {
 	const scans = scan && settings.folders.some((folder) => folder.machine === machine);
 	const found = !scans ? flatMap$3(last, (before) => before.home) : some(machine === null ? home : yield* machineHome(machine));
+	const scanned = scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
+		onNone: () => ({
+			repos: [],
+			missing: []
+		}),
+		onSome: (before) => before.scan
+	});
+	const on = (located) => located.filter((at) => at.machine === machine && at.folder !== "").map((at) => at.folder);
+	const owners = yield* reposOf(on(places), machine, on(folders));
 	return {
 		machine,
 		home: found,
-		scan: scans ? yield* scanRepos(settings, machine, /* @__PURE__ */ new Map([[machine, getOrElse$1(found, () => home)]])) : match$5(last, {
-			onNone: () => ({
-				repos: [],
-				missing: []
-			}),
-			onSome: (before) => before.scan
-		}),
-		owners: yield* reposOf(places.filter((place) => place.machine === machine).map((place) => place.folder), machine)
+		scan: scanned,
+		owners: owners.repos,
+		gone: owners.gone
 	};
 });
 /** The machines a search covers: those with group folders, and those with open spaces. */
@@ -11693,7 +11739,7 @@ const searchMachine = (ask, machine) => {
 	if (isSome(held)) return succeed(fail$2(held.value));
 	const last = flatMap$3(fromNullishOr(ask.last.get(machine)), getSuccess);
 	const scan = ask.rescan || !exists(last, (before) => isSome(before.home));
-	return searchOn(ask.settings, machine, ask.home, ask.places, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
+	return searchOn(ask.settings, machine, ask.home, ask.places, ask.folders, scan, last).pipe(map((found) => succeed$3(found)), catch_((failed) => succeed(slotsFull(failed) && isSome(last) ? succeed$3(last.value) : fail$2({
 		_tag: "Down",
 		reason: failureText(failed)
 	}))), catchDefect((defect) => succeed(fail$2({
@@ -12340,6 +12386,64 @@ const orphanSteps = (orphans, spaces, panes, machine, gone) => {
 		...askToasts(orphans, spaces, found),
 		closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space)
 	};
+};
+/**
+* The gone folders after `machine`'s search landed: its own when the search worked, else
+* those its last search found, so a failed lookup never clears its orphan spaces.
+*/
+const goneLanded = (gone, machine, search) => match$4(search, {
+	onFailure: () => gone,
+	onSuccess: (found) => new Map([...gone, [machine, found.gone]])
+});
+/**
+* Every worktree path the panel's lists have named, `before` and in `lists` now: a path a
+* list drops stays known, so a space left on it still finds its repo.
+*/
+const worktreesRead = (before, lists) => {
+	const known = (w) => before.some((old) => old.machine === w.machine && old.path === w.path);
+	const now = Array.from(lists).flatMap(([key, list]) => {
+		const { machine, root } = repoOfKey(key);
+		return list.worktrees.map((w) => ({
+			machine,
+			path: w.path,
+			repo: root
+		}));
+	});
+	return [...before, ...now.filter((w) => !known(w))];
+};
+/** wt's trash folder inside a repo's main checkout: removed worktrees move in there. */
+const TRASH = "/.git/wt/trash/";
+/**
+* The repo root a place in wt's trash names (`<root>/.git/wt/trash/...`), read from the
+* path alone, so it holds after wt deletes the trashed folder too.
+*/
+const trashRepo = (place) => {
+	const at = place.indexOf(TRASH);
+	return at > 0 ? some(place.slice(0, at)) : none();
+};
+/**
+* The orphan spaces to publish, by space id: each space whose own folder is in `gone` on
+* its machine and whose repo is known: from its place in wt's trash, else from a list
+* the panel read that named its folder as a worktree there (`read`). Any other gone
+* folder is not an orphan's.
+*/
+const publishedOrphans = (spaces, places, gone, read) => {
+	const placeOf = new Map(places.map((p) => [p.space.id, p.place]));
+	return Object.fromEntries(spaces.filter((space) => (gone.get(space.machine) ?? []).includes(space.folder)).flatMap((space) => match$5(orElse(flatMap$3(fromNullishOr(placeOf.get(space.id)), trashRepo), () => fromNullishOr(read.find((w) => w.machine === space.machine && w.path === space.folder)?.repo)), {
+		onNone: () => [],
+		onSome: (repo) => [[space.id, {
+			folder: space.folder,
+			repo
+		}]]
+	})));
+};
+/**
+* Whether `orphans` differ from those `published` in shared state (anything at all, since
+* any mod can write it): publishing only on a change spares every mod a render.
+*/
+const orphansChanged = (orphans, published) => {
+	const entries = Object.entries(orphans);
+	return !isObject(published) || Object.keys(published).length !== entries.length || entries.some(([space, orphan]) => !exists(spaceOrphan(published, space), (was) => was.folder === orphan.folder && was.repo === orphan.repo));
 };
 
 // src/view.ts
@@ -13079,6 +13183,8 @@ const SYNC_TOLD_KEY = `iangregsondev-worktrunk.sync-told.v1`;
 const REQUEST_KEY = requestKey("iangregsondev-worktrunk");
 /** Each space's group, by space id, for the menus mod's sidebar labels. */
 const GROUPS_KEY = groupsKey("iangregsondev-worktrunk");
+/** Each orphan space's gone folder and repo, by space id, for the menus mod's sidebar. */
+const ORPHANS_KEY = orphansKey("iangregsondev-worktrunk");
 /** The job window's key, so a new job's window takes the old one's place. */
 const JOB_WINDOW = `iangregsondev-worktrunk-job`;
 const LIST_EVERY = 2e4;
@@ -13295,6 +13401,10 @@ var Worktrunk = class extends View {
 	orphans = NO_ORPHANS;
 	/** The machines whose dropped paths' folder check is running. */
 	orphanChecks = /* @__PURE__ */ new Set();
+	/** Each machine's open spaces' own folders found gone, by its last search that worked. */
+	goneFolders = /* @__PURE__ */ new Map();
+	/** Every worktree path a list read named, so a space left on a dropped one finds its repo. */
+	readWorktrees = [];
 	/** The machines that can't be read now, and why; their repos aren't listed or read. */
 	machineStatus = /* @__PURE__ */ new Map();
 	loader = IDLE;
@@ -13918,6 +14028,10 @@ var Worktrunk = class extends View {
 			settings: this.settings,
 			home: home(),
 			places,
+			folders: spaces().map((space) => ({
+				machine: space.machine,
+				folder: space.folder
+			})),
 			last: this.searches,
 			rescan: due,
 			states: machineStates(machines()),
@@ -13937,6 +14051,7 @@ var Worktrunk = class extends View {
 					this.searches = landed.searches;
 					this.discoverError = landed.error;
 					this.machineStatus = landed.statuses;
+					this.goneFolders = goneLanded(this.goneFolders, machine, search);
 					if (due && machine === null && isSuccess(search)) this.lastScan = some({
 						key,
 						at: now
@@ -13956,6 +14071,7 @@ var Worktrunk = class extends View {
 					}, machine, answer);
 					this.lists = kept.lists;
 					this.machineStatus = kept.machines;
+					this.readWorktrees = worktreesRead(this.readWorktrees, this.lists);
 					cx.notify();
 				}, (machine) => {
 					this.refreshing = new Set([...this.refreshing].filter((at) => at !== machine));
@@ -13981,6 +14097,17 @@ var Worktrunk = class extends View {
 		if (!this.discovered) return;
 		const groups = spaceGroups(spacePlaces(spaces(), panes()), this.repos, this.lists);
 		if (groupsChanged(groups, shared(GROUPS_KEY))) setShared(GROUPS_KEY, groups);
+	}
+	/**
+	* Publishes the orphan spaces, on every machine, for the sidebar's Orphan pills: `{}`
+	* once none are left, so the pills go. Only once repos are found, and only when they
+	* changed.
+	*/
+	publishOrphans() {
+		if (!this.discovered) return;
+		const open = spaces();
+		const orphans = publishedOrphans(open, spacePlaces(open, panes()), this.goneFolders, this.readWorktrees);
+		if (orphansChanged(orphans, shared(ORPHANS_KEY))) setShared(ORPHANS_KEY, orphans);
 	}
 	render(cx) {
 		const style = {
@@ -14008,6 +14135,7 @@ var Worktrunk = class extends View {
 		if (rendered.step === "NewGroup") later(cx, (cx) => this.refreshWithCi(cx, { scan: false }));
 		this.followFocus(cx, shown() && state.show === "current");
 		this.publishGroups();
+		this.publishOrphans();
 		const view = buildView({
 			repos: this.repos,
 			discovered: this.discovered,

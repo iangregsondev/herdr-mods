@@ -2,10 +2,11 @@
 // a fresh list read dropped, which wait for a folder check on their machine, and whether a
 // space on a gone folder closes at once or is asked about. Pure: no `herdr` or `gpui`
 // imports.
-import { Option, Result } from "effect";
-import type { Machine, RepoKey } from "./machines.ts";
+import { Option, Predicate, Result } from "effect";
+import { spaceOrphan, type PublishedOrphans } from "worktrunk-mailbox";
+import { repoOfKey, type Machine, type RepoKey } from "./machines.ts";
 import type { MachineLists, RepoList } from "./reads.ts";
-import { goneSpaces, type PaneLike, type SpaceLike } from "./spaces.ts";
+import { goneSpaces, type PaneLike, type Place, type SpaceLike } from "./spaces.ts";
 
 /** What the panel remembers about worktree paths dropped from their repo's list. */
 export interface Orphans {
@@ -267,4 +268,110 @@ export const orphanSteps = (
     ...askToasts(orphans, spaces, found),
     closes: found.filter((orphan) => orphan.step === "Close").map((orphan) => orphan.space),
   };
+};
+
+/** A worktree path a list the panel read named, on its machine, and its repo's root there. */
+export interface ReadWorktree {
+  readonly machine: Machine;
+  readonly path: string;
+  readonly repo: string;
+}
+
+/** Each machine's open spaces' own folders found gone, by the last owners lookup that worked. */
+export type GoneFolders = ReadonlyMap<Machine, readonly string[]>;
+
+/**
+ * The gone folders after `machine`'s search landed: its own when the search worked, else
+ * those its last search found, so a failed lookup never clears its orphan spaces.
+ */
+export const goneLanded = (
+  gone: GoneFolders,
+  machine: Machine,
+  search: Result.Result<{ readonly gone: readonly string[] }, unknown>,
+): GoneFolders =>
+  Result.match(search, {
+    onFailure: () => gone,
+    onSuccess: (found) => new Map([...gone, [machine, found.gone]]),
+  });
+
+/**
+ * Every worktree path the panel's lists have named, `before` and in `lists` now: a path a
+ * list drops stays known, so a space left on it still finds its repo.
+ */
+export const worktreesRead = (
+  before: readonly ReadWorktree[],
+  lists: ReadonlyMap<RepoKey, RepoList>,
+): readonly ReadWorktree[] => {
+  const known = (w: ReadWorktree) =>
+    before.some((old) => old.machine === w.machine && old.path === w.path);
+  const now = Array.from(lists).flatMap(([key, list]) => {
+    const { machine, root } = repoOfKey(key);
+    return list.worktrees.map((w): ReadWorktree => ({ machine, path: w.path, repo: root }));
+  });
+  return [...before, ...now.filter((w) => !known(w))];
+};
+
+/** wt's trash folder inside a repo's main checkout: removed worktrees move in there. */
+const TRASH = "/.git/wt/trash/";
+
+/**
+ * The repo root a place in wt's trash names (`<root>/.git/wt/trash/...`), read from the
+ * path alone, so it holds after wt deletes the trashed folder too.
+ */
+const trashRepo = (place: string): Option.Option<string> => {
+  const at = place.indexOf(TRASH);
+  return at > 0 ? Option.some(place.slice(0, at)) : Option.none();
+};
+
+/**
+ * The orphan spaces to publish, by space id: each space whose own folder is in `gone` on
+ * its machine and whose repo is known: from its place in wt's trash, else from a list
+ * the panel read that named its folder as a worktree there (`read`). Any other gone
+ * folder is not an orphan's.
+ */
+export const publishedOrphans = (
+  spaces: readonly SpaceLike[],
+  places: readonly Place[],
+  gone: ReadonlyMap<Machine, readonly string[]>,
+  read: readonly ReadWorktree[],
+): PublishedOrphans => {
+  const placeOf = new Map(places.map((p) => [p.space.id, p.place]));
+  return Object.fromEntries(
+    spaces
+      .filter((space) => (gone.get(space.machine) ?? []).includes(space.folder))
+      .flatMap((space) =>
+        Option.match(
+          Option.orElse(
+            Option.flatMap(Option.fromNullishOr(placeOf.get(space.id)), trashRepo),
+            () =>
+              Option.fromNullishOr(
+                read.find((w) => w.machine === space.machine && w.path === space.folder)?.repo,
+              ),
+          ),
+          {
+            onNone: () => [],
+            onSome: (repo) => [[space.id, { folder: space.folder, repo }] as const],
+          },
+        ),
+      ),
+  );
+};
+
+/**
+ * Whether `orphans` differ from those `published` in shared state (anything at all, since
+ * any mod can write it): publishing only on a change spares every mod a render.
+ */
+export const orphansChanged = (orphans: PublishedOrphans, published: unknown): boolean => {
+  const entries = Object.entries(orphans);
+  return (
+    !Predicate.isObject(published) ||
+    Object.keys(published).length !== entries.length ||
+    entries.some(
+      ([space, orphan]) =>
+        !Option.exists(
+          spaceOrphan(published, space),
+          (was) => was.folder === orphan.folder && was.repo === orphan.repo,
+        ),
+    )
+  );
 };

@@ -341,6 +341,7 @@ const findRepos = (
         settings,
         home,
         places,
+        folders: [],
         last: start.searches,
         rescan: Option.isNone(last),
         states,
@@ -363,7 +364,10 @@ const searched = (
   machine: string | null,
   home: string,
   scan: { readonly repos: readonly FoundRepo[]; readonly missing: readonly string[] },
-) => new Map([[machine, Result.succeed({ machine, home: Option.some(home), scan, owners: [] })]]);
+) =>
+  new Map([
+    [machine, Result.succeed({ machine, home: Option.some(home), scan, owners: [], gone: [] })],
+  ]);
 
 describe("findRepos", () => {
   const settings = {
@@ -743,6 +747,7 @@ describe("refreshMachines", () => {
     settings,
     home: "/h",
     places: [],
+    folders: [],
     last: new Map(),
     rescan: true,
     states: new Map(),
@@ -816,6 +821,53 @@ describe("refreshMachines", () => {
   );
 });
 
+describe("refreshMachines and the spaces' own folders", () => {
+  it.effect(
+    "checks each space's folder on its machine with the owners lookup, after --, and hands on the gone ones",
+    () =>
+      Effect.gen(function* () {
+        const ran: unknown[] = [];
+        const api: ExecApi = {
+          hc: noHc,
+          exec: (_command, args = [], options) => {
+            const on = options?.on ?? null;
+            const body = args[1] ?? "";
+            const owners = body.includes("git-common-dir");
+            if (owners) ran.push([on, args.slice(3)]);
+            const stdout = !owners ? "" : on === "linux" ? "/srv/api\t2\n/srv/api.old\n" : "";
+            return Promise.resolve({ code: 0, stdout, stderr: "" });
+          },
+        };
+        const searched: unknown[] = [];
+        yield* refreshMachines(
+          {
+            settings: DEFAULT_SETTINGS,
+            home: "/h",
+            places: [local("/u/tool/src"), { machine: "linux", folder: "/srv/api.feat" }],
+            folders: [local("/u/tool"), { machine: "linux", folder: "/srv/api.old" }],
+            last: new Map(),
+            rescan: false,
+            states: new Map(),
+            busy: new Set(),
+          },
+          (machine, search) => {
+            searched.push([machine, Result.map(search, (found) => found.gone)]);
+            return [];
+          },
+          () => undefined,
+        ).pipe(Effect.provide(Shell.layer(api)));
+        assert.sameDeepMembers(ran, [
+          [THIS_MACHINE, ["/u/tool/src", "--", "/u/tool"]],
+          ["linux", ["/srv/api.feat", "--", "/srv/api.old"]],
+        ]);
+        assert.sameDeepMembers(searched, [
+          [THIS_MACHINE, Result.succeed([])],
+          ["linux", Result.succeed(["/srv/api.old"])],
+        ]);
+      }),
+  );
+});
+
 describe("refreshMachines with a machine busy", () => {
   const settings = {
     ...DEFAULT_SETTINGS,
@@ -847,6 +899,7 @@ describe("refreshMachines with a machine busy", () => {
           settings,
           home: "/h",
           places: [],
+          folders: [],
           last: new Map(),
           rescan: true,
           states: new Map(),
@@ -882,6 +935,7 @@ describe("refreshMachines with a machine busy", () => {
           settings,
           home: "/h",
           places: [],
+          folders: [],
           last: new Map(),
           rescan: true,
           states: new Map(),
@@ -926,6 +980,7 @@ describe("landSearch", () => {
       home: Option.some("/h"),
       scan: { repos: [{ machine: THIS_MACHINE, root, count: 1 }], missing: [] },
       owners: [],
+      gone: [],
     });
   const start: Landed = {
     searches: new Map([[THIS_MACHINE, found("/w/old")]]),
