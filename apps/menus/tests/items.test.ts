@@ -172,11 +172,10 @@ describe("newMenuAnchor", () => {
 describe("withSpaceItems", () => {
   const ORPHANS = { sp1: { folder: "/r/.git/wt/trash/x", repo: "/r" } };
 
-  test("an open orphan space: Close orphan space just before Herdr's close, which asks first", () => {
+  test("an open orphan space: Close orphan space takes the place of Herdr's close, which asks first", () => {
     expect(withSpaceItems(herdrSpaceItems(null), SPACE, null, ORPHANS, ["sp1"])).toEqual([
       ["Rename", "space.rename", { id: "sp1" }],
       ["Close orphan space", "space.close", { id: "sp1", confirmed: false }],
-      ["Close", "space.close", { id: "sp1" }],
     ]);
   });
 
@@ -189,14 +188,7 @@ describe("withSpaceItems", () => {
   test("an orphan space gets no worktrunk items, even where Herdr's git check found a worktree", () => {
     expect(
       labels(withSpaceItems(herdrSpaceItems("linked"), SPACE, "linked", ORPHANS, ["sp1"])),
-    ).toEqual([
-      "Rename",
-      "New worktree",
-      "Open worktree",
-      "Remove worktree",
-      "Close orphan space",
-      "Close",
-    ]);
+    ).toEqual(["Rename", "New worktree", "Open worktree", "Remove worktree", "Close orphan space"]);
   });
 
   test("a space not published as an orphan keeps its worktrunk items and no Close orphan space", () => {

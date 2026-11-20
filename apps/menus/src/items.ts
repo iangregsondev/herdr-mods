@@ -108,16 +108,21 @@ const closeOrphan = (id: string): Item => {
   return ["Close orphan space", "space.close", args];
 };
 
-/** Where "Close orphan space" goes: just before Herdr's close item, else last. */
-const beforeClose = (list: readonly Item[]): number => {
+/**
+ * `list` with "Close orphan space" in the place of Herdr's close item, else last. Both
+ * run `space.close` for the space, so the menu keeps one close item: ours, which asks.
+ */
+const replacingClose = (list: readonly Item[], id: string): readonly Item[] => {
   const close = list.findIndex((item) => item[1] === "space.close");
-  return close >= 0 ? close : list.length;
+  return close >= 0
+    ? [...list.slice(0, close), closeOrphan(id), ...list.slice(close + 1)]
+    : [...list, closeOrphan(id)];
 };
 
 /**
  * Herdr's menu `list` for `props`, with ours added for a space: worktrunk items as
  * `withWorktrunkItems` places them, or, for a space the panel published in `orphans`
- * that is one of the `open` ones, "Close orphan space" alone.
+ * that is one of the `open` ones, "Close orphan space" alone, in place of Herdr's close.
  */
 export const withSpaceItems = (
   list: readonly Item[],
@@ -130,9 +135,6 @@ export const withSpaceItems = (
     Option.filter(spaceOf(props), (id) => Option.isSome(openOrphan(orphans, open, id))),
     {
       onNone: () => withWorktrunkItems(list, props, git),
-      onSome: (id) => {
-        const at = beforeClose(list);
-        return [...list.slice(0, at), closeOrphan(id), ...list.slice(at)];
-      },
+      onSome: (id) => replacingClose(list, id),
     },
   );

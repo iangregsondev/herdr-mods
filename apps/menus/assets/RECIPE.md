@@ -15,7 +15,7 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
   - a space on a linked worktree: Rename, New worktree, Open worktree, Remove worktree, **New worktree (wt)…**, **Open worktree (wt)…**, **Merge into main (wt)…**, **Remove worktree (wt)…**, Close;
   - a space on a repo's main checkout: Rename, New worktree, Open worktree, **New worktree (wt)…**, **Open worktree (wt)…**, Close;
   - a space outside git, or before Herdr's git check answers: Herdr's items only;
-  - an orphan space (one the worktrunk panel publishes, still open): Herdr's items with **Close orphan space** just before Close (else last), and no (wt) items, whatever git says about it.
+  - an orphan space (one the worktrunk panel publishes, still open): Herdr's items with **Close orphan space** in place of Herdr's Close (else last), so the menu has one close item, and no (wt) items, whatever git says about it.
   - Our (wt) rows use Herdr's branch icon and look like Herdr's. The popup is 200×384px (Herdr's 260px plus four rows).
 - Tab right-click menus and the terminal menu are Herdr's, untouched.
 
@@ -67,7 +67,7 @@ Herdr's own tab bar, sidebar, "+" menu and space right-click menu, looking exact
 - A linked-worktree space's menu, on this or another machine, shows Herdr's worktree items, then the four (wt) items, then Close; a main-checkout space shows only "New worktree (wt)…" and "Open worktree (wt)…"; a non-git space shows none.
 - "New worktree (wt)…" and "Open worktree (wt)…" on a space on another machine open their dialog for its repo there, the title naming the machine.
 - Merge and Remove open worktrunk's confirm dialog for that worktree.
-- An orphan space's menu shows Herdr's items with "Close orphan space" just before Close and no (wt) items; choosing it shows Herdr's confirm, and the space closes once you confirm. No other space's menu has it.
+- An orphan space's menu shows Herdr's items with "Close orphan space" in place of Herdr's Close (no second Close) and no (wt) items; choosing it shows Herdr's confirm, and the space closes once you confirm. No other space's menu has it.
 - An orphan space sits under its repo's main checkout space, its name dimmed, its Orphan pill after it and no branch shown; with no main checkout space open it is at the top level, dimmed and pilled; once it closes, nothing of it is left.
 - Hovering the Orphan pill (the info icon after "Orphan"), nested or at the top level, shows `Worktree removed from <repo> · <gone folder>`.
 - Changing a patch point's text in a copy of Herdr's file shows a toast naming it, and the menus fall back to Herdr's.
