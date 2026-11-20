@@ -2,7 +2,7 @@
 // to one shared-state key, which the shown panel reads and runs once. And the other way,
 // the space groups and orphan spaces the panel publishes for the sidebar.
 // Pure: no `herdr` or `gpui` imports.
-import { Option } from "effect";
+import { Brand, Option } from "effect";
 import { at, text } from "./json.ts";
 import { findModBlock } from "./layout.ts";
 
@@ -66,12 +66,20 @@ export const spaceGroup = (published: unknown, space: string): Option.Option<str
 /** The shared-state key the panel of the worktrunk mod `panelMod` publishes orphan spaces at. */
 export const orphansKey = (panelMod: string): string => `${panelMod}.orphans.v1`;
 
+/** An orphan space's own folder, which is gone: no other string passes for one. */
+export type OrphanFolder = string & Brand.Brand<"OrphanFolder">;
+export const OrphanFolder = Brand.nominal<OrphanFolder>();
+
+/** A repo's main checkout root: no other string passes for one. */
+export type RepoRoot = string & Brand.Brand<"RepoRoot">;
+export const RepoRoot = Brand.nominal<RepoRoot>();
+
 /** What the panel publishes about one orphan space. */
 export interface PublishedOrphan {
   /** The space's own folder, which is gone. */
-  readonly folder: string;
+  readonly folder: OrphanFolder;
   /** Its repo's main checkout root, on the space's machine. */
-  readonly repo: string;
+  readonly repo: RepoRoot;
 }
 
 /** The orphan spaces the panel publishes (`orphansKey`), by space id. */
@@ -84,5 +92,8 @@ export type PublishedOrphans = Readonly<Record<string, PublishedOrphan>>;
  */
 export const spaceOrphan = (published: unknown, space: string): Option.Option<PublishedOrphan> => {
   const entry = at(published, space);
-  return Option.all({ folder: text(at(entry, "folder")), repo: text(at(entry, "repo")) });
+  return Option.all({
+    folder: Option.map(text(at(entry, "folder")), OrphanFolder),
+    repo: Option.map(text(at(entry, "repo")), RepoRoot),
+  });
 };

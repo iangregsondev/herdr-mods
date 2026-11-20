@@ -1,8 +1,9 @@
 import { Option } from "effect";
 import { describe, expect, test } from "vite-plus/test";
+import { OrphanFolder, RepoRoot } from "worktrunk-mailbox";
 import { marksFor, nameColor, orphanGit, plainPills, spaceMarks, spacePills } from "../src/look.ts";
 
-const ORPHAN = Option.some({ folder: "/r/api.old", repo: "/r/api" });
+const ORPHAN = Option.some({ folder: OrphanFolder("/r/api.old"), repo: RepoRoot("/r/api") });
 
 describe("spacePills", () => {
   const ORPHAN_PILL = {
@@ -28,7 +29,10 @@ describe("spacePills", () => {
   test("the Orphan pill's tooltip names the orphan's repo folder and its removed folder; a group pill has none", () => {
     const [group, orphan] = spacePills({
       group: Option.some("Work"),
-      orphan: Option.some({ folder: "/home/me/code/web.feat-2-login", repo: "/home/me/code/web" }),
+      orphan: Option.some({
+        folder: OrphanFolder("/home/me/code/web.feat-2-login"),
+        repo: RepoRoot("/home/me/code/web"),
+      }),
     });
     expect(group?.tooltip).toEqual(Option.none());
     expect(orphan?.tooltip).toEqual(

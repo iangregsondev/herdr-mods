@@ -3,7 +3,7 @@
 // space on a gone folder closes at once or is kept, and which spaces the sidebar marks as
 // orphans. Pure: no `herdr` or `gpui` imports.
 import { Option, Predicate, Result } from "effect";
-import { spaceOrphan, type PublishedOrphans } from "worktrunk-mailbox";
+import { OrphanFolder, RepoRoot, spaceOrphan, type PublishedOrphans } from "worktrunk-mailbox";
 import { repoOfKey, type Machine, type RepoKey } from "./machines.ts";
 import type { MachineLists, RepoList } from "./reads.ts";
 import { goneSpaces, type PaneLike, type Place, type SpaceLike } from "./spaces.ts";
@@ -278,7 +278,9 @@ export const publishedOrphans = (
           ),
           {
             onNone: () => [],
-            onSome: (repo) => [[space.id, { folder: space.folder, repo }] as const],
+            onSome: (repo) => [
+              [space.id, { folder: OrphanFolder(space.folder), repo: RepoRoot(repo) }] as const,
+            ],
           },
         ),
       ),
